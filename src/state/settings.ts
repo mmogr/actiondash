@@ -1,6 +1,6 @@
 import { signal } from '@preact/signals'
 import type { RepoRef } from '../github/types'
-import type { PlanId } from '../model/plans'
+import type { ObservedMax, PlanId } from '../model/plans'
 import { clearCache, setTokenProvider } from '../github/client'
 
 /**
@@ -20,6 +20,11 @@ export interface Settings {
   repos: RepoRef[]
   plan: PlanId
   pollIntervalMs: number
+  /**
+   * The most jobs ever seen running at once per runner class. Used to tell the
+   * user when their chosen plan cannot explain what the account is doing.
+   */
+  observedMax: ObservedMax
 }
 
 const DEFAULTS: Settings = {
@@ -27,6 +32,7 @@ const DEFAULTS: Settings = {
   repos: [],
   plan: 'free',
   pollIntervalMs: 15_000,
+  observedMax: {},
 }
 
 function load(): Settings {
@@ -42,11 +48,26 @@ function load(): Settings {
         typeof parsed.pollIntervalMs === 'number' && parsed.pollIntervalMs >= 5_000
           ? parsed.pollIntervalMs
           : DEFAULTS.pollIntervalMs,
+      observedMax:
+        parsed.observedMax && typeof parsed.observedMax === 'object'
+          ? sanitiseObserved(parsed.observedMax)
+          : {},
     }
   } catch {
     // Private browsing, disabled site data, or corrupt JSON. Start clean.
     return { ...DEFAULTS }
   }
+}
+
+/** Keeps only finite, positive counts, so corrupt storage cannot skew a meter. */
+function sanitiseObserved(raw: Record<string, unknown>): ObservedMax {
+  const out: ObservedMax = {}
+  for (const [key, value] of Object.entries(raw)) {
+    if (typeof value === 'number' && Number.isFinite(value) && value > 0) {
+      out[key as keyof ObservedMax] = Math.floor(value)
+    }
+  }
+  return out
 }
 
 function isRepoRef(v: unknown): v is RepoRef {

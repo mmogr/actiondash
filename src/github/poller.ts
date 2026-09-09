@@ -2,8 +2,10 @@ import { batch } from '@preact/signals'
 import { getBilledCount, getRateLimit, getRetryAfterMs, GitHubError, isRateLimitError } from './client'
 import { listJobs, listRuns } from './api'
 import { repoKey, type RepoRef, type RunWithRepo, type WorkflowJob } from './types'
-import { settings } from '../state/settings'
+import { settings, updateSettings } from '../state/settings'
+import type { ObservedMax } from '../model/plans'
 import {
+  buckets,
   effectiveIntervalMs,
   fatalError,
   firstLoadDone,
@@ -116,6 +118,36 @@ function describe(err: unknown, repo: RepoRef): string {
   return `${repo.owner}/${repo.name}: ${(err as Error).message}`
 }
 
+/**
+ * Records the most jobs seen running at once, which is the only evidence
+ * available for the account's real concurrency ceiling. Self-hosted runners are
+ * excluded: their capacity is the operator's own and says nothing about the
+ * GitHub-hosted allowance.
+ */
+function recordObserved(): void {
+  const previous = settings.value.observedMax
+  const next: ObservedMax = { ...previous }
+  let total = 0
+  let changed = false
+
+  for (const bucket of buckets.value) {
+    if (bucket.cls === 'self-hosted') continue
+    const running = bucket.running.length
+    total += running
+    if (running > (next[bucket.cls] ?? 0)) {
+      next[bucket.cls] = running
+      changed = true
+    }
+  }
+  if (total > (next.total ?? 0)) {
+    next.total = total
+    changed = true
+  }
+  // Only written when a new high is set, so a steady poll does not keep
+  // rewriting local storage.
+  if (changed) updateSettings({ observedMax: next })
+}
+
 /** Drops cached jobs for runs that are no longer active. */
 function pruneJobCache(activeRunIds: ReadonlySet<number>): void {
   for (const id of jobCache.keys()) {
@@ -222,6 +254,7 @@ export async function pollOnce(): Promise<void> {
       warning.value = problems.length > 0 ? problems.join(' ') : null
       fatalError.value = null
     })
+    recordObserved()
   } catch (err) {
     if (controller.signal.aborted) return
     if (err instanceof GitHubError && err.status === 401) {

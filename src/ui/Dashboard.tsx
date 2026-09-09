@@ -1,7 +1,8 @@
 import { useEffect } from 'preact/hooks'
 import { startPolling, stopPolling } from '../github/poller'
 import { distinctRuns } from '../model/queue'
-import { settings } from '../state/settings'
+import { settings, updateSettings } from '../state/settings'
+import { inferPlan, PLANS } from '../model/plans'
 import {
   buckets,
   fatalError,
@@ -29,6 +30,14 @@ export function Dashboard() {
   const limitedUntil = rateLimited.value
   const list = buckets.value
   const nothingActive = !loading && totalRunning.value === 0 && totalQueued.value === 0
+
+  // The account's real ceiling cannot be read from the API without granting the
+  // token profile access, so it is inferred from what has actually been seen
+  // running at once. A selection that cannot explain the observations is wrong.
+  const observed = settings.value.observedMax
+  const plan = PLANS[settings.value.plan]
+  const suggested = inferPlan(observed, settings.value.plan)
+  const macosExceeded = (observed.macos ?? 0) > plan.macos
   // Counted as runs, so the figure matches the footer's cancel button.
   const staleRunCount = distinctRuns(stale.value).length
   const repoCount = settings.value.repos.length
@@ -59,6 +68,20 @@ export function Dashboard() {
           The hourly request allowance is used up. Polling resumes when it refills at{' '}
           {new Date(limitedUntil * 1000).toLocaleTimeString()}. This token is shared with anything
           else that uses it, such as the gh command line.
+        </div>
+      )}
+
+      {suggested !== null && (
+        <div class="banner warn">
+          <span>
+            {macosExceeded
+              ? `${observed.macos} macOS jobs have been seen running at once, which the ${plan.label} limit of ${plan.macos} cannot produce.`
+              : `${observed.total} jobs have been seen running at once, which the ${plan.label} limit of ${plan.total} cannot produce.`}{' '}
+            The meters below are measuring against the wrong ceiling.
+          </span>
+          <button onClick={() => updateSettings({ plan: suggested })}>
+            Use {PLANS[suggested].label}
+          </button>
         </div>
       )}
 

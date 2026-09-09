@@ -271,8 +271,10 @@ export function Setup() {
         <div class="card">
           <h2>3. Start</h2>
           <p>
-            Pick the plan whose concurrency limits apply to the account that owns these
-            repositories. This only sets the denominator on the occupancy meters.
+            Pick the plan that applies to the account owning these repositories. It sets the
+            denominator on the occupancy meters. GitHub does not expose the limit to a token
+            scoped this tightly, so if the guess is wrong the dashboard will notice once it sees
+            more jobs running at once than the limit allows, and offer to correct it.
           </p>
           <div class="field-row">
             <label>

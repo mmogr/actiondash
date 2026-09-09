@@ -149,6 +149,32 @@ Jobs are grouped by the concurrency pool they draw from, read off the runner
 labels. Self-hosted is detected first and on purpose, because a self-hosted
 macOS runner uses your own capacity rather than the GitHub-hosted allowance.
 
+### The plan setting, and why it is a guess that corrects itself
+
+The occupancy meters need a denominator, which means knowing the account's
+concurrency ceiling. GitHub does expose it, on `GET /user`, but only to a token
+carrying profile access. Granting that to read a single number would undo the
+point of a token scoped to Actions alone, so the dashboard does not ask for it.
+
+You pick the plan once at setup instead. A wrong pick then corrects itself,
+because the ceiling can be inferred from behaviour: seeing eight macOS jobs run
+at once proves the cap is at least eight, whatever was selected. The dashboard
+records the most it has ever seen running at once, and when that cannot be
+produced by the chosen plan it says so and offers the smallest plan that fits.
+It never suggests a smaller plan, because a quiet account proves nothing about
+its ceiling.
+
+One limitation worth knowing: the ceiling belongs to the account that **owns**
+each repository, not to whoever holds the token. Watching repositories owned by
+several accounts aggregates pools that GitHub actually meters separately, and
+the meters will not be meaningful. Watch one owner's repositories at a time.
+
+The refresh interval is deliberately not part of setup. Before the first poll
+there is nothing to base it on, so it lives in the footer beside the live cost
+readout, where the effect of changing it is visible. It is a floor rather than
+a promise, since the budget pacer will stretch it when a poll turns out to be
+expensive.
+
 **Queue position is an estimate.** GitHub does not publish a job's place in
 line. Jobs are ordered by arrival time, which matches how a pool is dispatched
 in practice, but it is a proxy and it will occasionally be wrong.
