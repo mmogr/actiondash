@@ -139,10 +139,14 @@ export async function pollOnce(): Promise<void> {
   let completed = 0
   pollProgress.value = { done: 0, total: repos.length }
 
+  // Progressive publishing is what stops the first load looking broken, but on
+  // a refresh it would make rows vanish and reappear as each repository is
+  // replaced. Only the initial load fills in piecewise; later polls swap in one
+  // step, once everything has been gathered.
+  const publishAsWeGo = !firstLoadDone.value
+
   /**
-   * Pushes what has been gathered so far into the store. Called after each
-   * repository lands, so the dashboard fills in progressively instead of
-   * staying empty until the slowest request returns.
+   * Pushes what has been gathered so far into the store.
    */
   const publish = (): void => {
     if (mine !== generation) return
@@ -199,7 +203,7 @@ export async function pollOnce(): Promise<void> {
         completed++
         if (mine === generation) {
           pollProgress.value = { done: completed, total: repos.length }
-          publish()
+          if (publishAsWeGo) publish()
         }
       }
     })
