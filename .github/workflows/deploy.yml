@@ -42,7 +42,10 @@ jobs:
       - name: Verify no network calls outside the API client
         run: npm run check:fetch
 
+      # enablement turns Pages on for a fresh repository rather than failing.
       - uses: actions/configure-pages@v5
+        with:
+          enablement: true
 
       - uses: actions/upload-pages-artifact@v4
         with:
