@@ -33,6 +33,9 @@ export function Setup() {
     try {
       const user = await getUser()
       setConnectedAs(user.login)
+      // Drop the secret from the input as soon as it is validated, so it stops
+      // living in the DOM where a screenshot or accessibility tree exposes it.
+      setTokenInput('')
       const list = await listRepos()
       setRepos(list)
       if (list.length === 0) {

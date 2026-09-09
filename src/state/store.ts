@@ -15,6 +15,12 @@ export const runs = signal<RunWithRepo[]>([])
 export const jobsByRun = signal<Map<number, WorkflowJob[]>>(new Map())
 
 export const polling = signal(false)
+/** False until the first poll has finished, so the UI never claims "nothing" too early. */
+export const firstLoadDone = signal(false)
+/** Repositories checked so far in the current poll, for the loading indicator. */
+export const pollProgress = signal<{ done: number; total: number }>({ done: 0, total: 0 })
+/** Set when the request allowance is exhausted; carries the reset time. */
+export const rateLimited = signal<number | null>(null)
 export const lastPoll = signal<number | null>(null)
 export const rateLimit = signal<RateLimit | null>(null)
 
@@ -62,6 +68,9 @@ export function resetData(): void {
   rateLimit.value = null
   pollCost.value = 0
   effectiveIntervalMs.value = 0
+  firstLoadDone.value = false
+  pollProgress.value = { done: 0, total: 0 }
+  rateLimited.value = null
   fatalError.value = null
   warning.value = null
 }

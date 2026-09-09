@@ -1,16 +1,19 @@
 import { batch } from '@preact/signals'
-import { getBilledCount, getRateLimit, getRetryAfterMs, GitHubError } from './client'
+import { getBilledCount, getRateLimit, getRetryAfterMs, GitHubError, isRateLimitError } from './client'
 import { listJobs, listRuns } from './api'
-import type { RepoRef, RunWithRepo, WorkflowJob } from './types'
+import { repoKey, type RepoRef, type RunWithRepo, type WorkflowJob } from './types'
 import { settings } from '../state/settings'
 import {
   effectiveIntervalMs,
   fatalError,
+  firstLoadDone,
   jobsByRun,
   lastPoll,
   pollCost,
   polling,
+  pollProgress,
   rateLimit,
+  rateLimited,
   runs,
   view,
   warning,
@@ -53,6 +56,13 @@ const BUDGET_SAFETY = 0.6
  * secondary limits, so this is deliberately small.
  */
 const JOB_CONCURRENCY = 3
+/**
+ * Repositories fetched at once. Watching thirty repositories serially made the
+ * first load take about twenty seconds, during which the page had nothing to
+ * show. A small pool cuts that to a few seconds while staying well clear of the
+ * secondary limits.
+ */
+const REPO_CONCURRENCY = 5
 /** Guard against a repository with a pathological number of active runs. */
 const MAX_RUNS_PER_REPO = 60
 
@@ -90,6 +100,11 @@ function describe(err: unknown, repo: RepoRef): string {
     if (err.status === 404) {
       return `${repo.owner}/${repo.name} not found. The token may not include this repository.`
     }
+    // A rate-limit refusal also arrives as 403. Reported as a permissions
+    // problem it would send the reader to the wrong place entirely.
+    if (isRateLimitError(err)) {
+      return `Request allowance exhausted. Polling pauses until it refills.`
+    }
     if (err.status === 403) {
       return `${repo.owner}/${repo.name} refused: ${err.message} Check that the token grants Actions: Read and write.`
     }
@@ -120,66 +135,86 @@ export async function pollOnce(): Promise<void> {
   polling.value = true
   const billedBefore = getBilledCount()
   const problems: string[] = []
-  const collectedRuns: RunWithRepo[] = []
+  const byRepo = new Map<string, RunWithRepo[]>()
+  let completed = 0
+  pollProgress.value = { done: 0, total: repos.length }
 
-  try {
-    for (const repo of repos) {
-      if (controller.signal.aborted) return
-      try {
-        const [queued, running] = await Promise.all([
-          listRuns(repo, 'queued'),
-          listRuns(repo, 'in_progress'),
-        ])
-        collectedRuns.push(...[...queued, ...running].slice(0, MAX_RUNS_PER_REPO))
-      } catch (err) {
-        if (err instanceof GitHubError && err.status === 401) throw err
-        problems.push(describe(err, repo))
-      }
+  /**
+   * Pushes what has been gathered so far into the store. Called after each
+   * repository lands, so the dashboard fills in progressively instead of
+   * staying empty until the slowest request returns.
+   */
+  const publish = (): void => {
+    if (mine !== generation) return
+    const all = [...byRepo.values()].flat()
+    const jobs = new Map<number, WorkflowJob[]>()
+    for (const run of all) {
+      const cached = jobCache.get(run.id)
+      if (cached) jobs.set(run.id, cached.jobs)
     }
+    batch(() => {
+      runs.value = all
+      jobsByRun.value = jobs
+      rateLimit.value = getRateLimit()
+    })
+  }
 
-    if (controller.signal.aborted || mine !== generation) return
-
-    // Only ask for jobs where the run itself reports movement, or where the
-    // cached copy has aged out. This is where most of the budget is saved.
+  const fetchJobsFor = async (repoRuns: readonly RunWithRepo[]): Promise<void> => {
     const now = Date.now()
-    const needsJobs = collectedRuns.filter((run) => {
+    const needed = repoRuns.filter((run) => {
       const cached = jobCache.get(run.id)
       if (!cached) return true
       if (cached.updatedAt !== run.updated_at) return true
       return now - cached.fetchedAt > MAX_JOB_STALENESS_MS
     })
-
-    await mapLimit(needsJobs, JOB_CONCURRENCY, async (run) => {
+    await mapLimit(needed, JOB_CONCURRENCY, async (run) => {
       try {
         const list = await listJobs({ owner: run.repoOwner, name: run.repoName }, run.id)
         jobCache.set(run.id, { jobs: list, updatedAt: run.updated_at, fetchedAt: Date.now() })
       } catch (err) {
         if (err instanceof GitHubError && err.status === 401) throw err
-        // A run that completed between the two calls answers 404. Recording it
+        // A run that finished between the two calls answers 404. Recording it
         // as empty is correct: it is no longer holding a slot.
         jobCache.set(run.id, { jobs: [], updatedAt: run.updated_at, fetchedAt: Date.now() })
+      }
+    })
+  }
+
+  try {
+    await mapLimit(repos, REPO_CONCURRENCY, async (repo) => {
+      if (controller.signal.aborted || mine !== generation) return
+      try {
+        const [queued, running] = await Promise.all([
+          listRuns(repo, 'queued'),
+          listRuns(repo, 'in_progress'),
+        ])
+        const repoRuns = [...queued, ...running].slice(0, MAX_RUNS_PER_REPO)
+        await fetchJobsFor(repoRuns)
+        byRepo.set(repoKey(repo), repoRuns)
+      } catch (err) {
+        if (err instanceof GitHubError && err.status === 401) throw err
+        if (isRateLimitError(err)) throw err
+        problems.push(describe(err, repo))
+      } finally {
+        completed++
+        if (mine === generation) {
+          pollProgress.value = { done: completed, total: repos.length }
+          publish()
+        }
       }
     })
 
     if (controller.signal.aborted || mine !== generation) return
 
-    const activeIds = new Set(collectedRuns.map((r) => r.id))
-    pruneJobCache(activeIds)
-
-    const jobs = new Map<number, WorkflowJob[]>()
-    for (const run of collectedRuns) {
-      const cached = jobCache.get(run.id)
-      if (cached) jobs.set(run.id, cached.jobs)
-    }
-
+    pruneJobCache(new Set([...byRepo.values()].flat().map((r) => r.id)))
     lastBilled = Math.max(1, getBilledCount() - billedBefore)
 
+    publish()
     batch(() => {
-      runs.value = collectedRuns
-      jobsByRun.value = jobs
       lastPoll.value = Date.now()
-      rateLimit.value = getRateLimit()
       pollCost.value = lastBilled
+      firstLoadDone.value = true
+      rateLimited.value = null
       warning.value = problems.length > 0 ? problems.join(' ') : null
       fatalError.value = null
     })
@@ -193,7 +228,18 @@ export async function pollOnce(): Promise<void> {
       stopPolling()
       return
     }
-    fatalError.value = (err as Error).message
+    if (isRateLimitError(err)) {
+      const limit = getRateLimit()
+      batch(() => {
+        rateLimited.value = limit ? limit.reset : null
+        firstLoadDone.value = true
+      })
+      return
+    }
+    batch(() => {
+      fatalError.value = (err as Error).message
+      firstLoadDone.value = true
+    })
   } finally {
     if (mine === generation) polling.value = false
   }

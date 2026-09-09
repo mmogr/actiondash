@@ -26,6 +26,18 @@ export class GitHubError extends Error {
   }
 }
 
+/**
+ * True when a rejection is GitHub refusing on rate-limit grounds rather than on
+ * permissions. Both arrive as 403, and telling a user to check their token
+ * scopes when they have simply run out of requests sends them the wrong way.
+ */
+export function isRateLimitError(err: unknown): boolean {
+  if (!(err instanceof GitHubError)) return false
+  if (err.status === 429) return true
+  if (err.status !== 403) return false
+  return /rate limit|abuse detection|secondary rate/i.test(err.message)
+}
+
 export class OriginError extends Error {
   constructor(readonly attempted: string) {
     super(

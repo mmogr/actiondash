@@ -5,7 +5,11 @@ import { settings } from '../state/settings'
 import {
   buckets,
   fatalError,
+  firstLoadDone,
+  lastPoll,
   polling,
+  pollProgress,
+  rateLimited,
   stale,
   totalQueued,
   totalRunning,
@@ -20,7 +24,11 @@ export function Dashboard() {
     return stopPolling
   }, [])
 
+  const loading = !firstLoadDone.value
+  const progress = pollProgress.value
+  const limitedUntil = rateLimited.value
   const list = buckets.value
+  const nothingActive = !loading && totalRunning.value === 0 && totalQueued.value === 0
   // Counted as runs, so the figure matches the footer's cancel button.
   const staleRunCount = distinctRuns(stale.value).length
   const repoCount = settings.value.repos.length
@@ -46,6 +54,14 @@ export function Dashboard() {
         </div>
       </div>
 
+      {limitedUntil !== null && (
+        <div class="banner error">
+          The hourly request allowance is used up. Polling resumes when it refills at{' '}
+          {new Date(limitedUntil * 1000).toLocaleTimeString()}. This token is shared with anything
+          else that uses it, such as the gh command line.
+        </div>
+      )}
+
       {fatalError.value && <div class="banner error">{fatalError.value}</div>}
 
       {warning.value && (
@@ -57,9 +73,43 @@ export function Dashboard() {
         </div>
       )}
 
-      {list.map((bucket) => (
-        <RunnerClassSection key={bucket.cls} bucket={bucket} />
-      ))}
+      {loading ? (
+        <section class="section">
+          <div class="section-head">
+            <div class="section-title">Loading</div>
+            <div class="meter" role="img" aria-label="Loading progress">
+              <div
+                class="meter-fill"
+                style={{ width: `${progress.total ? (progress.done / progress.total) * 100 : 0}%` }}
+              />
+            </div>
+            <div class="section-stats">
+              <span>
+                <b>{progress.done}</b> of {progress.total} repositories
+              </span>
+            </div>
+          </div>
+          <div class="empty">
+            Checking each repository for running and queued jobs. Rows appear as they arrive.
+          </div>
+        </section>
+      ) : nothingActive ? (
+        <section class="section">
+          <div class="section-head">
+            <div class="section-title">All clear</div>
+            <div class="section-stats">
+              <span>{repoCount} repositories checked</span>
+            </div>
+          </div>
+          <div class="empty">
+            No jobs are running or queued in any watched repository. Nothing is competing for a
+            concurrency slot right now.
+            {lastPoll.value ? ` Last checked ${new Date(lastPoll.value).toLocaleTimeString()}.` : ''}
+          </div>
+        </section>
+      ) : (
+        list.map((bucket) => <RunnerClassSection key={bucket.cls} bucket={bucket} />)
+      )}
 
       <Footer />
     </div>
