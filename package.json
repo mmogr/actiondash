@@ -1,0 +1,27 @@
+{
+  "name": "actiondash",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "description": "Cross-repo GitHub Actions queue dashboard. Static, no backend.",
+  "scripts": {
+    "dev": "vite",
+    "build": "tsc --noEmit && vite build",
+    "preview": "vite preview",
+    "test": "vitest run",
+    "test:watch": "vitest",
+    "check:csp": "node scripts/check-csp.mjs",
+    "check:fetch": "node scripts/check-fetch.mjs",
+    "verify": "npm run test && npm run build && npm run check:csp && npm run check:fetch"
+  },
+  "dependencies": {
+    "@preact/signals": "^2.11.2",
+    "preact": "^10.29.8"
+  },
+  "devDependencies": {
+    "@preact/preset-vite": "^2.10.6",
+    "typescript": "^7.0.2",
+    "vite": "^8.2.2",
+    "vitest": "^5.0.0"
+  }
+}
