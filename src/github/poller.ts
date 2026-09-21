@@ -1,5 +1,12 @@
 import { batch } from '@preact/signals'
-import { getBilledCount, getRateLimit, getRetryAfterMs, GitHubError, isRateLimitError } from './client'
+import {
+  getBilledCount,
+  getRateLimit,
+  getRetryAfterMs,
+  GitHubError,
+  isRateLimitError,
+  resetRetryAfter,
+} from './client'
 import { listJobs, listRuns } from './api'
 import { repoKey, type RepoRef, type RunWithRepo, type WorkflowJob } from './types'
 import { settings, updateSettings } from '../state/settings'
@@ -265,6 +272,7 @@ export async function pollOnce(): Promise<void> {
   const mine = ++generation
 
   polling.value = true
+  resetRetryAfter()
   const billedBefore = getBilledCount()
   const problems: string[] = []
   const byRepo = new Map<string, RunWithRepo[]>()

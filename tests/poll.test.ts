@@ -1,6 +1,6 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { clearCache } from '../src/github/client'
-import { clearJobCache, pollOnce, stopPolling } from '../src/github/poller'
+import { clearJobCache, pollOnce, startPolling, stopPolling } from '../src/github/poller'
 import type { RunWithRepo, WorkflowJob } from '../src/github/types'
 import { settings } from '../src/state/settings'
 import * as store from '../src/state/store'
@@ -199,6 +199,39 @@ describe('pollOnce', () => {
     // Aborting has to reach fetch, or the requests run on and are billed.
     for (const call of gh.calls) expect(call.signal?.aborted).toBe(true)
     expect(store.firstLoadDone.value).toBe(false)
+  })
+})
+
+describe('pacing', () => {
+  it('honours a retry-after from any response in the poll, not just the last', async () => {
+    // Requests in one poll run concurrently, so which one answers last is
+    // chance. A backoff GitHub asked for must not depend on it.
+    gh.on(
+      /\/actions\/runs\?status=queued&/,
+      json({ total_count: 0, workflow_runs: [] }, { headers: { 'retry-after': '60' } }),
+    )
+    gh.on(
+      /\/actions\/runs\?status=in_progress&/,
+      json({ total_count: 1, workflow_runs: [makeRun({ id: 1, status: 'in_progress' })] }),
+    )
+    scriptJobs(1, [makeJob({ run_id: 1, status: 'in_progress' })])
+
+    startPolling()
+    await until(() => store.effectiveIntervalMs.value > 0)
+
+    expect(store.effectiveIntervalMs.value).toBe(60_000)
+  })
+
+  it('forgets a retry-after once the poll that received it is over', async () => {
+    const empty = { total_count: 0, workflow_runs: [] }
+    gh.on(/\/actions\/runs\?status=/, json(empty, { headers: { 'retry-after': '60' } }))
+    await pollOnce()
+    gh.on(/\/actions\/runs\?status=/, json(empty))
+
+    startPolling()
+    await until(() => store.effectiveIntervalMs.value > 0)
+
+    expect(store.effectiveIntervalMs.value).toBe(15_000)
   })
 })
 
