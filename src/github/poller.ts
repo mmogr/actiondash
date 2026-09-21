@@ -307,8 +307,13 @@ export async function pollOnce(): Promise<void> {
     await mapLimit(needed, JOB_CONCURRENCY, async (run) => {
       try {
         const list = await listJobs({ owner: run.repoOwner, name: run.repoName }, run.id)
+        // A newer poll may have started, and cached fresher jobs, while this
+        // listing was on its way back. The cache outlives the poll, so the
+        // check publish() makes is needed here too.
+        if (mine !== generation) return
         jobCache.set(run.id, { jobs: list, updatedAt: run.updated_at, fetchedAt: Date.now() })
       } catch (err) {
+        if (mine !== generation) return
         // A run that finished between the two calls answers 404. Recording it
         // as empty is correct: it is no longer holding a slot.
         if (err instanceof GitHubError && err.status === 404) {
