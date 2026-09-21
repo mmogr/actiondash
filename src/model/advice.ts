@@ -15,14 +15,19 @@ export type Advice =
   /**
    * An observation that no plan can produce. The plan is not the thing to
    * change, so this gets its own notice rather than a suggestion to act on.
+   * pastEveryPlan says whether even Enterprise could produce it, since telling
+   * an Enterprise account that no plan below Enterprise allows it is false.
    */
-  | { kind: 'suspect'; dimension: 'macos' | 'total' }
+  | { kind: 'suspect'; dimension: 'macos' | 'total'; pastEveryPlan: boolean }
 
 export function adviceFor(observed: ObservedMax, current: PlanId, dismissed: boolean): Advice {
   const plan = PLANS[current]
   const suggested = inferPlan(observed, current)
   const dimension = (observed.macos ?? 0) > plan.macos ? 'macos' : 'total'
   if (suggested !== null) return { kind: 'suggest', plan: suggested, dimension }
-  if (!planExplains(plan, observed) && !dismissed) return { kind: 'suspect', dimension }
+  if (!planExplains(plan, observed) && !dismissed) {
+    const pastEveryPlan = !Object.values(PLANS).some((p) => planExplains(p, observed))
+    return { kind: 'suspect', dimension, pastEveryPlan }
+  }
   return { kind: 'none' }
 }
