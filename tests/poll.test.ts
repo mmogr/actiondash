@@ -103,6 +103,7 @@ afterEach(() => {
     store.resetData()
     vi.restoreAllMocks()
     vi.unstubAllGlobals()
+    vi.useRealTimers()
   }
 })
 
@@ -198,5 +199,67 @@ describe('pollOnce', () => {
     // Aborting has to reach fetch, or the requests run on and are billed.
     for (const call of gh.calls) expect(call.signal?.aborted).toBe(true)
     expect(store.firstLoadDone.value).toBe(false)
+  })
+})
+
+describe('pollOnce, with job snapshots of different ages', () => {
+  // Only Date is faked: the snapshot ages are what matter, and until() still
+  // needs real timers to let promise callbacks run.
+  beforeEach(() => {
+    vi.useFakeTimers({ toFake: ['Date'] })
+    vi.setSystemTime(new Date('2026-09-21T10:00:00Z'))
+  })
+
+  const inProgress = (n: number, runId: number) =>
+    Array.from({ length: n }, () => makeJob({ run_id: runId, status: 'in_progress' }))
+  const finished = (jobs: WorkflowJob[]) =>
+    jobs.map((j) => ({ ...j, status: 'completed', conclusion: 'success' }))
+  const jobCalls = (runId: number) => gh.calls.filter((c) => c.url.includes(`/runs/${runId}/jobs`))
+
+  /** Five macOS jobs, then thirty seconds, then three more in a new run. */
+  async function fiveThenThreeMore(firstFiveStillRunning: boolean): Promise<void> {
+    const early = makeRun({ id: 1, status: 'in_progress' })
+    const five = inProgress(5, 1)
+    scriptRuns([], [early])
+    scriptJobs(1, five)
+    await pollOnce()
+    expect(macos()?.running).toHaveLength(5)
+
+    // Past the sampling window but inside the job cache's staleness limit, and
+    // the first run's updated_at has not moved, so its snapshot is reused.
+    vi.setSystemTime(Date.now() + 30_000)
+    scriptRuns([], [early, makeRun({ id: 2, status: 'in_progress' })])
+    scriptJobs(1, firstFiveStillRunning ? five : finished(five))
+    scriptJobs(2, inProgress(3, 2))
+    await pollOnce()
+  }
+
+  it('does not show a pool over its ceiling from a snapshot it has not refreshed', async () => {
+    await fiveThenThreeMore(false)
+
+    // The pro plan caps macOS at five. Eight would be the old five, long since
+    // finished, counted beside the new three.
+    expect(macos()?.running).toHaveLength(3)
+    expect(jobCalls(1)).toHaveLength(2)
+  })
+
+  it('still shows a genuine excess once the snapshot is fresh', async () => {
+    // Over the ceiling for real is what the suspect-observation banner exists
+    // for, so re-measuring must not hide it.
+    await fiveThenThreeMore(true)
+
+    expect(macos()?.running).toHaveLength(8)
+  })
+
+  it('costs nothing extra when the pool is within its ceiling', async () => {
+    const early = makeRun({ id: 1, status: 'in_progress' })
+    scriptRuns([], [early])
+    scriptJobs(1, inProgress(2, 1))
+    await pollOnce()
+
+    vi.setSystemTime(Date.now() + 30_000)
+    await pollOnce()
+
+    expect(jobCalls(1)).toHaveLength(1)
   })
 })
