@@ -99,11 +99,18 @@ export function Footer() {
         </span>
       )}
 
+      {/* Stating the plan outright is newer evidence than an old inference, so
+          the observation restarts rather than arguing with the choice. */}
       <label>
         Plan
         <select
           value={settings.value.plan}
-          onChange={(e) => updateSettings({ plan: (e.target as HTMLSelectElement).value as PlanId })}
+          onChange={(e) =>
+            updateSettings({
+              plan: (e.target as HTMLSelectElement).value as PlanId,
+              observedMax: {},
+            })
+          }
         >
           {Object.values(PLANS).map((p) => (
             <option key={p.id} value={p.id}>

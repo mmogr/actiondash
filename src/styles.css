@@ -204,6 +204,14 @@ code,
   border-color: var(--queued);
 }
 
+/* Without this the flex row spreads a banner's buttons to opposite ends. */
+.banner-actions {
+  display: flex;
+  gap: 10px;
+  align-items: center;
+  flex-shrink: 0;
+}
+
 /* ---------- sections ---------- */
 
 .section {

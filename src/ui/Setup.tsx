@@ -91,7 +91,13 @@ export function Setup() {
     const token = pendingToken.value ?? stored
     try {
       await probeActionsAccess(refs[0]!)
-      updateSettings({ token, repos: refs })
+      // The ceiling belongs to the account that owns the repositories, so a
+      // peak measured over one set of owners is no evidence about another. A
+      // repository added under an owner already watched leaves it standing.
+      const ownersOf = (list: readonly RepoRef[]): string =>
+        [...new Set(list.map((r) => r.owner))].sort().join(',')
+      const ownersChanged = ownersOf(settings.value.repos) !== ownersOf(refs)
+      updateSettings({ token, repos: refs, ...(ownersChanged ? { observedMax: {} } : {}) })
       pendingToken.value = null
       clearJobCache()
       resetData()
@@ -282,7 +288,10 @@ export function Setup() {
               <select
                 value={settings.value.plan}
                 onChange={(e) =>
-                  updateSettings({ plan: (e.target as HTMLSelectElement).value as PlanId })
+                  updateSettings({
+                    plan: (e.target as HTMLSelectElement).value as PlanId,
+                    observedMax: {},
+                  })
                 }
               >
                 {Object.values(PLANS).map((plan) => (
