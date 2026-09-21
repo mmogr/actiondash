@@ -15,9 +15,15 @@ export function runnerClass(labels: readonly string[]): RunnerClass {
   if (normalised.length === 0) return 'other'
   if (normalised.includes('self-hosted')) return 'self-hosted'
 
+  // Matched on the hosted image families, which are open-ended by design:
+  // macos-26 and windows-2025 have to keep working without a release here, and
+  // the larger-runner suffixes hang off the same names. Deliberately no 'mac-'
+  // or 'win-' prefix: GitHub hosts nothing named that way, so those could only
+  // ever have matched an operator's own hardware, and billing a private Mac to
+  // the hosted allowance is the one error this module exists to prevent.
   for (const label of normalised) {
-    if (label.startsWith('macos') || label.startsWith('mac-')) return 'macos'
-    if (label.startsWith('windows') || label.startsWith('win-')) return 'windows'
+    if (label.startsWith('macos')) return 'macos'
+    if (label.startsWith('windows')) return 'windows'
     if (label.startsWith('ubuntu') || label.startsWith('linux')) return 'linux'
   }
   return 'other'
