@@ -309,10 +309,20 @@ export async function pollOnce(): Promise<void> {
         const list = await listJobs({ owner: run.repoOwner, name: run.repoName }, run.id)
         jobCache.set(run.id, { jobs: list, updatedAt: run.updated_at, fetchedAt: Date.now() })
       } catch (err) {
-        if (err instanceof GitHubError && err.status === 401) throw err
         // A run that finished between the two calls answers 404. Recording it
         // as empty is correct: it is no longer holding a slot.
-        jobCache.set(run.id, { jobs: [], updatedAt: run.updated_at, fetchedAt: Date.now() })
+        if (err instanceof GitHubError && err.status === 404) {
+          jobCache.set(run.id, { jobs: [], updatedAt: run.updated_at, fetchedAt: Date.now() })
+          return
+        }
+        if (err instanceof GitHubError && err.status === 401) throw err
+        if (isRateLimitError(err)) throw err
+        // Any other failure says nothing about whether the jobs still hold
+        // slots. Recording them as empty would show a busy pool as clear, so
+        // the last snapshot stands, the reader is told, and a poll built on a
+        // snapshot it could not refresh gets no vote on the ceiling.
+        contemporaneous = false
+        problems.push(describe(err, { owner: run.repoOwner, name: run.repoName }))
       }
     })
   }
@@ -352,7 +362,8 @@ export async function pollOnce(): Promise<void> {
       pollCost.value = lastBilled
       firstLoadDone.value = true
       rateLimited.value = null
-      warning.value = problems.length > 0 ? problems.join(' ') : null
+      // Several runs of one repository can fail the same way in one poll.
+      warning.value = problems.length > 0 ? [...new Set(problems)].join(' ') : null
       fatalError.value = null
     })
     if (contemporaneous) recordObserved()
