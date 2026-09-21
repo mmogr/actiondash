@@ -59,6 +59,40 @@ describe('inferPlan', () => {
   })
 })
 
+describe('inferPlan, over the whole PLANS table', () => {
+  // Derived from the published limits rather than from examples, so it covers
+  // readings nobody thought to write down, and it changes when the table does.
+  const order = Object.values(PLANS).sort((a, b) => a.total - b.total || a.macos - b.macos)
+  const dimensions = ['macos', 'total'] as const
+
+  it('never jumps past plans ruled out only where they match the current one', () => {
+    // A plan between the current one and the suggestion that failed only on a
+    // ceiling it shares with the current plan shows that dimension cannot tell
+    // the plans apart. Naming anything beyond it is guessing, and this is the
+    // shape of the bug that told a Pro account it must be on Enterprise.
+    const violations: string[] = []
+    for (const current of order) {
+      for (const dim of dimensions) {
+        for (let n = current[dim] + 1; n <= current[dim] + 60; n++) {
+          const observed = { [dim]: n }
+          const named = inferPlan(observed, current.id)
+          if (named === null) continue
+          const between = order.slice(order.indexOf(current) + 1, order.indexOf(PLANS[named]))
+          const unjustified =
+            between.length > 0 &&
+            between.every((plan) =>
+              dimensions
+                .filter((d) => plan[d] < (observed[d] ?? 0))
+                .every((d) => plan[d] === current[d]),
+            )
+          if (unjustified) violations.push(`${current.id} ${dim}=${n} -> ${named}`)
+        }
+      }
+    }
+    expect(violations).toEqual([])
+  })
+})
+
 describe('planExplains', () => {
   it('accepts an observation within both ceilings', () => {
     expect(planExplains(PLANS.pro, { macos: 5, total: 40 })).toBe(true)
