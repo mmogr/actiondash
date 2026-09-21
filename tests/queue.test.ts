@@ -17,6 +17,34 @@ function index(jobs: WorkflowJob[]): Map<number, WorkflowJob[]> {
 }
 
 describe('buildBuckets', () => {
+  it('counts a run that arrives twice only once', () => {
+    // Eight entries built from four jobs is what told a Pro account, whose
+    // macOS ceiling really is five, that it had to be on Enterprise.
+    const run = makeRun({ id: 1 })
+    const jobs = [10, 11, 12, 13].map((id) =>
+      makeJob({ id, run_id: 1, status: 'in_progress', started_at: '2026-09-09T10:01:00Z' }),
+    )
+
+    const [macos] = buildBuckets([run, run], index(jobs), FREE)
+
+    expect(macos?.running).toHaveLength(4)
+    expect(macos?.running.map((j) => j.job.id)).toEqual([10, 11, 12, 13])
+  })
+
+  it('counts a job once when one repository is watched under two spellings', () => {
+    // repoKey does not normalise case, so Acme/app and acme/app are two watch
+    // entries polled independently, each returning the same run and jobs.
+    const run = makeRun({ id: 1, repoOwner: 'acme' })
+    const sameRepo = makeRun({ id: 1, repoOwner: 'Acme' })
+    const jobs = [10, 11].map((id) =>
+      makeJob({ id, run_id: 1, status: 'in_progress', started_at: '2026-09-09T10:01:00Z' }),
+    )
+
+    const [macos] = buildBuckets([run, sameRepo], index(jobs), FREE)
+
+    expect(macos?.running).toHaveLength(2)
+  })
+
   it('splits running from queued and applies the plan cap', () => {
     const run = makeRun({ id: 1 })
     const jobs = [
