@@ -106,8 +106,8 @@ const MAX_RUNS_PER_REPO = 60
  *    buildBuckets, since repoKey does not normalise case);
  * 4. job snapshots between SAMPLE_MAX_AGE_MS and MAX_JOB_STALENESS_MS old
  *    counted alongside fresh ones, so jobs that finished since still count as
- *    running. Contemporaneity keeps that out of observedMax but not out of the
- *    meters.
+ *    running. Contemporaneity keeps that out of observedMax, and
+ *    remeasureOverCap keeps it off a meter that would read over its ceiling.
  *
  * The in_progress copy wins, because it carries the fresher updated_at that the
  * job cache's staleness test depends on. Running runs are listed first so that
