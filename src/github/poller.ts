@@ -3,7 +3,8 @@ import { getBilledCount, getRateLimit, getRetryAfterMs, GitHubError, isRateLimit
 import { listJobs, listRuns } from './api'
 import { repoKey, type RepoRef, type RunWithRepo, type WorkflowJob } from './types'
 import { settings, updateSettings } from '../state/settings'
-import type { ObservedMax } from '../model/plans'
+import { PLANS, type ObservedMax } from '../model/plans'
+import { buildBuckets } from '../model/queue'
 import {
   buckets,
   effectiveIntervalMs,
@@ -49,6 +50,11 @@ const MAX_JOB_STALENESS_MS = 90_000
  * concurrency ceiling. Far tighter than MAX_JOB_STALENESS_MS, because showing a
  * slightly stale row is a small cosmetic cost while asserting a billing tier
  * from a blend of moments a minute apart is not a measurement at all.
+ *
+ * A stale row is not always cosmetic, though: jobs that have finished since
+ * still count as running, and beside newer runs that can show a pool over its
+ * own ceiling. A pool reading over its ceiling therefore has its older
+ * snapshots refetched before it is shown; see remeasureOverCap.
  */
 const SAMPLE_MAX_AGE_MS = 20_000
 /** Consecutive polls that must agree before a new high-water mark is believed. */
@@ -279,19 +285,53 @@ export async function pollOnce(): Promise<void> {
   /**
    * Pushes what has been gathered so far into the store.
    */
-  const publish = (): void => {
-    if (mine !== generation) return
-    const all = [...byRepo.values()].flat()
+  const cachedJobs = (all: readonly RunWithRepo[]): Map<number, WorkflowJob[]> => {
     const jobs = new Map<number, WorkflowJob[]>()
     for (const run of all) {
       const cached = jobCache.get(run.id)
       if (cached) jobs.set(run.id, cached.jobs)
     }
+    return jobs
+  }
+
+  const publish = (): void => {
+    if (mine !== generation) return
+    const all = [...byRepo.values()].flat()
+    const jobs = cachedJobs(all)
     batch(() => {
       runs.value = all
       jobsByRun.value = jobs
       rateLimit.value = getRateLimit()
     })
+  }
+
+  const fetchJobs = async (run: RunWithRepo): Promise<void> => {
+    try {
+      const list = await listJobs({ owner: run.repoOwner, name: run.repoName }, run.id, {
+        signal: controller.signal,
+      })
+      // A newer poll may have started, and cached fresher jobs, while this
+      // listing was on its way back. The cache outlives the poll, so the
+      // check publish() makes is needed here too.
+      if (mine !== generation) return
+      jobCache.set(run.id, { jobs: list, updatedAt: run.updated_at, fetchedAt: Date.now() })
+    } catch (err) {
+      if (mine !== generation) return
+      // A run that finished between the two calls answers 404. Recording it
+      // as empty is correct: it is no longer holding a slot.
+      if (err instanceof GitHubError && err.status === 404) {
+        jobCache.set(run.id, { jobs: [], updatedAt: run.updated_at, fetchedAt: Date.now() })
+        return
+      }
+      if (err instanceof GitHubError && err.status === 401) throw err
+      if (isRateLimitError(err)) throw err
+      // Any other failure says nothing about whether the jobs still hold
+      // slots. Recording them as empty would show a busy pool as clear, so
+      // the last snapshot stands, the reader is told, and a poll built on a
+      // snapshot it could not refresh gets no vote on the ceiling.
+      contemporaneous = false
+      problems.push(describe(err, { owner: run.repoOwner, name: run.repoName }))
+    }
   }
 
   const fetchJobsFor = async (repoRuns: readonly RunWithRepo[]): Promise<void> => {
@@ -304,34 +344,32 @@ export async function pollOnce(): Promise<void> {
       if (now - cached.fetchedAt > SAMPLE_MAX_AGE_MS) contemporaneous = false
       return false
     })
-    await mapLimit(needed, JOB_CONCURRENCY, async (run) => {
-      try {
-        const list = await listJobs({ owner: run.repoOwner, name: run.repoName }, run.id, {
-          signal: controller.signal,
-        })
-        // A newer poll may have started, and cached fresher jobs, while this
-        // listing was on its way back. The cache outlives the poll, so the
-        // check publish() makes is needed here too.
-        if (mine !== generation) return
-        jobCache.set(run.id, { jobs: list, updatedAt: run.updated_at, fetchedAt: Date.now() })
-      } catch (err) {
-        if (mine !== generation) return
-        // A run that finished between the two calls answers 404. Recording it
-        // as empty is correct: it is no longer holding a slot.
-        if (err instanceof GitHubError && err.status === 404) {
-          jobCache.set(run.id, { jobs: [], updatedAt: run.updated_at, fetchedAt: Date.now() })
-          return
-        }
-        if (err instanceof GitHubError && err.status === 401) throw err
-        if (isRateLimitError(err)) throw err
-        // Any other failure says nothing about whether the jobs still hold
-        // slots. Recording them as empty would show a busy pool as clear, so
-        // the last snapshot stands, the reader is told, and a poll built on a
-        // snapshot it could not refresh gets no vote on the ceiling.
-        contemporaneous = false
-        problems.push(describe(err, { owner: run.repoOwner, name: run.repoName }))
+    await mapLimit(needed, JOB_CONCURRENCY, fetchJobs)
+  }
+
+  /**
+   * Refetches the jobs behind any pool that reads over its ceiling from a
+   * snapshot older than the sampling window.
+   *
+   * A reused snapshot can still list jobs that have finished since, and beside
+   * newer runs that can put a pool over a ceiling it cannot exceed. So an
+   * impossible reading pays for its own re-measurement: a count that was an
+   * artefact of mixing moments falls back, while a genuine excess survives it
+   * on fresh data and still reaches the suspect-observation banner. A pool
+   * within its ceiling costs nothing extra.
+   */
+  const remeasureOverCap = async (): Promise<void> => {
+    const all = [...byRepo.values()].flat()
+    const now = Date.now()
+    const suspect = new Set<number>()
+    for (const bucket of buildBuckets(all, cachedJobs(all), PLANS[settings.value.plan])) {
+      if (bucket.cap === null || bucket.running.length <= bucket.cap) continue
+      for (const { run } of bucket.running) {
+        const cached = jobCache.get(run.id)
+        if (cached && now - cached.fetchedAt > SAMPLE_MAX_AGE_MS) suspect.add(run.id)
       }
-    })
+    }
+    await mapLimit(all.filter((run) => suspect.has(run.id)), JOB_CONCURRENCY, fetchJobs)
   }
 
   try {
@@ -358,6 +396,9 @@ export async function pollOnce(): Promise<void> {
       }
     })
 
+    if (controller.signal.aborted || mine !== generation) return
+
+    await remeasureOverCap()
     if (controller.signal.aborted || mine !== generation) return
 
     pruneJobCache(new Set([...byRepo.values()].flat().map((r) => r.id)))

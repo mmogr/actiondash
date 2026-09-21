@@ -177,8 +177,11 @@ measurement, and four things have to hold before this one is:
   is a safeguard, not the fix for a known miscount.
 - **Contemporaneous.** Job data is cached for up to ninety seconds and the
   repositories are swept a few at a time, so a reading can blend moments a
-  minute apart. That is fine to look at and useless as proof, so a poll that
-  reused anything older than the sampling window does not vote.
+  minute apart. That is useless as proof, so a poll that reused anything older
+  than the sampling window does not vote. It is not always fine to look at
+  either: jobs that finished since can still count as running and put a pool
+  over its own ceiling. A pool that reads over its ceiling has those older
+  snapshots refetched before it is shown.
 - **Corroborated.** A high-water mark never comes back down, so one bad sample
   would be permanent. Three consecutive polls have to support a figure, which a
   real ceiling reaches over and over anyway.
