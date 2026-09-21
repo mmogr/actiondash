@@ -2,7 +2,8 @@ import { useEffect } from 'preact/hooks'
 import { startPolling, stopPolling } from '../github/poller'
 import { distinctRuns } from '../model/queue'
 import { settings, updateSettings } from '../state/settings'
-import { inferPlan, planExplains, PLANS } from '../model/plans'
+import { PLANS } from '../model/plans'
+import { adviceFor } from '../model/advice'
 import {
   buckets,
   fatalError,
@@ -32,17 +33,9 @@ export function Dashboard() {
   const list = buckets.value
   const nothingActive = !loading && totalRunning.value === 0 && totalQueued.value === 0
 
-  // The account's real ceiling cannot be read from the API without granting the
-  // token profile access, so it is inferred from what has actually been seen
-  // running at once. A selection that cannot explain the observations is wrong.
   const observed = settings.value.observedMax
   const plan = PLANS[settings.value.plan]
-  const suggested = inferPlan(observed, settings.value.plan)
-  const macosExceeded = (observed.macos ?? 0) > plan.macos
-  // An observation that no plan can produce. The plan is not the thing to
-  // change, so this gets its own notice rather than a suggestion to act on.
-  const suspect =
-    !planExplains(plan, observed) && suggested === null && !observationDismissed.value
+  const advice = adviceFor(observed, settings.value.plan, observationDismissed.value)
   // Counted as runs, so the figure matches the footer's cancel button.
   const staleRunCount = distinctRuns(stale.value).length
   const repoCount = settings.value.repos.length
@@ -76,17 +69,17 @@ export function Dashboard() {
         </div>
       )}
 
-      {suggested !== null && (
+      {advice.kind === 'suggest' && (
         <div class="banner warn">
           <span>
-            {macosExceeded
+            {advice.dimension === 'macos'
               ? `${observed.macos} macOS jobs have been seen running at once, which the ${plan.label} limit of ${plan.macos} cannot produce.`
               : `${observed.total} jobs have been seen running at once, which the ${plan.label} limit of ${plan.total} cannot produce.`}{' '}
             The meters below are measuring against the wrong ceiling.
           </span>
           <div class="banner-actions">
-            <button onClick={() => updateSettings({ plan: suggested })}>
-              Use {PLANS[suggested].label}
+            <button onClick={() => updateSettings({ plan: advice.plan })}>
+              Use {PLANS[advice.plan].label}
             </button>
             <button class="link" onClick={() => updateSettings({ observedMax: {} })}>
               My plan is right, recheck
@@ -95,10 +88,10 @@ export function Dashboard() {
         </div>
       )}
 
-      {suspect && (
+      {advice.kind === 'suspect' && (
         <div class="banner warn">
           <span>
-            {macosExceeded
+            {advice.dimension === 'macos'
               ? `${observed.macos} macOS jobs were counted running at once, which no plan below Enterprise allows.`
               : `${observed.total} jobs were counted running at once, which no published plan allows.`}{' '}
             That is more likely a counting problem than a plan problem: the watched repositories may
