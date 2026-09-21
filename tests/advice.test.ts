@@ -25,7 +25,7 @@ describe('adviceFor', () => {
 
   it('treats a macOS excess no plan explains as a counting problem', () => {
     // The shape of the reading from PR #1: a Pro account, eight macOS jobs.
-    expect(adviceFor({ macos: 8, total: 8 }, 'pro', false)).toEqual({
+    expect(adviceFor({ macos: 8, total: 8 }, 'pro', false)).toMatchObject({
       kind: 'suspect',
       dimension: 'macos',
     })
@@ -38,4 +38,17 @@ describe('adviceFor', () => {
   it('does not let dismissal hide a plan suggestion', () => {
     expect(adviceFor({ macos: 3, total: 55 }, 'pro', true).kind).toBe('suggest')
   })
+
+  it('distinguishes a reading past every plan from one only Enterprise explains', () => {
+    // "No plan below Enterprise allows" is false for an Enterprise account, and
+    // an understatement for anyone once the count passes Enterprise's ceiling.
+    expect(adviceFor({ macos: 8, total: 8 }, 'pro', false)).toMatchObject({ pastEveryPlan: false })
+    expect(adviceFor({ macos: 60, total: 60 }, 'enterprise', false)).toMatchObject({
+      kind: 'suspect',
+      dimension: 'macos',
+      pastEveryPlan: true,
+    })
+    expect(adviceFor({ macos: 60, total: 60 }, 'pro', false)).toMatchObject({ pastEveryPlan: true })
+  })
 })
+

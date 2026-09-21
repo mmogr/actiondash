@@ -92,7 +92,7 @@ export function Dashboard() {
         <div class="banner warn">
           <span>
             {advice.dimension === 'macos'
-              ? `${observed.macos} macOS jobs were counted running at once, which no plan below Enterprise allows.`
+              ? `${observed.macos} macOS jobs were counted running at once, which ${advice.pastEveryPlan ? 'no published plan' : 'no plan below Enterprise'} allows.`
               : `${observed.total} jobs were counted running at once, which no published plan allows.`}{' '}
             That is more likely a counting problem than a plan problem: the watched repositories may
             span more than one owner, whose pools GitHub meters separately, or a self-hosted machine
