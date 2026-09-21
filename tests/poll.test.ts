@@ -185,4 +185,18 @@ describe('pollOnce', () => {
     expect(macos()?.running.map((j) => j.job.id)).toEqual([current.id])
     expect(macos()?.queued).toHaveLength(0)
   })
+
+  it('cancels its requests when polling stops', async () => {
+    const hanging = deferred({ honourAbort: true })
+    gh.on(/\/actions\/runs\?status=/, hanging.reply)
+    const poll = pollOnce()
+    await until(() => gh.calls.length === 2)
+
+    stopPolling()
+    await poll
+
+    // Aborting has to reach fetch, or the requests run on and are billed.
+    for (const call of gh.calls) expect(call.signal?.aborted).toBe(true)
+    expect(store.firstLoadDone.value).toBe(false)
+  })
 })

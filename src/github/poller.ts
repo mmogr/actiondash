@@ -306,7 +306,9 @@ export async function pollOnce(): Promise<void> {
     })
     await mapLimit(needed, JOB_CONCURRENCY, async (run) => {
       try {
-        const list = await listJobs({ owner: run.repoOwner, name: run.repoName }, run.id)
+        const list = await listJobs({ owner: run.repoOwner, name: run.repoName }, run.id, {
+          signal: controller.signal,
+        })
         // A newer poll may have started, and cached fresher jobs, while this
         // listing was on its way back. The cache outlives the poll, so the
         // check publish() makes is needed here too.
@@ -337,8 +339,8 @@ export async function pollOnce(): Promise<void> {
       if (controller.signal.aborted || mine !== generation) return
       try {
         const [queued, running] = await Promise.all([
-          listRuns(repo, 'queued'),
-          listRuns(repo, 'in_progress'),
+          listRuns(repo, 'queued', { signal: controller.signal }),
+          listRuns(repo, 'in_progress', { signal: controller.signal }),
         ])
         const repoRuns = mergeRunLists(queued, running, MAX_RUNS_PER_REPO)
         await fetchJobsFor(repoRuns)
