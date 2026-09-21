@@ -97,6 +97,14 @@ enforcing, run this in the console; it must be blocked:
 fetch('https://example.com')
 ```
 
+The tests check the dashboard against what GitHub is believed to return.
+`npm run probe` checks the beliefs: it sends the app's own queries to a few
+busy public repositories and prints what comes back, such as whether a run
+appears in both status listings, what an unrecognised status value returns,
+and whether conditional requests move the rate limit. It asserts nothing and
+is run by hand, with a token nothing else is using, because other traffic on
+the token skews the readings.
+
 ## Deploying
 
 Merge to `main`. Every pull request runs `npm run verify` in
