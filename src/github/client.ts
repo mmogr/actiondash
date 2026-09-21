@@ -86,10 +86,21 @@ export function getBilledCount(): number {
   return billedCount
 }
 
-/** Milliseconds the API asked us to wait, from retry-after or x-poll-interval. */
+/**
+ * Milliseconds the API asked us to wait, from retry-after or x-poll-interval.
+ *
+ * The longest request since the last reset, deliberately, rather than the most
+ * recent response's. A poll's requests run concurrently, so which answers last
+ * is chance, and a header-less response must not cancel a backoff that
+ * another one asked for. The poller resets it as each poll starts, so a
+ * request honoured once is not honoured forever.
+ */
 let retryAfterMs = 0
 export function getRetryAfterMs(): number {
   return retryAfterMs
+}
+export function resetRetryAfter(): void {
+  retryAfterMs = 0
 }
 
 /** Token access is inverted so that this module never imports application state. */
@@ -131,7 +142,7 @@ function captureRateLimit(res: Response): void {
   // GitHub asks callers to honour these when it is under load or rate limiting.
   const retryAfter = res.headers.get('retry-after') ?? res.headers.get('x-poll-interval')
   const parsed = retryAfter === null ? NaN : Number(retryAfter)
-  retryAfterMs = Number.isFinite(parsed) && parsed > 0 ? parsed * 1000 : 0
+  if (Number.isFinite(parsed) && parsed > 0) retryAfterMs = Math.max(retryAfterMs, parsed * 1000)
 
   const remaining = res.headers.get('x-ratelimit-remaining')
   if (remaining === null) return
