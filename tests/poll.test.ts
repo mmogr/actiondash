@@ -4,7 +4,7 @@ import { clearJobCache, pollOnce, stopPolling } from '../src/github/poller'
 import type { RunWithRepo, WorkflowJob } from '../src/github/types'
 import { settings } from '../src/state/settings'
 import * as store from '../src/state/store'
-import { FakeGitHub, json, type Reply } from './fake-github'
+import { deferred, FakeGitHub, json, type Reply } from './fake-github'
 import { makeJob, makeRun } from './helpers'
 
 /**
@@ -30,9 +30,13 @@ function scriptRuns(queued: RunWithRepo[], running: RunWithRepo[]): void {
   )
 }
 
-function scriptJobs(runId: number, jobs: WorkflowJob[]): void {
+function jobsReply(jobs: WorkflowJob[]): Reply {
   for (const job of jobs) scriptedJobIds.add(job.id)
-  scriptJobsReply(runId, json({ total_count: jobs.length, jobs }))
+  return json({ total_count: jobs.length, jobs })
+}
+
+function scriptJobs(runId: number, jobs: WorkflowJob[]): void {
+  scriptJobsReply(runId, jobsReply(jobs))
 }
 
 function scriptJobsReply(runId: number, reply: Reply): void {
@@ -41,6 +45,12 @@ function scriptJobsReply(runId: number, reply: Reply): void {
 
 function macos(): ReturnType<typeof store.buckets.peek>[number] | undefined {
   return store.buckets.value.find((b) => b.cls === 'macos')
+}
+
+/** Lets pending promise callbacks run until the condition holds. */
+async function until(condition: () => boolean): Promise<void> {
+  for (let i = 0; i < 100 && !condition(); i++) await new Promise((r) => setTimeout(r, 0))
+  expect(condition()).toBe(true)
 }
 
 /** Everything the store holds, as text, for checking nothing secret got in. */
@@ -152,5 +162,27 @@ describe('pollOnce', () => {
     expect(macos()?.running).toHaveLength(0)
     expect(macos()?.queued).toHaveLength(0)
     expect(store.warning.value).toBeNull()
+  })
+
+  it('never lets a superseded poll overwrite newer job data', async () => {
+    // Cancelling from a row starts a new poll at once, so an older poll whose
+    // job listing is still on its way back is the everyday case.
+    scriptRuns([], [makeRun({ id: 1, status: 'in_progress' })])
+    const older = deferred()
+    scriptJobsReply(1, older.reply)
+    const first = pollOnce()
+    await until(() => gh.calls.some((c) => c.url.includes('/runs/1/jobs')))
+
+    const current = makeJob({ run_id: 1, status: 'in_progress' })
+    scriptJobs(1, [current])
+    await pollOnce()
+
+    older.resolve(jobsReply([makeJob({ run_id: 1, status: 'queued' })]))
+    await first
+    // A third poll reads the job cache, which is where a late write would land.
+    await pollOnce()
+
+    expect(macos()?.running.map((j) => j.job.id)).toEqual([current.id])
+    expect(macos()?.queued).toHaveLength(0)
   })
 })
