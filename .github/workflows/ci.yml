@@ -33,4 +33,9 @@ jobs:
 
       - run: npm ci
 
+      # A skipped or focused test turns the rest of this job green without
+      # running what it claims to. This is the check that defends the others.
+      - name: No skipped or focused tests
+        run: "! grep -rnE '\\.(skip|only)\\(' tests/"
+
       - run: npm run verify
