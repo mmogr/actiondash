@@ -235,6 +235,40 @@ describe('pacing', () => {
   })
 })
 
+describe('rate limiting', () => {
+  it('starts no new request once the allowance is refused', async () => {
+    const runs = Array.from({ length: 10 }, (_, i) => makeRun({ id: i + 1, status: 'in_progress' }))
+    scriptRuns([], runs)
+    const replies = runs.map((run) => {
+      const reply = deferred()
+      scriptJobsReply(run.id, reply.reply)
+      return reply
+    })
+    const jobCalls = () => gh.calls.filter((c) => c.url.includes('/jobs?'))
+
+    const poll = pollOnce()
+    await until(() => jobCalls().length > 0)
+    const inFlight = jobCalls().length
+    const reset = Math.floor(Date.now() / 1000) + 600
+    replies[0]!.resolve(
+      json(
+        { message: 'API rate limit exceeded' },
+        {
+          status: 403,
+          headers: { 'x-ratelimit-remaining': '0', 'x-ratelimit-reset': String(reset) },
+        },
+      ),
+    )
+    await poll
+    expect(store.rateLimited.value).toBe(reset)
+
+    // The requests already on their way finish; nothing new may start.
+    for (const reply of replies.slice(1)) reply.resolve(jobsReply([]))
+    for (let i = 0; i < 10; i++) await new Promise((r) => setTimeout(r, 0))
+    expect(jobCalls()).toHaveLength(inFlight)
+  })
+})
+
 describe('pollOnce, with job snapshots of different ages', () => {
   // Only Date is faked: the snapshot ages are what matter, and until() still
   // needs real timers to let promise callbacks run.

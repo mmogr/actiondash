@@ -147,15 +147,27 @@ let generation = 0
 /** Billed requests consumed by the most recent poll. */
 let lastBilled = 1
 
+/**
+ * Runs fn over items, at most limit at a time, and stops handing out items at
+ * the first rejection. Promise.all rejecting does not stop the other workers,
+ * and a rejection here is a 401 or a rate-limit refusal, after which every
+ * further request is one the dashboard has already said it will not make.
+ */
 async function mapLimit<T>(
   items: readonly T[],
   limit: number,
   fn: (item: T) => Promise<void>,
 ): Promise<void> {
   let cursor = 0
+  let failed = false
   const workers = Array.from({ length: Math.min(limit, items.length) }, async () => {
-    while (cursor < items.length) {
-      await fn(items[cursor++]!)
+    while (!failed && cursor < items.length) {
+      try {
+        await fn(items[cursor++]!)
+      } catch (err) {
+        failed = true
+        throw err
+      }
     }
   })
   await Promise.all(workers)
