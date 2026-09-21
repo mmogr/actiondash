@@ -68,6 +68,31 @@ const REPO_CONCURRENCY = 5
 /** Guard against a repository with a pathological number of active runs. */
 const MAX_RUNS_PER_REPO = 60
 
+/**
+ * Merges the two status listings into one run list, keeping each run once.
+ *
+ * GitHub's `status` filter matches a run's check runs, which are its jobs, so a
+ * run with one job already running and another still queued is returned by
+ * BOTH calls. At a saturated pool that is the ordinary state rather than an
+ * edge case, and concatenating the listings counts every running job of such a
+ * run twice.
+ *
+ * The in_progress copy wins, because it carries the fresher updated_at that the
+ * job cache's staleness test depends on. Running runs are listed first so that
+ * MAX_RUNS_PER_REPO truncates the waiting tail rather than the work that is
+ * actually holding a slot.
+ */
+export function mergeRunLists(
+  queued: readonly RunWithRepo[],
+  running: readonly RunWithRepo[],
+  limit: number,
+): RunWithRepo[] {
+  const byId = new Map<number, RunWithRepo>()
+  for (const run of running) byId.set(run.id, run)
+  for (const run of queued) if (!byId.has(run.id)) byId.set(run.id, run)
+  return [...byId.values()].slice(0, limit)
+}
+
 interface JobCacheEntry {
   jobs: WorkflowJob[]
   /** The run's updated_at when these jobs were fetched. */
@@ -224,7 +249,7 @@ export async function pollOnce(): Promise<void> {
           listRuns(repo, 'queued'),
           listRuns(repo, 'in_progress'),
         ])
-        const repoRuns = [...queued, ...running].slice(0, MAX_RUNS_PER_REPO)
+        const repoRuns = mergeRunLists(queued, running, MAX_RUNS_PER_REPO)
         await fetchJobsFor(repoRuns)
         byRepo.set(repoKey(repo), repoRuns)
       } catch (err) {
