@@ -2,12 +2,13 @@ import { useEffect } from 'preact/hooks'
 import { startPolling, stopPolling } from '../github/poller'
 import { distinctRuns } from '../model/queue'
 import { settings, updateSettings } from '../state/settings'
-import { inferPlan, PLANS } from '../model/plans'
+import { inferPlan, planExplains, PLANS } from '../model/plans'
 import {
   buckets,
   fatalError,
   firstLoadDone,
   lastPoll,
+  observationDismissed,
   polling,
   pollProgress,
   rateLimited,
@@ -38,6 +39,10 @@ export function Dashboard() {
   const plan = PLANS[settings.value.plan]
   const suggested = inferPlan(observed, settings.value.plan)
   const macosExceeded = (observed.macos ?? 0) > plan.macos
+  // An observation that no plan can produce. The plan is not the thing to
+  // change, so this gets its own notice rather than a suggestion to act on.
+  const suspect =
+    !planExplains(plan, observed) && suggested === null && !observationDismissed.value
   // Counted as runs, so the figure matches the footer's cancel button.
   const staleRunCount = distinctRuns(stale.value).length
   const repoCount = settings.value.repos.length
@@ -79,9 +84,33 @@ export function Dashboard() {
               : `${observed.total} jobs have been seen running at once, which the ${plan.label} limit of ${plan.total} cannot produce.`}{' '}
             The meters below are measuring against the wrong ceiling.
           </span>
-          <button onClick={() => updateSettings({ plan: suggested })}>
-            Use {PLANS[suggested].label}
-          </button>
+          <div class="banner-actions">
+            <button onClick={() => updateSettings({ plan: suggested })}>
+              Use {PLANS[suggested].label}
+            </button>
+            <button class="link" onClick={() => updateSettings({ observedMax: {} })}>
+              My plan is right, recheck
+            </button>
+          </div>
+        </div>
+      )}
+
+      {suspect && (
+        <div class="banner warn">
+          <span>
+            {macosExceeded
+              ? `${observed.macos} macOS jobs were counted running at once, which no plan below Enterprise allows.`
+              : `${observed.total} jobs were counted running at once, which no published plan allows.`}{' '}
+            That is more likely a counting problem than a plan problem: the watched repositories may
+            span more than one owner, whose pools GitHub meters separately, or a self-hosted machine
+            may be counted as a hosted one. Rechecking rebuilds the figure from the next few polls.
+          </span>
+          <div class="banner-actions">
+            <button onClick={() => updateSettings({ observedMax: {} })}>Recheck</button>
+            <button class="link" onClick={() => (observationDismissed.value = true)}>
+              dismiss
+            </button>
+          </div>
         </div>
       )}
 

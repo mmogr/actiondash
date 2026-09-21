@@ -15,6 +15,19 @@ import { clearCache, setTokenProvider } from '../github/client'
 
 const STORAGE_KEY = 'actiondash.settings.v1'
 
+/**
+ * Bumped when stored observations are known to have come from a version whose
+ * measurement was wrong. observedMax is a permanent high-water mark, so a
+ * figure recorded before runs were deduplicated could be double the truth and
+ * would otherwise be carried forward for the life of the browser profile.
+ *
+ * The storage key itself is deliberately not rotated: it also holds the token
+ * and the repository list, and both are still good. sanitiseObserved cannot do
+ * this job either, because it validates shape rather than provenance and so
+ * launders a plausible-looking wrong number straight through.
+ */
+export const OBSERVED_EPOCH = 2
+
 export interface Settings {
   token: string | null
   repos: RepoRef[]
@@ -26,6 +39,9 @@ export interface Settings {
    */
   observedMax: ObservedMax
 }
+
+/** What actually sits in storage: the settings, plus the observation epoch. */
+type StoredSettings = Partial<Settings> & { observedEpoch?: number }
 
 const DEFAULTS: Settings = {
   token: null,
@@ -39,7 +55,7 @@ function load(): Settings {
   try {
     const raw = localStorage.getItem(STORAGE_KEY)
     if (!raw) return { ...DEFAULTS }
-    const parsed = JSON.parse(raw) as Partial<Settings>
+    const parsed = JSON.parse(raw) as StoredSettings
     return {
       token: typeof parsed.token === 'string' ? parsed.token : null,
       repos: Array.isArray(parsed.repos) ? parsed.repos.filter(isRepoRef) : [],
@@ -49,7 +65,9 @@ function load(): Settings {
           ? parsed.pollIntervalMs
           : DEFAULTS.pollIntervalMs,
       observedMax:
-        parsed.observedMax && typeof parsed.observedMax === 'object'
+        parsed.observedEpoch === OBSERVED_EPOCH &&
+        parsed.observedMax &&
+        typeof parsed.observedMax === 'object'
           ? sanitiseObserved(parsed.observedMax)
           : {},
     }
@@ -94,7 +112,8 @@ export const pendingToken = signal<string | null>(null)
 
 function persist(next: Settings): void {
   try {
-    localStorage.setItem(STORAGE_KEY, JSON.stringify(next))
+    const stored: StoredSettings = { ...next, observedEpoch: OBSERVED_EPOCH }
+    localStorage.setItem(STORAGE_KEY, JSON.stringify(stored))
   } catch {
     // Storage unavailable. The session still works, it just will not survive a
     // reload, which is an acceptable degradation for a token-holding page.

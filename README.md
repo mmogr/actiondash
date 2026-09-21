@@ -152,22 +152,42 @@ macOS runner uses your own capacity rather than the GitHub-hosted allowance.
 ### The plan setting, and why it is a guess that corrects itself
 
 The occupancy meters need a denominator, which means knowing the account's
-concurrency ceiling. GitHub does expose it, on `GET /user`, but only to a token
-carrying profile access. Granting that to read a single number would undo the
-point of a token scoped to Actions alone, so the dashboard does not ask for it.
+concurrency ceiling. The API will not tell you: `GET /user` exposes the plan's
+name, never its limits, and a limit raised by GitHub Support would not show
+even there. So you pick the plan once at setup.
 
-You pick the plan once at setup instead. A wrong pick then corrects itself,
-because the ceiling can be inferred from behaviour: seeing eight macOS jobs run
-at once proves the cap is at least eight, whatever was selected. The dashboard
-records the most it has ever seen running at once, and when that cannot be
-produced by the chosen plan it says so and offers the smallest plan that fits.
-It never suggests a smaller plan, because a quiet account proves nothing about
-its ceiling.
+A wrong pick can sometimes correct itself, because a ceiling leaves evidence: a
+count of jobs genuinely running at one instant is a lower bound on the cap,
+whatever was selected. The dashboard records the most it has seen and offers
+the smallest plan that could produce it. It never suggests a smaller plan,
+because a quiet account proves nothing about its ceiling.
 
-One limitation worth knowing: the ceiling belongs to the account that **owns**
-each repository, not to whoever holds the token. Watching repositories owned by
-several accounts aggregates pools that GitHub actually meters separately, and
-the meters will not be meaningful. Watch one owner's repositories at a time.
+The reason that is hedged is that a count is only evidence when it is a
+measurement, and four things have to hold before this one is:
+
+- **Deduplicated.** GitHub's `status` filter matches a run's check runs, which
+  are its jobs, so a run with one job running and another queued comes back
+  from both the queued and the in-progress listing. Counted naively, every job
+  holding a slot is counted twice.
+- **Contemporaneous.** Job data is cached for up to ninety seconds and the
+  repositories are swept a few at a time, so a reading can blend moments a
+  minute apart. That is fine to look at and useless as proof, so a poll that
+  reused anything older than the sampling window does not vote.
+- **Corroborated.** A high-water mark never comes back down, so one bad sample
+  would be permanent. Three consecutive polls have to support a figure, which a
+  real ceiling reaches over and over anyway.
+- **From a single owner.** The ceiling belongs to the account that **owns**
+  each repository, not to whoever holds the token. Watching several owners
+  aggregates pools GitHub meters separately, so the meters are not meaningful
+  and no suggestion is made at all. Watch one owner's repositories at a time.
+
+When an observation survives all four and still exceeds every plan below
+Enterprise, the honest conclusion is that the count is wrong rather than that
+the account is an enterprise: Free, Pro and Team all cap macOS at five, so a
+macOS excess on its own cannot tell them apart, and the next rung up is fifty.
+The dashboard says so instead of recommending a plan, and offers to recheck.
+Stating your plan outright clears the observation too, on the grounds that it
+is newer evidence than an old inference.
 
 The refresh interval is deliberately not part of setup. Before the first poll
 there is nothing to base it on, so it lives in the footer beside the live cost

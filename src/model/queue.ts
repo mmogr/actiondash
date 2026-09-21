@@ -49,11 +49,20 @@ export function buildBuckets(
 ): ClassBucket[] {
   const superseded = findSupersededRuns(runs)
   const byClass = new Map<RunnerClass, { running: DashJob[]; queued: DashJob[] }>()
+  // A run can still reach this function twice: one repository watched under two
+  // spellings produces two entries, since repoKey does not normalise case. The
+  // meters are a count of jobs holding slots, so identity has to come from the
+  // job rather than from its position in an array. Job ids are unique across
+  // GitHub, so this can never collapse two genuinely different jobs.
+  const seenJobs = new Set<number>()
 
   for (const run of runs) {
     const jobs = jobsByRun.get(run.id)
     if (!jobs) continue
     for (const job of jobs) {
+      if (seenJobs.has(job.id)) continue
+      seenJobs.add(job.id)
+
       const running = RUNNING_STATUSES.has(job.status)
       const queued = QUEUED_STATUSES.has(job.status)
       if (!running && !queued) continue

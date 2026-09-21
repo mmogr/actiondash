@@ -43,6 +43,12 @@ export const projectedHourlyCost = computed(() => {
 export const fatalError = signal<string | null>(null)
 /** Transient, shown as a dismissible banner. */
 export const warning = signal<string | null>(null)
+/**
+ * Set when the reader dismisses the suspect-observation banner. Session-only on
+ * purpose: the underlying figure rebuilds from the next few polls, so silencing
+ * it for good belongs to clearing the observation, not to hiding the notice.
+ */
+export const observationDismissed = signal(false)
 
 /** Ticks once a second so relative ages re-render without a re-poll. */
 export const now = signal(Date.now())
@@ -73,4 +79,5 @@ export function resetData(): void {
   rateLimited.value = null
   fatalError.value = null
   warning.value = null
+  observationDismissed.value = false
 }

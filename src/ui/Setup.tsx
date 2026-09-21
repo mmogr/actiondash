@@ -91,7 +91,13 @@ export function Setup() {
     const token = pendingToken.value ?? stored
     try {
       await probeActionsAccess(refs[0]!)
-      updateSettings({ token, repos: refs })
+      // The ceiling belongs to the account that owns the repositories, so a
+      // peak measured over one set of owners is no evidence about another. A
+      // repository added under an owner already watched leaves it standing.
+      const ownersOf = (list: readonly RepoRef[]): string =>
+        [...new Set(list.map((r) => r.owner))].sort().join(',')
+      const ownersChanged = ownersOf(settings.value.repos) !== ownersOf(refs)
+      updateSettings({ token, repos: refs, ...(ownersChanged ? { observedMax: {} } : {}) })
       pendingToken.value = null
       clearJobCache()
       resetData()
@@ -272,9 +278,10 @@ export function Setup() {
           <h2>3. Start</h2>
           <p>
             Pick the plan that applies to the account owning these repositories. It sets the
-            denominator on the occupancy meters. GitHub does not expose the limit to a token
-            scoped this tightly, so if the guess is wrong the dashboard will notice once it sees
-            more jobs running at once than the limit allows, and offer to correct it.
+            denominator on the occupancy meters. The API does not expose the limit at all, so if
+            the guess is wrong the dashboard may be able to tell from what it sees running, and
+            will offer to correct it. Watch one owner's repositories at a time: pools belonging
+            to different accounts are metered separately.
           </p>
           <div class="field-row">
             <label>
@@ -282,7 +289,10 @@ export function Setup() {
               <select
                 value={settings.value.plan}
                 onChange={(e) =>
-                  updateSettings({ plan: (e.target as HTMLSelectElement).value as PlanId })
+                  updateSettings({
+                    plan: (e.target as HTMLSelectElement).value as PlanId,
+                    observedMax: {},
+                  })
                 }
               >
                 {Object.values(PLANS).map((plan) => (

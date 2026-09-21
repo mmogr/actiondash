@@ -28,4 +28,20 @@ describe('runnerClass', () => {
     expect(runnerClass(['my-big-runner'])).toBe('other')
     expect(runnerClass([''])).toBe('other')
   })
+
+  it('leaves privately named machines out of the hosted pools', () => {
+    // GitHub hosts nothing called mac-anything, so these can only be someone's
+    // own hardware. Counting them against the hosted macOS allowance is what
+    // makes an account look like it is running more macOS jobs than it can.
+    expect(runnerClass(['mac-mini-01'])).toBe('other')
+    expect(runnerClass(['mac-studio-ci'])).toBe('other')
+    expect(runnerClass(['win-build-3'])).toBe('other')
+  })
+
+  it('keeps working for image names that have not been released yet', () => {
+    expect(runnerClass(['macos-26'])).toBe('macos')
+    expect(runnerClass(['macos-26-xlarge'])).toBe('macos')
+    expect(runnerClass(['windows-2025'])).toBe('windows')
+    expect(runnerClass(['ubuntu-24.04-arm'])).toBe('linux')
+  })
 })

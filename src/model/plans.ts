@@ -52,27 +52,40 @@ export type ObservedMax = Partial<Record<RunnerClass | 'total', number>>
 /** Plans ordered by allowance, smallest first. */
 const PLAN_ORDER: PlanId[] = ['free', 'pro', 'team', 'enterprise']
 
+/** True when a plan's ceilings can produce everything that has been observed. */
+export function planExplains(plan: Plan, observed: ObservedMax): boolean {
+  return plan.macos >= (observed.macos ?? 0) && plan.total >= (observed.total ?? 0)
+}
+
 /**
  * The smallest plan whose limits could produce what has actually been observed,
- * or null when the current selection already explains it.
+ * or null when the current selection already explains it, or when the
+ * observation is not the kind of evidence that can name a plan.
  *
- * The concurrency ceiling cannot be read from the API without granting the
- * token profile access, which is far more than this dashboard should ask for.
- * It can be inferred instead: seeing eight macOS jobs run at once proves the
- * cap is at least eight, whatever the user selected. This only ever suggests a
- * larger plan, never a smaller one, since a quiet account proves nothing about
- * its ceiling.
+ * The ceiling cannot be read from the API: GET /user exposes the plan's name,
+ * never its limits, and a limit raised by GitHub Support would not show even
+ * there. It can sometimes be inferred from behaviour instead, but only from a
+ * count that is deduplicated, contemporaneous, confined to a single account's
+ * repositories, and seen on consecutive polls. The poller is responsible for
+ * all four; what arrives here is still only ever a lower bound, so this
+ * suggests a larger plan and never a smaller one.
  */
 export function inferPlan(observed: ObservedMax, current: PlanId): PlanId | null {
-  const macos = observed.macos ?? 0
-  const total = observed.total ?? 0
+  if (planExplains(PLANS[current], observed)) return null
 
-  const chosen = PLANS[current]
-  if (chosen.macos >= macos && chosen.total >= total) return null
-
-  for (const id of PLAN_ORDER) {
-    const plan = PLANS[id]
-    if (plan.macos >= macos && plan.total >= total) return id
+  // Free, Pro and Team all cap macOS at five, so a macOS excess on its own
+  // cannot tell them apart: the only rung above is Enterprise's fifty. A
+  // reading explicable only by a tenfold ceiling is explained at least as well
+  // by a miscount, so the total has to corroborate it independently before
+  // Enterprise is suggested at all.
+  if ((observed.macos ?? 0) > PLANS.team.macos && (observed.total ?? 0) <= PLANS.team.total) {
+    return null
   }
-  return 'enterprise'
+
+  for (const id of PLAN_ORDER) if (planExplains(PLANS[id], observed)) return id
+
+  // Past every published ceiling. GitHub Support can raise a limit on request,
+  // but nothing here can tell that apart from a broken counter, and neither
+  // possibility is an argument for changing plan.
+  return null
 }

@@ -45,6 +45,15 @@ import {
 /** Refresh a run's jobs at least this often, even if updated_at has not moved. */
 const MAX_JOB_STALENESS_MS = 90_000
 /**
+ * How recent a job snapshot has to be to count as evidence about the account's
+ * concurrency ceiling. Far tighter than MAX_JOB_STALENESS_MS, because showing a
+ * slightly stale row is a small cosmetic cost while asserting a billing tier
+ * from a blend of moments a minute apart is not a measurement at all.
+ */
+const SAMPLE_MAX_AGE_MS = 20_000
+/** Consecutive polls that must agree before a new high-water mark is believed. */
+export const CONFIRMING_POLLS = 3
+/**
  * Waiting longer than the window reset is pointless, because the budget refills
  * then. A small margin puts the next poll just the other side of it.
  */
@@ -67,6 +76,31 @@ const JOB_CONCURRENCY = 3
 const REPO_CONCURRENCY = 5
 /** Guard against a repository with a pathological number of active runs. */
 const MAX_RUNS_PER_REPO = 60
+
+/**
+ * Merges the two status listings into one run list, keeping each run once.
+ *
+ * GitHub's `status` filter matches a run's check runs, which are its jobs, so a
+ * run with one job already running and another still queued is returned by
+ * BOTH calls. At a saturated pool that is the ordinary state rather than an
+ * edge case, and concatenating the listings counts every running job of such a
+ * run twice.
+ *
+ * The in_progress copy wins, because it carries the fresher updated_at that the
+ * job cache's staleness test depends on. Running runs are listed first so that
+ * MAX_RUNS_PER_REPO truncates the waiting tail rather than the work that is
+ * actually holding a slot.
+ */
+export function mergeRunLists(
+  queued: readonly RunWithRepo[],
+  running: readonly RunWithRepo[],
+  limit: number,
+): RunWithRepo[] {
+  const byId = new Map<number, RunWithRepo>()
+  for (const run of running) byId.set(run.id, run)
+  for (const run of queued) if (!byId.has(run.id)) byId.set(run.id, run)
+  return [...byId.values()].slice(0, limit)
+}
 
 interface JobCacheEntry {
   jobs: WorkflowJob[]
@@ -118,34 +152,77 @@ function describe(err: unknown, repo: RepoRef): string {
   return `${repo.owner}/${repo.name}: ${(err as Error).message}`
 }
 
-/**
- * Records the most jobs seen running at once, which is the only evidence
- * available for the account's real concurrency ceiling. Self-hosted runners are
- * excluded: their capacity is the operator's own and says nothing about the
- * GitHub-hosted allowance.
- */
-function recordObserved(): void {
-  const previous = settings.value.observedMax
-  const next: ObservedMax = { ...previous }
-  let total = 0
-  let changed = false
+/** The last few samples, deliberately not persisted: a reload starts over. */
+const recentSamples: ObservedMax[] = []
 
-  for (const bucket of buckets.value) {
-    if (bucket.cls === 'self-hosted') continue
-    const running = bucket.running.length
-    total += running
-    if (running > (next[bucket.cls] ?? 0)) {
-      next[bucket.cls] = running
+/**
+ * The new high-water marks that every sample in the window supports, or null
+ * when nothing beats what is already recorded.
+ *
+ * A high-water mark is a claim about a ceiling and it never comes back down, so
+ * a single bad sample is permanent. Taking the weakest reading across
+ * consecutive polls means a transient figure has to persist before it is
+ * believed, while a real ceiling - which an account at its limit reaches again
+ * and again - still registers within a minute.
+ */
+export function promoteObserved(
+  samples: readonly ObservedMax[],
+  previous: ObservedMax,
+): ObservedMax | null {
+  if (samples.length === 0) return null
+
+  const keys = new Set<keyof ObservedMax>()
+  for (const sample of samples) {
+    for (const key of Object.keys(sample)) keys.add(key as keyof ObservedMax)
+  }
+
+  const next: ObservedMax = { ...previous }
+  let changed = false
+  for (const key of keys) {
+    let agreed = Infinity
+    for (const sample of samples) agreed = Math.min(agreed, sample[key] ?? 0)
+    if (agreed > (next[key] ?? 0)) {
+      next[key] = agreed
       changed = true
     }
   }
-  if (total > (next.total ?? 0)) {
-    next.total = total
-    changed = true
+  return changed ? next : null
+}
+
+/**
+ * Records the most jobs seen running at once, which is the only evidence
+ * available for the account's real concurrency ceiling.
+ *
+ * Only called for a poll whose job data is contemporaneous, and only believed
+ * once consecutive polls agree, because the figure it writes is permanent.
+ */
+function recordObserved(): void {
+  // The ceiling belongs to the account that owns each repository, so a figure
+  // summed across several owners adds together pools GitHub meters separately.
+  // The README already warns that the meters are not meaningful in that
+  // configuration; a plan suggestion must not be manufactured out of it either.
+  if (new Set(settings.value.repos.map((r) => r.owner)).size > 1) return
+
+  const sample: ObservedMax = {}
+  let total = 0
+  for (const bucket of buckets.value) {
+    // A class with no published ceiling is no evidence about the plan's. capFor
+    // already says self-hosted capacity is the operator's own, and that the
+    // pool behind 'other' cannot be inferred at all.
+    if (bucket.cap === null) continue
+    sample[bucket.cls] = bucket.running.length
+    total += bucket.running.length
   }
+  sample.total = total
+
+  recentSamples.push(sample)
+  while (recentSamples.length > CONFIRMING_POLLS) recentSamples.shift()
+  if (recentSamples.length < CONFIRMING_POLLS) return
+
+  const next = promoteObserved(recentSamples, settings.value.observedMax)
   // Only written when a new high is set, so a steady poll does not keep
   // rewriting local storage.
-  if (changed) updateSettings({ observedMax: next })
+  if (next) updateSettings({ observedMax: next })
 }
 
 /** Drops cached jobs for runs that are no longer active. */
@@ -177,6 +254,11 @@ export async function pollOnce(): Promise<void> {
   // step, once everything has been gathered.
   const publishAsWeGo = !firstLoadDone.value
 
+  // Cleared when the poll reuses a job snapshot older than the sampling window.
+  // Such a poll still renders correctly, but it is a blend of moments rather
+  // than a picture of one, so it does not get a vote on the ceiling.
+  let contemporaneous = true
+
   /**
    * Pushes what has been gathered so far into the store.
    */
@@ -201,7 +283,9 @@ export async function pollOnce(): Promise<void> {
       const cached = jobCache.get(run.id)
       if (!cached) return true
       if (cached.updatedAt !== run.updated_at) return true
-      return now - cached.fetchedAt > MAX_JOB_STALENESS_MS
+      if (now - cached.fetchedAt > MAX_JOB_STALENESS_MS) return true
+      if (now - cached.fetchedAt > SAMPLE_MAX_AGE_MS) contemporaneous = false
+      return false
     })
     await mapLimit(needed, JOB_CONCURRENCY, async (run) => {
       try {
@@ -224,7 +308,7 @@ export async function pollOnce(): Promise<void> {
           listRuns(repo, 'queued'),
           listRuns(repo, 'in_progress'),
         ])
-        const repoRuns = [...queued, ...running].slice(0, MAX_RUNS_PER_REPO)
+        const repoRuns = mergeRunLists(queued, running, MAX_RUNS_PER_REPO)
         await fetchJobsFor(repoRuns)
         byRepo.set(repoKey(repo), repoRuns)
       } catch (err) {
@@ -254,7 +338,7 @@ export async function pollOnce(): Promise<void> {
       warning.value = problems.length > 0 ? problems.join(' ') : null
       fatalError.value = null
     })
-    recordObserved()
+    if (contemporaneous) recordObserved()
   } catch (err) {
     if (controller.signal.aborted) return
     if (err instanceof GitHubError && err.status === 401) {
@@ -367,5 +451,6 @@ export function stopPolling(): void {
 /** Clears cached job data, so the next poll refetches everything. */
 export function clearJobCache(): void {
   jobCache.clear()
+  recentSamples.length = 0
   lastBilled = 1
 }
