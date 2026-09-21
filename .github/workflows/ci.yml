@@ -1,0 +1,36 @@
+name: CI
+
+# Never add paths: or branches: to this trigger. A required check whose
+# workflow does not run never reports, and the pull request then waits on a
+# status that will never arrive, with nobody else able to unstick it. Filter
+# at the step level with if:, where a skipped step still reports success.
+on:
+  pull_request:
+  push:
+    branches: [main]
+
+permissions:
+  contents: read
+
+# Deliberately NOT the 'pages' group deploy.yml uses: that group is
+# workflow-wide rather than per-ref, so sharing it would let a push to one
+# pull request cancel a deploy already in flight.
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  verify:
+    # Ubuntu only. Verifying the dashboard must never consume a macOS slot.
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+
+      - uses: actions/setup-node@v5
+        with:
+          node-version: 22
+          cache: npm
+
+      - run: npm ci
+
+      - run: npm run verify
