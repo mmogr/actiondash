@@ -13,6 +13,7 @@
     "check:csp": "node scripts/check-csp.mjs",
     "check:fetch": "node scripts/check-fetch.mjs",
     "check:guards": "node scripts/check-guards.mjs",
+    "probe": "node scripts/probe.mjs",
     "verify": "npm run test && npm run build && npm run check:csp && npm run check:fetch && npm run check:guards"
   },
   "dependencies": {

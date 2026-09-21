@@ -1,5 +1,6 @@
 /** Typed wrappers over the handful of GitHub endpoints this dashboard uses. */
 import { apiFetch, apiFetchAll, type ApiOptions } from './client'
+import { JOBS_QUERY, runsQuery, type RunStatus } from './queries'
 import type { Repo, RepoRef, RunWithRepo, User, WorkflowJob, WorkflowRun } from './types'
 
 function repoPath(r: RepoRef): string {
@@ -26,11 +27,11 @@ export async function listRepos(): Promise<Repo[]> {
 /** Active runs of one status. The API accepts a single status per call. */
 export async function listRuns(
   repo: RepoRef,
-  status: 'queued' | 'in_progress',
+  status: RunStatus,
   options?: ApiOptions,
 ): Promise<RunWithRepo[]> {
   const res = await apiFetch<{ workflow_runs: WorkflowRun[] }>(
-    `${repoPath(repo)}/actions/runs?status=${status}&per_page=100&exclude_pull_requests=true`,
+    `${repoPath(repo)}/actions/runs${runsQuery(status)}`,
     options,
   )
   return (res.data.workflow_runs ?? []).map((run) => ({
@@ -46,7 +47,7 @@ export async function listJobs(
   options?: ApiOptions,
 ): Promise<WorkflowJob[]> {
   const res = await apiFetch<{ jobs: WorkflowJob[] }>(
-    `${repoPath(repo)}/actions/runs/${runId}/jobs?per_page=100&filter=latest`,
+    `${repoPath(repo)}/actions/runs/${runId}/jobs${JOBS_QUERY}`,
     options,
   )
   return res.data.jobs ?? []
