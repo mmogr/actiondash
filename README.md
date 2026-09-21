@@ -166,10 +166,14 @@ because a quiet account proves nothing about its ceiling.
 The reason that is hedged is that a count is only evidence when it is a
 measurement, and four things have to hold before this one is:
 
-- **Deduplicated.** GitHub's `status` filter matches a run's check runs, which
-  are its jobs, so a run with one job running and another queued comes back
-  from both the queued and the in-progress listing. Counted naively, every job
-  holding a slot is counted twice.
+- **Deduplicated.** Queued and in-progress runs come from two separate
+  requests, so a run that changes status between them can appear in both, and
+  one repository watched under two spellings appears twice. Every job is
+  counted once, by id. GitHub's documentation says the `status` filter matches
+  a run's check runs, which suggests partly started runs come back from both
+  listings routinely. A check on 2026-09-21 across five busy public
+  repositories (about 378 active runs) found no overlap at all, so the dedupe
+  is a safeguard, not the fix for a known miscount.
 - **Contemporaneous.** Job data is cached for up to ninety seconds and the
   repositories are swept a few at a time, so a reading can blend moments a
   minute apart. That is fine to look at and useless as proof, so a poll that

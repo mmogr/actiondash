@@ -4,10 +4,9 @@ import { makeRun } from './helpers'
 
 describe('mergeRunLists', () => {
   it('keeps a run that appears in both listings only once', () => {
-    // GitHub's status filter matches a run's check runs, which are its jobs, so
-    // a run with one job running and another queued is returned by both calls.
-    // Concatenating them counted every running job of that run twice, which is
-    // what told a Pro account it must be on Enterprise.
+    // The two listings are separate requests, so a run that changes status
+    // between them can be returned by both. Concatenating them would count
+    // every running job of that run twice.
     const run = makeRun({ id: 1, status: 'in_progress' })
 
     const merged = mergeRunLists([run], [run], 60)

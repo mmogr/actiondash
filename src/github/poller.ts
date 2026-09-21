@@ -80,11 +80,28 @@ const MAX_RUNS_PER_REPO = 60
 /**
  * Merges the two status listings into one run list, keeping each run once.
  *
- * GitHub's `status` filter matches a run's check runs, which are its jobs, so a
- * run with one job already running and another still queued is returned by
- * BOTH calls. At a saturated pool that is the ordinary state rather than an
- * edge case, and concatenating the listings counts every running job of such a
- * run twice.
+ * The two listings are separate requests, not one snapshot, so a run that
+ * changes status between them can legitimately appear in both. That is the
+ * reason for the dedupe, and it is defensive rather than a known cause of
+ * miscounting.
+ *
+ * GitHub's documentation says the `status` filter matches a run's check runs,
+ * which would suggest a partly started run comes back from both listings. It
+ * does not appear to: checked on 2026-09-21 across nodejs/node, elastic/kibana,
+ * home-assistant/core, rust-lang/rust and microsoft/vscode, about 378 active
+ * runs showed no run in both listings, and every run's own status matched the
+ * filter that returned it.
+ *
+ * The inflated macOS count this once blamed on that overlap has four candidate
+ * causes, and only the last has been reproduced:
+ * 1. filter overlap between the listings (documented, not observed);
+ * 2. a run changing status between the two requests (handled here);
+ * 3. one repository watched under two spellings (handled by job id in
+ *    buildBuckets, since repoKey does not normalise case);
+ * 4. job snapshots between SAMPLE_MAX_AGE_MS and MAX_JOB_STALENESS_MS old
+ *    counted alongside fresh ones, so jobs that finished since still count as
+ *    running. Contemporaneity keeps that out of observedMax but not out of the
+ *    meters.
  *
  * The in_progress copy wins, because it carries the fresher updated_at that the
  * job cache's staleness test depends on. Running runs are listed first so that
