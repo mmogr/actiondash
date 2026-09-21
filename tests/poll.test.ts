@@ -113,4 +113,44 @@ describe('pollOnce', () => {
     expect(store.firstLoadDone.value).toBe(true)
     expect(gh.calls).toHaveLength(4)
   })
+
+  it('keeps the last snapshot and says so when a job listing fails', async () => {
+    const jobs = Array.from({ length: 5 }, () => makeJob({ run_id: 1, status: 'in_progress' }))
+    scriptRuns([], [makeRun({ id: 1, status: 'in_progress', updated_at: '2026-09-09T10:00:00Z' })])
+    scriptJobs(1, jobs)
+    await pollOnce()
+    expect(macos()?.running).toHaveLength(5)
+
+    // The run moves, so its jobs are due a refetch, and GitHub has a bad moment.
+    scriptRuns([], [makeRun({ id: 1, status: 'in_progress', updated_at: '2026-09-09T10:01:00Z' })])
+    scriptJobsReply(1, json({ message: 'Server Error' }, { status: 502 }))
+    await pollOnce()
+
+    // A failure says nothing about whether the jobs still hold slots, so the
+    // pool must not read as empty, and the reader must be told.
+    expect(macos()?.running).toHaveLength(5)
+    expect(store.warning.value).toContain('Server Error')
+  })
+
+  it('reports a failed job listing on the first poll', async () => {
+    scriptRuns([], [makeRun({ id: 1, status: 'in_progress' })])
+    scriptJobsReply(1, json({ message: 'Server Error' }, { status: 502 }))
+
+    await pollOnce()
+
+    expect(store.warning.value).toContain('Server Error')
+  })
+
+  it('drops a run that finished between the run and job listings', async () => {
+    // GitHub answers 404 for the jobs of a run that is gone. It no longer holds
+    // a slot, so it is correct to show nothing and to say nothing.
+    scriptRuns([], [makeRun({ id: 1, status: 'in_progress' })])
+    scriptJobsReply(1, json({ message: 'Not Found' }, { status: 404 }))
+
+    await pollOnce()
+
+    expect(macos()?.running).toHaveLength(0)
+    expect(macos()?.queued).toHaveLength(0)
+    expect(store.warning.value).toBeNull()
+  })
 })
