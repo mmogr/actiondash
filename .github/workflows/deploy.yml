@@ -30,17 +30,10 @@ jobs:
 
       - run: npm ci
 
-      - name: Unit tests
-        run: npm test
-
-      - name: Build
-        run: npm run build
-
-      - name: Verify Content Security Policy in the build output
-        run: npm run check:csp
-
-      - name: Verify no network calls outside the API client
-        run: npm run check:fetch
+      # The same command CI runs and the README gives contributors, so the three
+      # cannot drift apart. Kept here as well as on pull requests because
+      # workflow_dispatch reaches this job without going through one.
+      - run: npm run verify
 
       # enablement turns Pages on for a fresh repository rather than failing.
       - uses: actions/configure-pages@v5

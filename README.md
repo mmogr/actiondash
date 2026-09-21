@@ -43,7 +43,7 @@ enforce that:
    missing, weakened, or if an inline script or external asset appears in the
    output. `npm run check:fetch` fails if any module other than the API client
    calls `fetch`, `XMLHttpRequest`, `WebSocket`, `EventSource` or `sendBeacon`.
-   Both run in CI on every push.
+   Both run in CI on every pull request and again before every deploy.
 
 The token is never written to the URL, never logged, and never rendered back
 into the page. "Forget token" clears it and everything else from local storage.
@@ -95,10 +95,11 @@ fetch('https://example.com')
 
 ## Deploying
 
-Push to `main`. The workflow in `.github/workflows/deploy.yml` runs the tests
-and both security checks, then publishes to GitHub Pages. It runs on
-`ubuntu-latest` only, so deploying the dashboard never competes for the macOS
-slots the dashboard exists to protect.
+Merge to `main`. Every pull request runs `npm run verify` in
+`.github/workflows/ci.yml`. On `main`,
+`.github/workflows/deploy.yml` runs the same command again and publishes to
+GitHub Pages. Both run on `ubuntu-latest` only, so checking and deploying the
+dashboard never compete for the macOS slots it exists to protect.
 
 Enable Pages once under Settings, Pages, Source: GitHub Actions.
 
