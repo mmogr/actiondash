@@ -98,8 +98,9 @@ fetch('https://example.com')
 Merge to `main`. Every pull request runs `npm run verify` in
 `.github/workflows/ci.yml`, and `main` will not accept a merge until it
 passes. On `main`, `.github/workflows/deploy.yml` runs the same command again
-and publishes to GitHub Pages. Both run on `ubuntu-latest` only, so checking and deploying the
-dashboard never compete for the macOS slots it exists to protect.
+and publishes to GitHub Pages. Both run on `ubuntu-latest` only, so checking
+and deploying the dashboard never compete for the macOS slots it exists to
+protect.
 
 Enable Pages once under Settings, Pages, Source: GitHub Actions.
 
