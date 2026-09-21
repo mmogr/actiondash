@@ -12,7 +12,8 @@
     "test:watch": "vitest",
     "check:csp": "node scripts/check-csp.mjs",
     "check:fetch": "node scripts/check-fetch.mjs",
-    "verify": "npm run test && npm run build && npm run check:csp && npm run check:fetch"
+    "check:guards": "node scripts/check-guards.mjs",
+    "verify": "npm run test && npm run build && npm run check:csp && npm run check:fetch && npm run check:guards"
   },
   "dependencies": {
     "@preact/signals": "^2.11.2",
