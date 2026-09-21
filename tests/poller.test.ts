@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { mergeRunLists } from '../src/github/poller'
+import { CONFIRMING_POLLS, mergeRunLists, promoteObserved } from '../src/github/poller'
 import { makeRun } from './helpers'
 
 describe('mergeRunLists', () => {
@@ -42,5 +42,47 @@ describe('mergeRunLists', () => {
     const running = [makeRun({ id: 2 })]
 
     expect(mergeRunLists(queued, running, 60).map((r) => r.id)).toEqual([2, 1])
+  })
+})
+
+describe('promoteObserved', () => {
+  it('refuses a single spike', () => {
+    // The whole complaint: one inflated reading became a permanent claim that a
+    // Pro account, capped at five macOS jobs, must be on Enterprise.
+    const next = promoteObserved([{ macos: 8 }, { macos: 4 }, { macos: 4 }], {})
+
+    expect(next?.macos).toBe(4)
+  })
+
+  it('promotes a reading that every poll in the window supports', () => {
+    const next = promoteObserved([{ macos: 5 }, { macos: 5 }, { macos: 6 }], { macos: 3 })
+
+    expect(next?.macos).toBe(5)
+  })
+
+  it('returns null when nothing beats the stored mark', () => {
+    expect(promoteObserved([{ macos: 4 }, { macos: 4 }, { macos: 4 }], { macos: 5 })).toBeNull()
+  })
+
+  it('treats each class independently', () => {
+    const samples = [
+      { macos: 5, linux: 12 },
+      { macos: 5, linux: 3 },
+      { macos: 5, linux: 12 },
+    ]
+
+    const next = promoteObserved(samples, {})
+
+    expect(next?.macos).toBe(5)
+    // Linux never held twelve for the whole window, so only three is supported.
+    expect(next?.linux).toBe(3)
+  })
+
+  it('supports nothing from an empty window', () => {
+    expect(promoteObserved([], { macos: 2 })).toBeNull()
+  })
+
+  it('needs more than one poll before anything is believed', () => {
+    expect(CONFIRMING_POLLS).toBeGreaterThan(1)
   })
 })
