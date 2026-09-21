@@ -1,5 +1,5 @@
 /** Typed wrappers over the handful of GitHub endpoints this dashboard uses. */
-import { apiFetch, apiFetchAll } from './client'
+import { apiFetch, apiFetchAll, type ApiOptions } from './client'
 import type { Repo, RepoRef, RunWithRepo, User, WorkflowJob, WorkflowRun } from './types'
 
 function repoPath(r: RepoRef): string {
@@ -27,9 +27,11 @@ export async function listRepos(): Promise<Repo[]> {
 export async function listRuns(
   repo: RepoRef,
   status: 'queued' | 'in_progress',
+  options?: ApiOptions,
 ): Promise<RunWithRepo[]> {
   const res = await apiFetch<{ workflow_runs: WorkflowRun[] }>(
     `${repoPath(repo)}/actions/runs?status=${status}&per_page=100&exclude_pull_requests=true`,
+    options,
   )
   return (res.data.workflow_runs ?? []).map((run) => ({
     ...run,
@@ -38,9 +40,14 @@ export async function listRuns(
   }))
 }
 
-export async function listJobs(repo: RepoRef, runId: number): Promise<WorkflowJob[]> {
+export async function listJobs(
+  repo: RepoRef,
+  runId: number,
+  options?: ApiOptions,
+): Promise<WorkflowJob[]> {
   const res = await apiFetch<{ jobs: WorkflowJob[] }>(
     `${repoPath(repo)}/actions/runs/${runId}/jobs?per_page=100&filter=latest`,
+    options,
   )
   return res.data.jobs ?? []
 }
