@@ -13,6 +13,10 @@ const ALLOWED = new Set(['src/github/client.ts'])
 
 const PATTERNS = [
   { name: 'fetch(', re: /(?<![\w.$])fetch\s*\(/ },
+  // globalThis.fetch(), window.fetch() and self.fetch() are the same call.
+  { name: '.fetch(', re: /\.fetch\s*\(/ },
+  // So is calling fetch through another name, as in `const f = fetch`.
+  { name: 'fetch reference', re: /(?<![\w.$'"`])fetch(?![\w$]|\s*\()/ },
   { name: 'XMLHttpRequest', re: /\bXMLHttpRequest\b/ },
   { name: 'WebSocket', re: /\bnew\s+WebSocket\b/ },
   { name: 'EventSource', re: /\bnew\s+EventSource\b/ },

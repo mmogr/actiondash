@@ -42,7 +42,11 @@ enforce that:
 3. **Build-time checks.** `npm run check:csp` fails the build if the policy is
    missing, weakened, or if an inline script or external asset appears in the
    output. `npm run check:fetch` fails if any module other than the API client
-   calls `fetch`, `XMLHttpRequest`, `WebSocket`, `EventSource` or `sendBeacon`.
+   calls `fetch` (directly, as `window.fetch` and the like, or under another
+   name), `XMLHttpRequest`, `WebSocket`, `EventSource` or `sendBeacon`.
+   `npm run check:guards` then feeds both checks input they must reject, the
+   real build with its policy removed and each form of stray `fetch`, so a
+   check that has stopped being able to fail is caught too.
    Both run in CI on every pull request and again before every deploy.
 
 The token is never written to the URL, never logged, and never rendered back
@@ -82,7 +86,7 @@ npm run dev
 ## Verifying
 
 ```sh
-npm run verify   # tests, typecheck, build, CSP check, network-call check
+npm run verify   # tests, typecheck, build, CSP and network-call checks, and proof both can fail
 ```
 
 To confirm the policy in a browser, run `npm run preview`, open the page, and
