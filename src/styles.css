@@ -510,14 +510,115 @@ code,
   flex-wrap: wrap;
 }
 
+/* ---------- phones ---------- */
+
 @media (max-width: 760px) {
+  .shell {
+    padding: 14px max(12px, env(safe-area-inset-right)) 48px max(12px, env(safe-area-inset-left));
+  }
+
+  .topbar {
+    gap: 6px 14px;
+    margin-bottom: 14px;
+  }
+
+  .topbar-meta {
+    flex-wrap: wrap;
+    gap: 4px 12px;
+  }
+
+  .banner {
+    flex-direction: column;
+  }
+
+  /* Title and stats share the first line; the meter takes a full line under them. */
+  .section-head {
+    gap: 8px 12px;
+  }
+
+  .section-title {
+    flex: 1;
+    min-width: 0;
+  }
+
+  .meter {
+    order: 1;
+    flex: 1 0 100%;
+    max-width: none;
+  }
+
+  .section-stats {
+    flex-wrap: wrap;
+    justify-content: flex-end;
+    gap: 4px 12px;
+    margin-left: 0;
+  }
+
+  /* The desktop grid has more cells than a phone has width for, so each job
+     takes two lines: repository, run and age first, then the job name and its
+     cancel button. Named areas keep the button on the right edge of every row
+     instead of wherever the leftover cells happen to wrap. */
   .row {
-    grid-template-columns: 28px 1fr 56px auto;
-    row-gap: 2px;
+    grid-template-columns: 28px minmax(0, 1fr) auto auto;
+    grid-template-areas:
+      'pos repo runno age'
+      'pos job job actions';
+    gap: 2px 10px;
+    padding: 8px 12px;
+  }
+
+  .row .pos {
+    grid-area: pos;
+    align-self: start;
+  }
+
+  .row .repo {
+    grid-area: repo;
+  }
+
+  .row .runno {
+    grid-area: runno;
+  }
+
+  .row .age {
+    grid-area: age;
+  }
+
+  .row .job {
+    grid-area: job;
+  }
+
+  .row .actions {
+    grid-area: actions;
   }
 
   .row .branch,
   .row .sha {
     display: none;
+  }
+
+  /* A finger needs more than the desktop button's 20px. */
+  .row .actions button {
+    padding: 5px 12px;
+  }
+
+  .footer {
+    gap: 8px 14px;
+  }
+
+  .footer-actions {
+    flex-basis: 100%;
+    margin-left: 0;
+  }
+
+  .card {
+    padding: 14px;
+  }
+
+  /* iOS Safari zooms into any control whose text is smaller than 16px. */
+  input[type='password'],
+  input[type='text'],
+  select {
+    font-size: 16px;
   }
 }
