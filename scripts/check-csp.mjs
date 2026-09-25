@@ -77,6 +77,8 @@ const REQUIRED = {
   'style-src': ["'self'"],
   'connect-src': ['https://api.github.com'],
   'img-src': ["'self'"],
+  'manifest-src': ["'self'"],
+  'worker-src': ["'self'"],
   'base-uri': ["'none'"],
   'form-action': ["'none'"],
   'object-src': ["'none'"],

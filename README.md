@@ -85,10 +85,26 @@ The token is never written to the URL, never logged, and never rendered back
 into the page. "Forget token" clears it and everything else from local storage,
 including the learned job durations and the occupancy history.
 
+A small service worker, `public/sw.js`, exists only so that a phone can show
+a notification: it has no `fetch` handler and no cache, so it never sees a
+request. A worker runs outside the page's policy, which is why
+`npm run check:fetch` scans `public/` as well and `check:guards` proves it
+rejects a worker that handles fetch.
+
 Two honest limits. A meta-tag CSP cannot express `frame-ancestors`, so
 clickjacking protection is not available on GitHub Pages; open the page in a
 normal tab. And anyone with access to your browser profile can read local
 storage, so use a short token expiry.
+
+## On a phone
+
+The page installs to the home screen: Share, then Add to Home Screen on an
+iPhone or iPad, or the Install offer on Android and desktop Chrome. Installed,
+it opens as an app and, on the Alerts tab, can notify you when a slot frees,
+a queued job starts or a run is superseded.
+
+Alerts arrive while the page is open. There is no server, so nothing can wake
+it in the background; keep it in the foreground while you wait on a slot.
 
 ## Token setup
 

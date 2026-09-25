@@ -1,6 +1,7 @@
 import { signal } from '@preact/signals'
 import type { RepoRef } from '../github/types'
 import type { ObservedMax, PlanId } from '../model/plans'
+import { NO_ALERTS, type AlertPrefs } from '../model/alerts'
 import { clearCache, setTokenProvider } from '../github/client'
 import { clearDurations } from './durations'
 import { clearHistory } from './history'
@@ -40,6 +41,10 @@ export interface Settings {
    * user when their chosen plan cannot explain what the account is doing.
    */
   observedMax: ObservedMax
+  /** Which changes to announce, once notifications are allowed. */
+  alerts: AlertPrefs
+  /** The reader declined the install offer; it is not made again. */
+  installDismissed: boolean
 }
 
 /** What actually sits in storage: the settings, plus the observation epoch. */
@@ -51,6 +56,8 @@ const DEFAULTS: Settings = {
   plan: 'free',
   pollIntervalMs: 15_000,
   observedMax: {},
+  alerts: NO_ALERTS,
+  installDismissed: false,
 }
 
 function load(): Settings {
@@ -72,6 +79,8 @@ function load(): Settings {
         typeof parsed.observedMax === 'object'
           ? sanitiseObserved(parsed.observedMax)
           : {},
+      alerts: sanitiseAlerts(parsed.alerts),
+      installDismissed: parsed.installDismissed === true,
     }
   } catch {
     // Private browsing, disabled site data, or corrupt JSON. Start clean.
@@ -88,6 +97,16 @@ function sanitiseObserved(raw: Record<string, unknown>): ObservedMax {
     }
   }
   return out
+}
+
+function sanitiseAlerts(raw: unknown): AlertPrefs {
+  if (typeof raw !== 'object' || raw === null) return NO_ALERTS
+  const r = raw as Partial<AlertPrefs>
+  return {
+    slotFreed: r.slotFreed === true,
+    jobStarted: r.jobStarted === true,
+    superseded: r.superseded === true,
+  }
 }
 
 function isRepoRef(v: unknown): v is RepoRef {

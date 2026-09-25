@@ -4,7 +4,7 @@ import { distinctRuns } from '../model/queue'
 import { cancelRun } from '../github/api'
 import { clearJobCache, pollOnce, stopPolling } from '../github/poller'
 import { forgetEverything, settings, updateSettings } from '../state/settings'
-import { resetData, stale, view, warning } from '../state/store'
+import { resetData, stale, tab, view, warning } from '../state/store'
 
 const INTERVALS = [
   { ms: 10_000, label: '10s' },
@@ -113,6 +113,17 @@ export function SettingsView() {
         </p>
         <div class="field-row">
           <button onClick={() => (view.value = 'setup')}>Choose repositories</button>
+        </div>
+      </div>
+
+      <div class="card">
+        <h2>Alerts</h2>
+        <p>
+          Be told when a slot frees, a queued job starts or a run is superseded, while the page is
+          open.
+        </p>
+        <div class="field-row">
+          <button onClick={() => (tab.value = 'alerts')}>Alert settings</button>
         </div>
       </div>
 
