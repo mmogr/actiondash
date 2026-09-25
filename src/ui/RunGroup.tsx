@@ -1,7 +1,8 @@
 import { useState } from 'preact/hooks'
+import type { BucketForecast } from '../model/forecast'
 import type { RunGroup as Group } from '../model/queue'
 import { now } from '../state/store'
-import { age, shortSha } from './format'
+import { age, duration, shortClock, shortSha } from './format'
 import { seriesClass } from './palette'
 import { useCancelRun } from './useCancelRun'
 
@@ -9,6 +10,7 @@ interface Props {
   group: Group
   kind: 'running' | 'queued'
   defaultOpen: boolean
+  forecast?: BucketForecast
 }
 
 /** First line of the commit message, or the short SHA when the API sent none. */
@@ -17,7 +19,7 @@ function describe(group: Group): string {
   return message || shortSha(group.run.head_sha)
 }
 
-export function RunGroup({ group, kind, defaultOpen }: Props) {
+export function RunGroup({ group, kind, defaultOpen, forecast }: Props) {
   const [open, setOpen] = useState(defaultOpen)
   const cancel = useCancelRun(group.repo, group.run)
   const nowMs = now.value
@@ -32,6 +34,13 @@ export function RunGroup({ group, kind, defaultOpen }: Props) {
       ? single
         ? `position ${first.position}`
         : `positions ${first.position} to ${last.position}`
+      : null
+  const outlook = forecast?.runs.get(run.id)
+  const eta =
+    kind === 'queued' && outlook && outlook.firstStart !== null
+      ? single
+        ? `starts ~${shortClock(outlook.firstStart)}${outlook.allDone === null ? '' : `, done ~${shortClock(outlook.allDone)}`}`
+        : `first job starts ~${shortClock(outlook.firstStart)}${outlook.allDone === null ? '' : `, all done ~${shortClock(outlook.allDone)}`}`
       : null
 
   return (
@@ -67,7 +76,13 @@ export function RunGroup({ group, kind, defaultOpen }: Props) {
               Superseded by #{supersededBy.run_number} on {shortSha(supersededBy.head_sha)}
             </div>
           )}
-          {positions && !supersededBy && <div class="group-note">Queue {positions}</div>}
+          {positions && !supersededBy && (
+            <div class="group-note">
+              Queue {positions}
+              {eta ? ` · ${eta}` : ''}
+            </div>
+          )}
+          {positions && supersededBy && eta && <div class="group-note">{eta}</div>}
         </div>
 
         {cancel.cancelling ? (
@@ -97,17 +112,39 @@ export function RunGroup({ group, kind, defaultOpen }: Props) {
         </div>
       )}
 
-      {open && !single && (
+      {open && (!single || (kind === 'running' && forecast)) && (
         <div class="jobs">
-          {jobs.map(({ entry, position }) => (
-            <div class="jobrow" key={entry.job.id}>
-              {kind === 'queued' && <span class="pos">{position}</span>}
-              <span class="jobname" title={entry.job.name}>
-                {entry.job.name}
-              </span>
-              {kind === 'running' && <span class="group-age">{age(entry.since, nowMs)}</span>}
-            </div>
-          ))}
+          {jobs.map(({ entry, position }) => {
+            const f = forecast?.jobs.get(entry.job.id)
+            const elapsed = entry.since > 0 ? (nowMs - entry.since) / 1000 : 0
+            const pct =
+              f && f.typical ? Math.min(100, Math.round((elapsed / f.typical) * 100)) : null
+            return (
+              <div class="jobrow" key={entry.job.id}>
+                <div class="jobline">
+                  {kind === 'queued' && <span class="pos">{position}</span>}
+                  <span class="jobname" title={entry.job.name}>
+                    {entry.job.name}
+                    {f?.overdue && <span class="overdue-tag">past usual</span>}
+                  </span>
+                  <span class={`group-age${f?.overdue ? ' warn' : ''}`}>
+                    {kind === 'running'
+                      ? f && f.typical
+                        ? `${age(entry.since, nowMs)} · usually ${f.guessed ? '~' : ''}${duration(f.typical)}`
+                        : age(entry.since, nowMs)
+                      : f && f.start > 0
+                        ? `~${shortClock(f.start)}${f.typical ? ` · ${f.guessed ? '~' : ''}${duration(f.typical)}` : ''}`
+                        : ''}
+                  </span>
+                </div>
+                {kind === 'running' && pct !== null && (
+                  <div class="progress" aria-hidden="true">
+                    <div class={`progress-fill${f?.overdue ? ' over' : ''}`} style={{ width: `${pct}%` }} />
+                  </div>
+                )}
+              </div>
+            )
+          })}
         </div>
       )}
     </div>

@@ -31,6 +31,19 @@ macOS                          5/5 in use    7 queued    ~14m wait
     Queue position 5
 ```
 
+Above the list, the macOS pool is drawn as one row per slot: the job holding
+it from its start to its expected end, then the queued jobs expected to take
+it next as dashed outlines, in the order they will start. Expected ends come
+from how long each job usually takes, learned from the jobs the dashboard has
+watched finish and kept in local storage (job names and seconds, nothing
+else). A job never seen before is guessed from the others of its class and
+marked as a guess. Two tiles say when the next slot frees and when the queue
+clears, and when a superseded run is holding up a real one, a note says which
+run to cancel first and what that buys.
+
+Learning a finished run's final timings costs one extra request per run, and
+is skipped whenever fewer than 200 requests remain in the hour.
+
 Jobs are grouped by the run that owns them, because cancelling acts on a run.
 Cancel asks once before it acts. Chips above the list narrow it to one
 repository or to superseded runs only; the pool figures are never narrowed.
@@ -62,7 +75,8 @@ enforce that:
    Both run in CI on every pull request and again before every deploy.
 
 The token is never written to the URL, never logged, and never rendered back
-into the page. "Forget token" clears it and everything else from local storage.
+into the page. "Forget token" clears it and everything else from local storage,
+including the learned job durations.
 
 Two honest limits. A meta-tag CSP cannot express `frame-ancestors`, so
 clickjacking protection is not available on GitHub Pages; open the page in a

@@ -3,6 +3,8 @@ import { clearCache } from '../src/github/client'
 import { clearJobCache, pollOnce, startPolling, stopPolling } from '../src/github/poller'
 import type { RunWithRepo, WorkflowJob } from '../src/github/types'
 import { settings } from '../src/state/settings'
+import { clearDurations, durations } from '../src/state/durations'
+import { durationKey, typicalSeconds } from '../src/model/durations'
 import * as store from '../src/state/store'
 import { deferred, FakeGitHub, json, type Reply } from './fake-github'
 import { makeJob, makeRun } from './helpers'
@@ -100,6 +102,7 @@ afterEach(() => {
     stopPolling()
     clearJobCache()
     clearCache()
+    clearDurations()
     store.resetData()
     vi.restoreAllMocks()
     vi.unstubAllGlobals()
@@ -199,6 +202,79 @@ describe('pollOnce', () => {
     // Aborting has to reach fetch, or the requests run on and are billed.
     for (const call of gh.calls) expect(call.signal?.aborted).toBe(true)
     expect(store.firstLoadDone.value).toBe(false)
+  })
+})
+
+describe('learning durations', () => {
+  const START = '2026-09-09T10:00:00Z'
+  const KEY = durationKey(REPO, 'build')
+
+  function finished(id: number, minutes: number, runId = 1): WorkflowJob {
+    return makeJob({
+      id,
+      run_id: runId,
+      name: 'build',
+      status: 'completed',
+      conclusion: 'success',
+      started_at: START,
+      completed_at: new Date(Date.parse(START) + minutes * 60_000).toISOString(),
+    })
+  }
+
+  it('learns from a job that completed inside a run that is still active', async () => {
+    const run = makeRun({ id: 1, status: 'in_progress' })
+    scriptRuns([], [run])
+    scriptJobs(1, [finished(10, 7), makeJob({ id: 11, run_id: 1, status: 'in_progress' })])
+
+    await pollOnce()
+
+    expect(typicalSeconds(durations.value, KEY)).toBe(420)
+  })
+
+  it('fetches the final jobs of a run that finished between polls, once', async () => {
+    const run = makeRun({ id: 1, status: 'in_progress' })
+    scriptRuns([], [run])
+    scriptJobs(1, [makeJob({ id: 10, run_id: 1, name: 'build', status: 'in_progress' })])
+    await pollOnce()
+
+    scriptRuns([], [])
+    scriptJobs(1, [finished(10, 9)])
+    await pollOnce()
+    const listings = () => gh.calls.filter((c) => c.url.includes('/runs/1/jobs')).length
+    const afterSecond = listings()
+    await pollOnce()
+
+    expect(typicalSeconds(durations.value, KEY)).toBe(540)
+    expect(afterSecond).toBe(2)
+    expect(listings()).toBe(2)
+  })
+
+  it('does not chase a finished run whose jobs were all already complete', async () => {
+    const run = makeRun({ id: 1, status: 'in_progress' })
+    scriptRuns([], [run])
+    scriptJobs(1, [finished(10, 9)])
+    await pollOnce()
+
+    scriptRuns([], [])
+    await pollOnce()
+
+    expect(gh.calls.filter((c) => c.url.includes('/runs/1/jobs'))).toHaveLength(1)
+  })
+
+  it('skips the final listing when the hourly allowance is nearly spent', async () => {
+    const run = makeRun({ id: 1, status: 'in_progress' })
+    const low = { 'x-ratelimit-limit': '5000', 'x-ratelimit-remaining': '150', 'x-ratelimit-reset': '9999999999' }
+    scriptRuns([], [run])
+    scriptJobs(1, [makeJob({ id: 10, run_id: 1, name: 'build', status: 'in_progress' })])
+    await pollOnce()
+
+    gh.on(/\/actions\/runs\?status=queued&/, json({ total_count: 0, workflow_runs: [] }, { headers: low }))
+    gh.on(/\/actions\/runs\?status=in_progress&/, json({ total_count: 0, workflow_runs: [] }, { headers: low }))
+    scriptJobs(1, [finished(10, 9)])
+    await pollOnce()
+
+    expect(gh.calls.filter((c) => c.url.includes('/runs/1/jobs'))).toHaveLength(1)
+    expect(typicalSeconds(durations.value, KEY)).toBeUndefined()
   })
 })
 

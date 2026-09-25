@@ -10,6 +10,7 @@ import {
 import { listJobs, listRuns } from './api'
 import { repoKey, type RepoRef, type RunWithRepo, type WorkflowJob } from './types'
 import { settings, updateSettings } from '../state/settings'
+import { learnDurations } from '../state/durations'
 import { PLANS, type ObservedMax } from '../model/plans'
 import { buildBuckets } from '../model/queue'
 import {
@@ -89,6 +90,12 @@ const JOB_CONCURRENCY = 3
 const REPO_CONCURRENCY = 5
 /** Guard against a repository with a pathological number of active runs. */
 const MAX_RUNS_PER_REPO = 60
+/**
+ * Below this many requests left in the hour, a finished run's final job
+ * listing is not worth what it costs. The listing only teaches durations; the
+ * dashboard itself must keep polling.
+ */
+const LEARNING_MIN_REMAINING = 200
 
 /**
  * Merges the two status listings into one run list, keeping each run once.
@@ -267,11 +274,52 @@ function recordObserved(): void {
   if (next) updateSettings({ observedMax: next })
 }
 
-/** Drops cached jobs for runs that are no longer active. */
-function pruneJobCache(activeRunIds: ReadonlySet<number>): void {
-  for (const id of jobCache.keys()) {
-    if (!activeRunIds.has(id)) jobCache.delete(id)
+/**
+ * Drops cached jobs for runs that are no longer active, and returns the ids
+ * whose last snapshot still showed work in flight. Those runs finished between
+ * two polls, and their final job timings were never seen.
+ */
+function pruneJobCache(activeRunIds: ReadonlySet<number>): number[] {
+  const unfinished: number[] = []
+  for (const [id, entry] of jobCache) {
+    if (activeRunIds.has(id)) continue
+    if (entry.jobs.some((job) => job.status !== 'completed')) unfinished.push(id)
+    jobCache.delete(id)
   }
+  return unfinished
+}
+
+/** Teaches the duration store every completed job currently cached. */
+function learnFromCache(): void {
+  const byRun = new Map(runs.value.map((run) => [run.id, run]))
+  for (const [id, entry] of jobCache) {
+    const run = byRun.get(id)
+    if (run) learnDurations({ owner: run.repoOwner, name: run.repoName }, entry.jobs)
+  }
+}
+
+/**
+ * Fetches the final job listing of runs that finished since the last poll, so
+ * their durations are learned. One request per run, and only while the hourly
+ * allowance is comfortable: the forecast is a convenience, the dashboard is not.
+ */
+async function learnFinishedRuns(ids: readonly number[], signal: AbortSignal): Promise<void> {
+  if (ids.length === 0) return
+  const remaining = getRateLimit()?.remaining
+  if (remaining !== undefined && remaining < LEARNING_MIN_REMAINING) return
+  const previous = new Map(runs.value.map((run) => [run.id, run]))
+  const finished = ids.map((id) => previous.get(id)).filter((r): r is RunWithRepo => r !== undefined)
+  await mapLimit(finished, JOB_CONCURRENCY, async (run) => {
+    const repo = { owner: run.repoOwner, name: run.repoName }
+    try {
+      learnDurations(repo, await listJobs(repo, run.id, { signal }))
+    } catch (err) {
+      // Learning is best effort. Only the failures that mean the poll as a
+      // whole must stop are allowed through.
+      if (err instanceof GitHubError && err.status === 401) throw err
+      if (isRateLimitError(err)) throw err
+    }
+  })
 }
 
 export async function pollOnce(): Promise<void> {
@@ -421,10 +469,14 @@ export async function pollOnce(): Promise<void> {
     await remeasureOverCap()
     if (controller.signal.aborted || mine !== generation) return
 
-    pruneJobCache(new Set([...byRepo.values()].flat().map((r) => r.id)))
+    const active = [...byRepo.values()].flat()
+    const vanished = pruneJobCache(new Set(active.map((r) => r.id)))
+    await learnFinishedRuns(vanished, controller.signal)
+    if (controller.signal.aborted || mine !== generation) return
     lastBilled = Math.max(1, getBilledCount() - billedBefore)
 
     publish()
+    learnFromCache()
     batch(() => {
       lastPoll.value = Date.now()
       pollCost.value = lastBilled

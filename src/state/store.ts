@@ -2,9 +2,11 @@ import { computed, signal } from '@preact/signals'
 import type { RunWithRepo, WorkflowJob } from '../github/types'
 import type { RateLimit } from '../github/client'
 import { buildBuckets, staleJobs } from '../model/queue'
+import { forecastBucket, insightFor, type BucketForecast, type Insight } from '../model/forecast'
 import { NO_FILTER, type ViewFilter } from '../model/filter'
 import { PLANS } from '../model/plans'
 import { settings } from './settings'
+import { durations } from './durations'
 
 export type View = 'setup' | 'dashboard'
 
@@ -66,6 +68,21 @@ export const buckets = computed(() =>
 )
 
 export const stale = computed(() => staleJobs(buckets.value))
+
+/**
+ * Forecasts and the insight, by runner class. Recomputed as the clock ticks so
+ * a running job's expected end never slips into the past.
+ */
+export const forecasts = computed(() => {
+  const map = new Map<string, { forecast: BucketForecast; insight: Insight | null }>()
+  for (const bucket of buckets.value) {
+    map.set(bucket.cls, {
+      forecast: forecastBucket(bucket, durations.value, now.value),
+      insight: bucket.cap === null ? null : insightFor(bucket, durations.value, now.value),
+    })
+  }
+  return map
+})
 
 export const totalQueued = computed(() =>
   buckets.value.reduce((sum, b) => sum + b.queued.length, 0),
