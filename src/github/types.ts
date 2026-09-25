@@ -67,6 +67,8 @@ export interface WorkflowJob {
   runner_name: string | null
   created_at: string
   started_at: string | null
+  /** Present once the job completes; optional so older fixtures still type-check. */
+  completed_at?: string | null
   html_url: string
 }
 

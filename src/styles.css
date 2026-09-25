@@ -464,6 +464,248 @@ code,
   min-width: 0;
 }
 
+/* ---------- forecast ---------- */
+
+.tiles {
+  display: flex;
+  gap: 10px;
+  margin-bottom: 12px;
+}
+
+.tile {
+  flex: 1 1 0;
+  min-width: 0;
+  padding: 10px 12px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  background: var(--surface);
+}
+
+.tile-label {
+  font-size: 11px;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: var(--text-faint);
+}
+
+.tile-value {
+  font-family: var(--mono);
+  font-size: 22px;
+  font-weight: 600;
+  line-height: 1.2;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.tile-note {
+  font-size: 12px;
+  color: var(--text-dim);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.lanes {
+  margin: 0;
+  padding: 6px 14px 8px;
+}
+
+.lanes svg {
+  display: block;
+  width: 100%;
+  max-width: 560px;
+  height: auto;
+  font-family: var(--mono);
+  overflow: visible;
+}
+
+.lane-rule {
+  stroke: var(--border);
+  stroke-width: 1;
+}
+
+.lane-label,
+.lane-tick {
+  fill: var(--text-faint);
+  font-size: 10.5px;
+}
+
+.lane-label {
+  text-anchor: end;
+}
+
+.lane-tick.now {
+  fill: var(--text);
+  font-weight: 600;
+}
+
+.lane-now {
+  stroke: var(--text);
+  stroke-width: 1.5;
+}
+
+.lane-bar {
+  fill: var(--series-0);
+}
+
+.lane-bar.series-1 { fill: var(--series-1); stroke: var(--series-1); }
+.lane-bar.series-2 { fill: var(--series-2); stroke: var(--series-2); }
+.lane-bar.series-3 { fill: var(--series-3); stroke: var(--series-3); }
+.lane-bar.series-4 { fill: var(--series-4); stroke: var(--series-4); }
+.lane-bar.series-5 { fill: var(--series-5); stroke: var(--series-5); }
+.lane-bar.series-6 { fill: var(--series-6); stroke: var(--series-6); }
+.lane-bar.series-7 { fill: var(--series-7); stroke: var(--series-7); }
+.lane-bar.series-8 { fill: var(--series-8); stroke: var(--series-8); }
+
+.lane-bar.running {
+  stroke: none;
+}
+
+.lane-bar.running.unknown {
+  fill-opacity: 0.55;
+}
+
+.lane-bar.ghost {
+  fill-opacity: 0.16;
+  stroke-width: 1.5;
+  stroke-dasharray: 4 3;
+}
+
+.lane-bar.ghost.stale {
+  stroke: var(--stale);
+  fill: var(--stale);
+}
+
+.lane-bar.overdue {
+  stroke: var(--queued);
+  stroke-width: 2;
+}
+
+.lane-text {
+  fill: var(--text-dim);
+  font-size: 10.5px;
+  pointer-events: none;
+}
+
+.lane-text.on-bar {
+  fill: #fff;
+  font-weight: 600;
+}
+
+.lane-text.stale {
+  fill: var(--stale);
+  font-weight: 600;
+}
+
+.lane-legend {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px 14px;
+  margin-top: 4px;
+  font-size: 11.5px;
+  color: var(--text-dim);
+}
+
+.lane-legend .swatch {
+  width: 10px;
+  height: 10px;
+  vertical-align: -1px;
+}
+
+.swatch.ghost {
+  background: transparent;
+  border: 1.5px dashed var(--text-faint);
+  box-sizing: border-box;
+}
+
+.swatch.ghost.stale {
+  border-color: var(--stale);
+}
+
+.swatch.overdue {
+  background: transparent;
+  border: 2px solid var(--queued);
+  box-sizing: border-box;
+}
+
+.insight {
+  display: flex;
+  gap: 10px;
+  align-items: flex-start;
+  margin: 4px 14px 12px;
+  padding: 10px 12px;
+  border-radius: var(--radius);
+  border: 1px solid var(--border);
+  background: var(--surface-2);
+  font-size: 13px;
+  flex-wrap: wrap;
+}
+
+.insight > svg {
+  width: 18px;
+  height: 18px;
+  flex-shrink: 0;
+  fill: none;
+  stroke: var(--queued);
+  stroke-width: 2;
+  stroke-linecap: round;
+  margin-top: 2px;
+}
+
+.insight-text {
+  flex: 1 1 200px;
+  color: var(--text-dim);
+}
+
+.insight-text b {
+  color: var(--text);
+}
+
+.insight-actions {
+  display: flex;
+  gap: 8px;
+}
+
+.jobline {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+}
+
+.jobrow {
+  flex-direction: column;
+  align-items: stretch;
+  gap: 3px;
+}
+
+.overdue-tag {
+  margin-left: 6px;
+  font-size: 11px;
+  color: var(--queued);
+}
+
+.group-age.warn {
+  color: var(--queued);
+}
+
+.progress {
+  height: 4px;
+  border-radius: 2px;
+  background: var(--border);
+  overflow: hidden;
+}
+
+.progress-fill {
+  height: 100%;
+  background: var(--running);
+}
+
+.progress-fill.over {
+  background: var(--queued);
+}
+
 /* ---------- filter chips ---------- */
 
 .chips {

@@ -175,8 +175,8 @@ export function Dashboard() {
       ) : (
         <>
           <FilterChips />
-          {list.map((bucket) => (
-            <RunnerClassSection key={bucket.cls} bucket={bucket} />
+          {list.map((bucket, i) => (
+            <RunnerClassSection key={bucket.cls} bucket={bucket} headline={i === 0} />
           ))}
         </>
       )}
