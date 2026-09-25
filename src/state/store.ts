@@ -2,6 +2,7 @@ import { computed, signal } from '@preact/signals'
 import type { RunWithRepo, WorkflowJob } from '../github/types'
 import type { RateLimit } from '../github/client'
 import { buildBuckets, staleJobs } from '../model/queue'
+import { NO_FILTER, type ViewFilter } from '../model/filter'
 import { PLANS } from '../model/plans'
 import { settings } from './settings'
 
@@ -10,6 +11,13 @@ export type View = 'setup' | 'dashboard'
 export const view = signal<View>(
   settings.value.token && settings.value.repos.length > 0 ? 'dashboard' : 'setup',
 )
+
+/** Which screen of the dashboard is showing. Session-only: a reload lands on Now. */
+export type Tab = 'now' | 'trends' | 'alerts' | 'settings'
+export const tab = signal<Tab>('now')
+
+/** The reader's narrowing of the run list. Session-only for the same reason. */
+export const filter = signal<ViewFilter>(NO_FILTER)
 
 export const runs = signal<RunWithRepo[]>([])
 export const jobsByRun = signal<Map<number, WorkflowJob[]>>(new Map())
@@ -80,4 +88,6 @@ export function resetData(): void {
   fatalError.value = null
   warning.value = null
   observationDismissed.value = false
+  tab.value = 'now'
+  filter.value = NO_FILTER
 }

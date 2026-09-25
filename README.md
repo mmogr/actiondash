@@ -15,13 +15,25 @@ choose, and lets you cancel the runs that are wasting slots.
 macOS                          5/5 in use    7 queued    ~14m wait
 
   RUNNING
-  run   app       #412   build-arm    feat/parser   a1b2c3d   11m   cancel
-  run   site      #88    test         main          9f8e7d1    3m   cancel
+  ▾ app #412  STALE                                        11m   cancel
+    5 jobs · feat/parser · Add the parser benchmark
+    Superseded by #414 on d4e5f6a
+      build-arm                                            11m
+      build-x64                                            11m
+      ...
 
   QUEUED - waiting for a slot
-   1    app       #414   build-arm    feat/parser   d4e5f6a  STALE   9m   cancel
-   2    app       #415   build-arm    feat/parser   77aa119          2m   cancel
+  ▸ app #414  4 jobs                                        9m   cancel
+    feat/parser · Fix the benchmark harness
+    Queue positions 1 to 4
+  ▸ site #88   test                                         2m   cancel
+    main · Bump deps
+    Queue position 5
 ```
+
+Jobs are grouped by the run that owns them, because cancelling acts on a run.
+Cancel asks once before it acts. Chips above the list narrow it to one
+repository or to superseded runs only; the pool figures are never narrowed.
 
 ## Security model
 

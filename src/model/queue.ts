@@ -35,6 +35,21 @@ function toTime(iso: string | null): number {
 }
 
 /**
+ * Oldest first, with ties broken by run and then by job id. Ties are common:
+ * every job of a run is created in the same second. Without the tiebreak the
+ * order of tied jobs would follow whichever repository answered first, and the
+ * queue positions shown would shuffle from one poll to the next.
+ */
+function compareJobs(a: DashJob, b: DashJob): number {
+  return (
+    a.since - b.since ||
+    a.run.created_at.localeCompare(b.run.created_at) ||
+    a.run.run_number - b.run.run_number ||
+    a.job.id - b.job.id
+  )
+}
+
+/**
  * Joins runs to their jobs, classifies each job by the concurrency pool it
  * draws from, and orders the waiting jobs oldest first.
  *
@@ -95,8 +110,8 @@ export function buildBuckets(
     if (!bucket && cls !== 'macos') continue
     const running = bucket?.running ?? []
     const queued = bucket?.queued ?? []
-    running.sort((a, b) => a.since - b.since)
-    queued.sort((a, b) => a.since - b.since)
+    running.sort(compareJobs)
+    queued.sort(compareJobs)
     out.push({ cls, cap: capFor(plan, cls), running, queued })
   }
   return out
@@ -112,4 +127,47 @@ export function distinctRuns(jobs: readonly DashJob[]): { repo: RepoRef; run: Ru
   const seen = new Map<number, { repo: RepoRef; run: RunWithRepo }>()
   for (const j of jobs) if (!seen.has(j.run.id)) seen.set(j.run.id, { repo: j.repo, run: j.run })
   return [...seen.values()]
+}
+
+export interface PositionedJob {
+  entry: DashJob
+  /** One-based place in the list the job came from: the queue position for queued jobs. */
+  position: number
+}
+
+/** The jobs of one run, in the order they hold in their bucket. */
+export interface RunGroup {
+  repo: RepoRef
+  run: RunWithRepo
+  supersededBy: RunWithRepo | null
+  jobs: PositionedJob[]
+  /** Earliest known since across the run's jobs, for the header's age. */
+  since: number
+}
+
+/**
+ * Folds a bucket's jobs into one entry per run, keeping each job's position so
+ * the queue numbering survives the grouping. Cancelling acts on a run, not a
+ * job, so a run is the natural unit to show and to act on.
+ */
+export function groupByRun(jobs: readonly DashJob[]): RunGroup[] {
+  const groups = new Map<number, RunGroup>()
+  jobs.forEach((entry, i) => {
+    let group = groups.get(entry.run.id)
+    if (!group) {
+      group = {
+        repo: entry.repo,
+        run: entry.run,
+        supersededBy: entry.supersededBy,
+        jobs: [],
+        since: entry.since,
+      }
+      groups.set(entry.run.id, group)
+    }
+    group.jobs.push({ entry, position: i + 1 })
+    if (entry.since > 0 && (group.since === 0 || entry.since < group.since)) {
+      group.since = entry.since
+    }
+  })
+  return [...groups.values()]
 }

@@ -17,6 +17,18 @@
   --stale-bg: #fdecea;
   --danger: #b3261e;
 
+  /* Repository colours, in a fixed order that reads apart under colour-vision
+     deficiency. Slot 0 is the grey for anything past the eighth repository. */
+  --series-0: #8a939e;
+  --series-1: #2a78d6;
+  --series-2: #eb6834;
+  --series-3: #1baf7a;
+  --series-4: #eda100;
+  --series-5: #e87ba4;
+  --series-6: #008300;
+  --series-7: #4a3aa7;
+  --series-8: #e34948;
+
   --mono: ui-monospace, SFMono-Regular, "SF Mono", Menlo, Consolas, monospace;
   --sans: system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
 
@@ -40,6 +52,16 @@
     --stale: #f85149;
     --stale-bg: #2d1618;
     --danger: #f85149;
+
+    --series-0: #6e7781;
+    --series-1: #3987e5;
+    --series-2: #d95926;
+    --series-3: #199e70;
+    --series-4: #c98500;
+    --series-5: #d55181;
+    --series-6: #008300;
+    --series-7: #9085e9;
+    --series-8: #e66767;
   }
 }
 
@@ -91,6 +113,11 @@ button.danger {
   background: transparent;
 }
 
+button.danger.solid {
+  background: var(--danger);
+  color: #fff;
+}
+
 button.link {
   border: none;
   background: none;
@@ -134,7 +161,8 @@ code,
 .shell {
   max-width: 1180px;
   margin: 0 auto;
-  padding: 20px 18px 64px;
+  /* Room at the bottom for the tab bar. */
+  padding: 20px 18px calc(84px + env(safe-area-inset-bottom));
 }
 
 .topbar {
@@ -270,7 +298,7 @@ code,
   font-weight: 600;
 }
 
-/* ---------- job rows ---------- */
+/* ---------- run groups ---------- */
 
 .rows {
   display: flex;
@@ -285,71 +313,230 @@ code,
   color: var(--text-faint);
 }
 
-.row {
-  display: grid;
-  grid-template-columns: 34px minmax(120px, 1.1fr) 62px minmax(120px, 1.4fr) minmax(90px, 1fr) 66px 58px auto;
-  gap: 10px;
-  align-items: center;
-  padding: 6px 14px;
+.group {
   border-top: 1px solid var(--border);
   font-size: 13px;
 }
 
-.row:first-child {
-  border-top: none;
-}
-
-.row.is-stale {
+.group.is-stale {
   background: var(--stale-bg);
 }
 
-.row .pos {
-  font-family: var(--mono);
+.group-head {
+  display: grid;
+  grid-template-columns: 28px minmax(0, 1fr) auto;
+  gap: 0 10px;
+  align-items: center;
+  padding: 8px 14px 8px 10px;
+}
+
+.group-toggle {
+  border: none;
+  background: transparent;
   color: var(--text-faint);
-  text-align: right;
+  padding: 0;
+  width: 28px;
+  min-height: 40px;
+  text-align: left;
+}
+
+.group-body {
+  min-width: 0;
+}
+
+.group-line {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+}
+
+.swatch {
+  display: inline-block;
+  width: 8px;
+  height: 8px;
+  border-radius: 2px;
+  flex-shrink: 0;
+  background: var(--series-0);
+}
+
+.swatch.series-1 { background: var(--series-1); }
+.swatch.series-2 { background: var(--series-2); }
+.swatch.series-3 { background: var(--series-3); }
+.swatch.series-4 { background: var(--series-4); }
+.swatch.series-5 { background: var(--series-5); }
+.swatch.series-6 { background: var(--series-6); }
+.swatch.series-7 { background: var(--series-7); }
+.swatch.series-8 { background: var(--series-8); }
+
+.group-repo {
+  font-weight: 600;
+  white-space: nowrap;
+}
+
+.runno {
+  font-family: var(--mono);
+  font-weight: 400;
   font-size: 12px;
 }
 
-.row .pos.running {
-  color: var(--running);
+.group-count {
+  color: var(--text);
 }
 
-.row .repo {
-  font-weight: 500;
+.group-age {
+  margin-left: auto;
+  font-family: var(--mono);
+  font-size: 12px;
+  color: var(--text-faint);
+  white-space: nowrap;
+}
+
+.group-meta {
+  color: var(--text-dim);
+  font-size: 12.5px;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
 }
 
-.row .job,
-.row .branch {
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
+.group-note {
+  font-size: 12px;
   color: var(--text-dim);
 }
 
-.row .sha,
-.row .age,
-.row .runno {
+.group-note.stale {
+  color: var(--stale);
+}
+
+.group-head > button {
+  padding: 6px 12px;
+  font-size: 12.5px;
+  min-height: 36px;
+}
+
+.group-cancelling {
+  font-size: 12.5px;
+  color: var(--text-faint);
+  padding: 0 4px;
+}
+
+.group-confirm {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 0 14px 10px 48px;
+  flex-wrap: wrap;
+}
+
+.group-confirm span {
+  flex: 1 1 160px;
+}
+
+.jobs {
+  display: flex;
+  flex-direction: column;
+  gap: 5px;
+  padding: 0 14px 10px 48px;
+}
+
+.jobrow {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+}
+
+.jobrow .pos {
   font-family: var(--mono);
   font-size: 12px;
   color: var(--text-faint);
-}
-
-.row .age {
+  width: 18px;
   text-align: right;
+  flex-shrink: 0;
 }
 
-.row .actions {
+.jobrow .jobname {
+  color: var(--text-dim);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  min-width: 0;
+}
+
+/* ---------- filter chips ---------- */
+
+.chips {
   display: flex;
-  gap: 6px;
-  justify-content: flex-end;
+  gap: 8px;
+  flex-wrap: wrap;
+  margin-bottom: 12px;
 }
 
-.row .actions button {
-  padding: 2px 8px;
-  font-size: 12px;
+.chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  border-radius: 999px;
+  padding: 6px 12px;
+  min-height: 36px;
+  color: var(--text-dim);
+  border-color: var(--border);
+}
+
+.chip.on {
+  color: var(--text);
+  border-color: var(--accent);
+  background: color-mix(in srgb, var(--accent) 14%, var(--surface));
+}
+
+/* ---------- tab bar ---------- */
+
+.tabbar {
+  position: fixed;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  display: flex;
+  justify-content: center;
+  gap: 4px;
+  padding: 4px 8px calc(6px + env(safe-area-inset-bottom));
+  background: var(--surface);
+  border-top: 1px solid var(--border);
+  z-index: 10;
+}
+
+.tab {
+  flex: 0 1 120px;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 2px;
+  min-height: 48px;
+  padding: 4px 0;
+  border: none;
+  background: transparent;
+  color: var(--text-faint);
+  font-size: 11px;
+  border-radius: 8px;
+}
+
+.tab svg {
+  width: 22px;
+  height: 22px;
+  fill: none;
+  stroke: currentColor;
+  stroke-width: 2;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+}
+
+.tab.on {
+  color: var(--text);
+}
+
+.tab:hover:not(:disabled) {
+  background: var(--surface-2);
 }
 
 .badge {
@@ -554,52 +741,13 @@ code,
     margin-left: 0;
   }
 
-  /* The desktop grid has more cells than a phone has width for, so each job
-     takes two lines: repository, run and age first, then the job name and its
-     cancel button. Named areas keep the button on the right edge of every row
-     instead of wherever the leftover cells happen to wrap. */
-  .row {
-    grid-template-columns: 28px minmax(0, 1fr) auto auto;
-    grid-template-areas:
-      'pos repo runno age'
-      'pos job job actions';
-    gap: 2px 10px;
-    padding: 8px 12px;
+  .group-head {
+    padding-right: 12px;
   }
 
-  .row .pos {
-    grid-area: pos;
-    align-self: start;
-  }
-
-  .row .repo {
-    grid-area: repo;
-  }
-
-  .row .runno {
-    grid-area: runno;
-  }
-
-  .row .age {
-    grid-area: age;
-  }
-
-  .row .job {
-    grid-area: job;
-  }
-
-  .row .actions {
-    grid-area: actions;
-  }
-
-  .row .branch,
-  .row .sha {
-    display: none;
-  }
-
-  /* A finger needs more than the desktop button's 20px. */
-  .row .actions button {
-    padding: 5px 12px;
+  .group-confirm,
+  .jobs {
+    padding-left: 38px;
   }
 
   .footer {
