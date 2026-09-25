@@ -11,6 +11,7 @@ import { listJobs, listRuns } from './api'
 import { repoKey, type RepoRef, type RunWithRepo, type WorkflowJob } from './types'
 import { settings, updateSettings } from '../state/settings'
 import { learnDurations } from '../state/durations'
+import { recordHistory } from '../state/history'
 import { PLANS, type ObservedMax } from '../model/plans'
 import { buildBuckets } from '../model/queue'
 import {
@@ -477,6 +478,7 @@ export async function pollOnce(): Promise<void> {
 
     publish()
     learnFromCache()
+    recordHistory(buckets.value, Date.now(), effectiveIntervalMs.value || settings.value.pollIntervalMs)
     batch(() => {
       lastPoll.value = Date.now()
       pollCost.value = lastBilled
