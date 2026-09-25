@@ -41,6 +41,13 @@ marked as a guess. Two tiles say when the next slot frees and when the queue
 clears, and when a superseded run is holding up a real one, a note says which
 run to cancel first and what that buys.
 
+The Trends screen draws what this browser has watched: slots in use and jobs
+queued over the last hour to week, with any time the page was closed hatched
+rather than smoothed over; today's slot time by repository; the last ten
+durations of each job of interest with today's marked; and where the hourly
+request allowance lands at the reset. All of it comes from the same polls and
+is kept in local storage as counts, timestamps and repository names.
+
 Learning a finished run's final timings costs one extra request per run, and
 is skipped whenever fewer than 200 requests remain in the hour.
 
@@ -76,7 +83,7 @@ enforce that:
 
 The token is never written to the URL, never logged, and never rendered back
 into the page. "Forget token" clears it and everything else from local storage,
-including the learned job durations.
+including the learned job durations and the occupancy history.
 
 Two honest limits. A meta-tag CSP cannot express `frame-ancestors`, so
 clickjacking protection is not available on GitHub Pages; open the page in a

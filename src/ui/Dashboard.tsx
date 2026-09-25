@@ -24,6 +24,7 @@ import { FilterChips } from './FilterChips'
 import { Footer } from './Footer'
 import { SettingsView } from './SettingsView'
 import { TabBar } from './TabBar'
+import { Trends } from './trends/Trends'
 
 export function Dashboard() {
   useEffect(() => {
@@ -125,12 +126,7 @@ export function Dashboard() {
       {tab.value === 'settings' ? (
         <SettingsView />
       ) : tab.value === 'trends' ? (
-        <section class="section">
-          <div class="section-head">
-            <div class="section-title">Trends</div>
-          </div>
-          <div class="empty">Occupancy over time arrives in the next release.</div>
-        </section>
+        <Trends />
       ) : tab.value === 'alerts' ? (
         <section class="section">
           <div class="section-head">

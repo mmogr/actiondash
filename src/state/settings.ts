@@ -3,6 +3,7 @@ import type { RepoRef } from '../github/types'
 import type { ObservedMax, PlanId } from '../model/plans'
 import { clearCache, setTokenProvider } from '../github/client'
 import { clearDurations } from './durations'
+import { clearHistory } from './history'
 
 /**
  * Persisted configuration, including the GitHub token.
@@ -137,6 +138,7 @@ export function forgetEverything(): void {
   settings.value = { ...DEFAULTS }
   clearCache()
   clearDurations()
+  clearHistory()
 }
 
 // The API client reads the token through this provider so that it never has to
