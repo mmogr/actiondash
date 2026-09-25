@@ -5,7 +5,8 @@
  * A guard nobody has seen fail is indistinguishable from one that cannot. This
  * runs each against input it must reject and fails if it is accepted: the real
  * build with its Content Security Policy removed, and each form of calling
- * fetch outside the API client. Needs dist/, so it runs after the build.
+ * fetch outside the API client, in the page and in the service worker. Needs
+ * dist/, so it runs after the build.
  */
 import { spawnSync } from 'node:child_process'
 import { mkdtemp, mkdir, readFile, rm, writeFile } from 'node:fs/promises'
@@ -45,6 +46,15 @@ try {
     await writeFile(join(root, 'src', 'stray.ts'), `export const x = (url: string) => ${form}\n`)
     mustReject(`network call as ${form}`, CHECK_FETCH, [], root)
   }
+
+  // The worker is the one script the page's policy does not cover.
+  const worker = join(work, 'worker')
+  await mkdir(join(worker, 'public'), { recursive: true })
+  await writeFile(
+    join(worker, 'public', 'sw.js'),
+    "self.addEventListener('fetch', (e) => e.respondWith(fetch(e.request)))\n",
+  )
+  mustReject('a fetch handler in the service worker', CHECK_FETCH, [], worker)
 } finally {
   await rm(work, { recursive: true, force: true })
 }

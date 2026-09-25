@@ -25,6 +25,8 @@ import { Footer } from './Footer'
 import { SettingsView } from './SettingsView'
 import { TabBar } from './TabBar'
 import { Trends } from './trends/Trends'
+import { AlertsView } from './AlertsView'
+import { InstallBanner } from './InstallBanner'
 
 export function Dashboard() {
   useEffect(() => {
@@ -128,12 +130,7 @@ export function Dashboard() {
       ) : tab.value === 'trends' ? (
         <Trends />
       ) : tab.value === 'alerts' ? (
-        <section class="section">
-          <div class="section-head">
-            <div class="section-title">Alerts</div>
-          </div>
-          <div class="empty">Notifications arrive in a later release.</div>
-        </section>
+        <AlertsView />
       ) : loading ? (
         <section class="section">
           <div class="section-head">
@@ -170,6 +167,7 @@ export function Dashboard() {
         </section>
       ) : (
         <>
+          <InstallBanner />
           <FilterChips />
           {list.map((bucket, i) => (
             <RunnerClassSection key={bucket.cls} bucket={bucket} headline={i === 0} />

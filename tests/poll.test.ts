@@ -78,6 +78,8 @@ beforeEach(() => {
     plan: 'pro',
     pollIntervalMs: 15_000,
     observedMax: {},
+    alerts: { slotFreed: false, jobStarted: false, superseded: false },
+    installDismissed: false,
   }
 })
 

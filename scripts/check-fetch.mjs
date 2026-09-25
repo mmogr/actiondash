@@ -4,11 +4,15 @@
  * I/O. The origin guard that keeps the token away from third parties lives
  * there, so a stray fetch, XMLHttpRequest, WebSocket, EventSource or beacon
  * anywhere else would route around it.
+ *
+ * public/ is scanned as well, for the service worker. A worker runs outside
+ * the page's Content Security Policy, so this scan is the only thing holding
+ * it to the same rule.
  */
 import { readdir, readFile } from 'node:fs/promises'
 import { join, relative } from 'node:path'
 
-const ROOT = 'src'
+const ROOTS = ['src', 'public']
 const ALLOWED = new Set(['src/github/client.ts'])
 
 const PATTERNS = [
@@ -28,14 +32,24 @@ async function* walk(dir) {
   for (const entry of await readdir(dir, { withFileTypes: true })) {
     const path = join(dir, entry.name)
     if (entry.isDirectory()) yield* walk(path)
-    else if (/\.(ts|tsx)$/.test(entry.name)) yield path
+    else if (/\.(ts|tsx|js|mjs)$/.test(entry.name)) yield path
+  }
+}
+
+async function* walkAll() {
+  for (const root of ROOTS) {
+    try {
+      yield* walk(root)
+    } catch (err) {
+      if (err.code !== 'ENOENT') throw err
+    }
   }
 }
 
 const violations = []
 let scanned = 0
 
-for await (const path of walk(ROOT)) {
+for await (const path of walkAll()) {
   const rel = relative('.', path).split('\\').join('/')
   if (ALLOWED.has(rel)) continue
   scanned++
