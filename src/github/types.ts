@@ -46,6 +46,8 @@ export interface WorkflowRun {
   updated_at: string
   run_started_at?: string
   html_url: string
+  /** Present in the listing payload; optional so older fixtures still type-check. */
+  head_commit?: { message: string } | null
 }
 
 /** A run annotated with the repository it was fetched from. */

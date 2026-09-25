@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { buildBuckets, distinctRuns, staleJobs } from '../src/model/queue'
+import { buildBuckets, distinctRuns, groupByRun, staleJobs } from '../src/model/queue'
 import { PLANS } from '../src/model/plans'
 import type { WorkflowJob } from '../src/github/types'
 import { makeJob, makeRun } from './helpers'
@@ -71,6 +71,25 @@ describe('buildBuckets', () => {
     const [macos] = buildBuckets([run], index(jobs), FREE)
 
     expect(macos?.queued.map((j) => j.job.id)).toEqual([10, 11, 12])
+  })
+
+  it('orders tied jobs the same way whichever repository answered first', () => {
+    // Every job of a run is created in the same second, so the timestamp alone
+    // cannot order them. The poller hands runs over in completion order, which
+    // varies, and the positions shown must not shuffle between polls.
+    const a = makeRun({ id: 1, run_number: 1, created_at: '2026-09-09T10:00:00Z' })
+    const b = makeRun({ id: 2, run_number: 2, created_at: '2026-09-09T10:00:00Z' })
+    const jobs = [
+      makeJob({ id: 21, run_id: 2, status: 'queued' }),
+      makeJob({ id: 12, run_id: 1, status: 'queued' }),
+      makeJob({ id: 11, run_id: 1, status: 'queued' }),
+    ]
+
+    const [oneWay] = buildBuckets([b, a], index(jobs), FREE)
+    const [otherWay] = buildBuckets([a, b], index(jobs), FREE)
+
+    expect(oneWay?.queued.map((j) => j.job.id)).toEqual([11, 12, 21])
+    expect(otherWay?.queued.map((j) => j.job.id)).toEqual([11, 12, 21])
   })
 
   it('treats waiting, pending and requested as queued', () => {
@@ -156,5 +175,39 @@ describe('distinctRuns', () => {
 
     expect(targets).toHaveLength(1)
     expect(targets[0]?.repo).toEqual({ owner: 'acme', name: 'app' })
+  })
+})
+
+describe('groupByRun', () => {
+  it('keeps the queue position of each job and the order runs first appear', () => {
+    const first = makeRun({ id: 1, run_number: 1, created_at: '2026-09-09T10:00:00Z' })
+    const second = makeRun({ id: 2, run_number: 2, created_at: '2026-09-09T10:01:00Z' })
+    const jobs = [
+      makeJob({ id: 10, run_id: 1, status: 'queued', created_at: '2026-09-09T10:00:00Z' }),
+      makeJob({ id: 20, run_id: 2, status: 'queued', created_at: '2026-09-09T10:01:00Z' }),
+      makeJob({ id: 11, run_id: 1, status: 'queued', created_at: '2026-09-09T10:02:00Z' }),
+    ]
+
+    const [macos] = buildBuckets([first, second], index(jobs), FREE)
+    const groups = groupByRun(macos!.queued)
+
+    expect(groups.map((g) => g.run.id)).toEqual([1, 2])
+    expect(groups[0]?.jobs.map((j) => j.position)).toEqual([1, 3])
+    expect(groups[1]?.jobs.map((j) => j.position)).toEqual([2])
+  })
+
+  it('takes the earliest known start as the group age, ignoring unknown ones', () => {
+    const run = makeRun({ id: 1 })
+    const jobs = [
+      makeJob({ id: 10, run_id: 1, status: 'in_progress', started_at: null, created_at: '' }),
+      makeJob({ id: 11, run_id: 1, status: 'in_progress', started_at: '2026-09-09T10:05:00Z' }),
+      makeJob({ id: 12, run_id: 1, status: 'in_progress', started_at: '2026-09-09T10:02:00Z' }),
+    ]
+
+    const [macos] = buildBuckets([run], index(jobs), FREE)
+    const [group] = groupByRun(macos!.running)
+
+    expect(group?.since).toBe(Date.parse('2026-09-09T10:02:00Z'))
+    expect(group?.jobs).toHaveLength(3)
   })
 })

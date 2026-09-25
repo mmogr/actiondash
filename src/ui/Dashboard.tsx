@@ -14,12 +14,16 @@ import {
   pollProgress,
   rateLimited,
   stale,
+  tab,
   totalQueued,
   totalRunning,
   warning,
 } from '../state/store'
 import { RunnerClassSection } from './RunnerClassSection'
+import { FilterChips } from './FilterChips'
 import { Footer } from './Footer'
+import { SettingsView } from './SettingsView'
+import { TabBar } from './TabBar'
 
 export function Dashboard() {
   useEffect(() => {
@@ -118,7 +122,23 @@ export function Dashboard() {
         </div>
       )}
 
-      {loading ? (
+      {tab.value === 'settings' ? (
+        <SettingsView />
+      ) : tab.value === 'trends' ? (
+        <section class="section">
+          <div class="section-head">
+            <div class="section-title">Trends</div>
+          </div>
+          <div class="empty">Occupancy over time arrives in the next release.</div>
+        </section>
+      ) : tab.value === 'alerts' ? (
+        <section class="section">
+          <div class="section-head">
+            <div class="section-title">Alerts</div>
+          </div>
+          <div class="empty">Notifications arrive in a later release.</div>
+        </section>
+      ) : loading ? (
         <section class="section">
           <div class="section-head">
             <div class="section-title">Loading</div>
@@ -153,10 +173,16 @@ export function Dashboard() {
           </div>
         </section>
       ) : (
-        list.map((bucket) => <RunnerClassSection key={bucket.cls} bucket={bucket} />)
+        <>
+          <FilterChips />
+          {list.map((bucket) => (
+            <RunnerClassSection key={bucket.cls} bucket={bucket} />
+          ))}
+        </>
       )}
 
       <Footer />
+      <TabBar />
     </div>
   )
 }

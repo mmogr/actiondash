@@ -1,7 +1,9 @@
 import type { ClassBucket } from '../model/queue'
+import { groupByRun } from '../model/queue'
+import { matchesFilter } from '../model/filter'
 import { RUNNER_CLASS_LABEL } from '../model/runnerClass'
-import { now } from '../state/store'
-import { JobRow } from './JobRow'
+import { filter, now } from '../state/store'
+import { RunGroup } from './RunGroup'
 import { meanAge } from './format'
 
 export function RunnerClassSection({ bucket }: { bucket: ClassBucket }) {
@@ -11,6 +13,14 @@ export function RunnerClassSection({ bucket }: { bucket: ClassBucket }) {
   const pct = cap ? Math.min(100, (used / cap) * 100) : 0
   const atCapacity = cap !== null && used >= cap
   const wait = meanAge(bucket.queued, nowMs)
+
+  // Grouped before filtering so a hidden run still counts towards the queue
+  // positions of the runs behind it.
+  const current = filter.value
+  const running = groupByRun(bucket.running).filter((g) => matchesFilter(g, current))
+  const queued = groupByRun(bucket.queued).filter((g) => matchesFilter(g, current))
+  const empty = used === 0 && bucket.queued.length === 0
+  const filteredOut = !empty && running.length === 0 && queued.length === 0
 
   return (
     <section class="section">
@@ -39,23 +49,25 @@ export function RunnerClassSection({ bucket }: { bucket: ClassBucket }) {
         </div>
       </div>
 
-      {used === 0 && bucket.queued.length === 0 ? (
+      {empty ? (
         <div class="empty">Nothing running or queued.</div>
+      ) : filteredOut ? (
+        <div class="empty">Nothing here matches the filter.</div>
       ) : (
         <div class="rows">
-          {bucket.running.length > 0 && <div class="group-label">Running</div>}
-          {bucket.running.map((entry) => (
-            <JobRow key={entry.job.id} entry={entry} position={null} />
+          {running.length > 0 && <div class="group-label">Running</div>}
+          {running.map((group) => (
+            <RunGroup key={group.run.id} group={group} kind="running" defaultOpen={true} />
           ))}
 
-          {bucket.queued.length > 0 && (
+          {queued.length > 0 && (
             <div class="group-label">
               Queued
               {atCapacity ? ' - waiting for a slot' : ''}
             </div>
           )}
-          {bucket.queued.map((entry, i) => (
-            <JobRow key={entry.job.id} entry={entry} position={i + 1} />
+          {queued.map((group, i) => (
+            <RunGroup key={group.run.id} group={group} kind="queued" defaultOpen={i === 0} />
           ))}
         </div>
       )}
