@@ -30,6 +30,11 @@ export function json(
     })
 }
 
+/** A response with no body at all, as GitHub gives for some writes. */
+export function empty(status = 201): Reply {
+  return () => new Response(null, { status })
+}
+
 function abortError(): DOMException {
   return new DOMException('The operation was aborted.', 'AbortError')
 }

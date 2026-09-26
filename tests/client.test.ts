@@ -171,4 +171,27 @@ describe('apiFetch', () => {
     expect(error).toBeInstanceOf(GitHubError)
     expect((error as GitHubError).status).toBe(502)
   })
+
+  it('accepts a write answered with no body, as a re-run is', async () => {
+    vi.stubGlobal('fetch', vi.fn(async () => new Response(null, { status: 201 })))
+
+    const res = await apiFetch('/repos/acme/app/actions/runs/1/rerun', { method: 'POST', noCache: true })
+
+    expect(res.status).toBe(201)
+    expect(res.data).toBeUndefined()
+  })
+
+  it('still reads a write answered with a body, as a cancel is', async () => {
+    vi.stubGlobal('fetch', vi.fn(async () => respond({}, { status: 202 })))
+
+    const res = await apiFetch('/repos/acme/app/actions/runs/1/cancel', { method: 'POST', noCache: true })
+
+    expect(res.data).toEqual({})
+  })
+
+  it('reads 204 as no content', async () => {
+    vi.stubGlobal('fetch', vi.fn(async () => new Response(null, { status: 204 })))
+
+    expect((await apiFetch('/anything', { method: 'POST', noCache: true })).data).toBeUndefined()
+  })
 })

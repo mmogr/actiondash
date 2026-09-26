@@ -1,10 +1,7 @@
-import { useState } from 'preact/hooks'
 import { PLANS, type PlanId } from '../model/plans'
-import { distinctRuns } from '../model/queue'
-import { cancelRun } from '../github/api'
-import { clearJobCache, pollOnce, reschedule, stopPolling } from '../github/poller'
+import { clearJobCache, reschedule, stopPolling } from '../github/poller'
 import { forgetEverything, settings, updateSettings } from '../state/settings'
-import { actionError, resetData, stale, tab, view } from '../state/store'
+import { resetData, tab, view } from '../state/store'
 
 const INTERVALS = [
   { ms: 10_000, label: '10s' },
@@ -14,33 +11,7 @@ const INTERVALS = [
 ]
 
 export function SettingsView() {
-  const [cancelling, setCancelling] = useState(false)
-  const staleRuns = distinctRuns(stale.value)
   const repoCount = settings.value.repos.length
-
-  async function cancelAllStale() {
-    const count = staleRuns.length
-    const ok = confirm(
-      `Cancel ${count} superseded run${count === 1 ? '' : 's'}? ` +
-        `Each has already been replaced by a newer commit on the same branch.`,
-    )
-    if (!ok) return
-
-    setCancelling(true)
-    const failures: string[] = []
-    for (const { repo, run } of staleRuns) {
-      try {
-        await cancelRun(repo, run.id)
-      } catch (err) {
-        failures.push(`#${run.run_number}: ${(err as Error).message}`)
-      }
-    }
-    setCancelling(false)
-    if (failures.length > 0) {
-      actionError.value = `${failures.length} of ${count} cancels failed. ${failures.join(' ')}`
-    }
-    await pollOnce()
-  }
 
   function onForget() {
     if (!confirm('Remove the stored token and all settings from this browser?')) return
@@ -129,24 +100,6 @@ export function SettingsView() {
           <button onClick={() => (tab.value = 'alerts')}>Alert settings</button>
         </div>
       </div>
-
-      {staleRuns.length > 0 && (
-        <div class="card">
-          <h2>Superseded runs</h2>
-          <p>
-            {staleRuns.length} {staleRuns.length === 1 ? 'run has' : 'runs have'} been replaced by a
-            newer commit on the same branch and {staleRuns.length === 1 ? 'is' : 'are'} still
-            holding or waiting for a slot.
-          </p>
-          <div class="field-row">
-            <button class="danger" onClick={cancelAllStale} disabled={cancelling}>
-              {cancelling
-                ? 'Cancelling...'
-                : `Cancel ${staleRuns.length} superseded run${staleRuns.length === 1 ? '' : 's'}`}
-            </button>
-          </div>
-        </div>
-      )}
 
       <div class="card">
         <h2>This browser</h2>

@@ -15,9 +15,11 @@ import { recordHistory } from '../state/history'
 import { PLANS, type ObservedMax } from '../model/plans'
 import { buildBuckets } from '../model/queue'
 import { classify, isComplete, snapshotUsable, type Problem, type RepoProblem } from '../model/health'
+import { addFinished, CANCEL_REQUEST_TTL_MS, classifyFinished, type FinishedRun } from '../model/finished'
 import { refreshBlock, type PacingReason, type RefreshBlock } from '../model/status'
 import {
   buckets,
+  cancelRequested,
   effectiveIntervalMs,
   fatalError,
   firstLoadDone,
@@ -31,6 +33,7 @@ import {
   pollProgress,
   rateLimit,
   rateLimited,
+  recentlyFinished,
   repoProblems,
   runs,
   runsAsOf,
@@ -280,19 +283,26 @@ function recordObserved(): void {
   if (next) updateSettings({ observedMax: next })
 }
 
-/**
- * Drops cached jobs for runs that are no longer active, and returns the ids
- * whose last snapshot still showed work in flight. Those runs finished between
- * two polls, and their final job timings were never seen.
- */
-function pruneJobCache(activeRunIds: ReadonlySet<number>): number[] {
-  const unfinished: number[] = []
+interface Removed {
+  id: number
+  /** The run's last cached jobs. */
+  jobs: WorkflowJob[]
+  /**
+   * Its last snapshot still showed work in flight, so it finished between two
+   * polls and how it ended was never seen.
+   */
+  unfinished: boolean
+}
+
+/** Drops cached jobs for runs that are no longer active, and returns what was dropped. */
+function pruneJobCache(activeRunIds: ReadonlySet<number>): Removed[] {
+  const removed: Removed[] = []
   for (const [id, entry] of jobCache) {
     if (activeRunIds.has(id)) continue
-    if (entry.jobs.some((job) => job.status !== 'completed')) unfinished.push(id)
+    removed.push({ id, jobs: entry.jobs, unfinished: entry.jobs.some((job) => job.status !== 'completed') })
     jobCache.delete(id)
   }
-  return unfinished
+  return removed
 }
 
 /** Teaches the duration store every completed job currently cached. */
@@ -306,19 +316,24 @@ function learnFromCache(): void {
 
 /**
  * Fetches the final job listing of runs that finished since the last poll, so
- * their durations are learned. One request per run, and only while the hourly
- * allowance is comfortable: the forecast is a convenience, the dashboard is not.
+ * their durations are learned and how they ended is known. One request per
+ * run, and only while the hourly allowance is comfortable: the forecast is a
+ * convenience, the dashboard is not. Returns the listings it got.
  */
-async function learnFinishedRuns(ids: readonly number[], signal: AbortSignal): Promise<void> {
-  if (ids.length === 0) return
+async function learnFinishedRuns(
+  finished: readonly RunWithRepo[],
+  signal: AbortSignal,
+): Promise<Map<number, WorkflowJob[]>> {
+  const finals = new Map<number, WorkflowJob[]>()
+  if (finished.length === 0) return finals
   const remaining = getRateLimit()?.remaining
-  if (remaining !== undefined && remaining < LEARNING_MIN_REMAINING) return
-  const previous = new Map(runs.value.map((run) => [run.id, run]))
-  const finished = ids.map((id) => previous.get(id)).filter((r): r is RunWithRepo => r !== undefined)
+  if (remaining !== undefined && remaining < LEARNING_MIN_REMAINING) return finals
   await mapLimit(finished, JOB_CONCURRENCY, async (run) => {
     const repo = { owner: run.repoOwner, name: run.repoName }
     try {
-      learnDurations(repo, await listJobs(repo, run.id, { signal }))
+      const jobs = await listJobs(repo, run.id, { signal })
+      finals.set(run.id, jobs)
+      learnDurations(repo, jobs)
     } catch (err) {
       // Learning is best effort. Only the failures that mean the poll as a
       // whole must stop are allowed through.
@@ -326,6 +341,7 @@ async function learnFinishedRuns(ids: readonly number[], signal: AbortSignal): P
       if (isRateLimitError(err)) throw err
     }
   })
+  return finals
 }
 
 export async function pollOnce(): Promise<void> {
@@ -507,12 +523,41 @@ export async function pollOnce(): Promise<void> {
     if (controller.signal.aborted || mine !== generation) return
 
     const listed = [...byRepo.values()].flat()
-    const vanished = pruneJobCache(new Set([...listed.map((r) => r.id), ...keep]))
-    await learnFinishedRuns(vanished, controller.signal)
+    // The runs the last poll showed, which is what anything gone is looked up in.
+    const previous = new Map(runs.value.map((run) => [run.id, run]))
+    const removed = pruneJobCache(new Set([...listed.map((r) => r.id), ...keep])).filter((r) =>
+      previous.has(r.id),
+    )
+    const finals = await learnFinishedRuns(
+      removed.filter((r) => r.unfinished).map((r) => previous.get(r.id)!),
+      controller.signal,
+    )
     if (controller.signal.aborted || mine !== generation) return
     lastBilled = Math.max(1, getBilledCount() - billedBefore)
 
     const nowMs = Date.now()
+
+    // How each run that left ended, from the listing already in hand: its last
+    // snapshot when that was complete, or the final one just fetched.
+    const requested = cancelRequested.peek()
+    const ended: FinishedRun[] = []
+    for (const gone of removed) {
+      // A run that answered 404 has no jobs to tell anything by.
+      if (gone.jobs.length === 0) continue
+      const { outcome, failed } = classifyFinished(gone.unfinished ? (finals.get(gone.id) ?? null) : gone.jobs)
+      ended.push({
+        run: previous.get(gone.id)!,
+        outcome,
+        failedJobs: failed.map((j) => ({ id: j.id, name: j.name, url: j.html_url })),
+        at: nowMs,
+        cancelledHere: requested.has(gone.id),
+        rerunAsked: false,
+      })
+    }
+    const endedIds = new Set(removed.map((r) => r.id))
+    const stillRequested = new Map(
+      [...requested].filter(([id, at]) => !endedIds.has(id) && nowMs - at < CANCEL_REQUEST_TTL_MS),
+    )
     const health = new Map<string, RepoProblem>()
     for (const repo of repos) {
       const key = repoKey(repo)
@@ -540,6 +585,13 @@ export async function pollOnce(): Promise<void> {
       rateLimited.value = null
       repoProblems.value = health
       fatalError.value = null
+      recentlyFinished.value = addFinished(
+        recentlyFinished.peek(),
+        ended,
+        new Set(listed.map((r) => r.id)),
+        nowMs,
+      )
+      if (stillRequested.size !== requested.size) cancelRequested.value = stillRequested
     })
     if (contemporaneous && health.size === 0) recordObserved()
   } catch (err) {

@@ -1,10 +1,11 @@
 import { useState } from 'preact/hooks'
 import type { WorkflowJob } from '../github/types'
 import { runOutlook, type BucketForecast, type JobForecast } from '../model/forecast'
+import { isCancelRequested } from '../model/finished'
 import { isMine } from '../model/mine'
 import { jobStep, runProgress, type RunGroup as Group } from '../model/queue'
 import { RUNNER_CLASS_LABEL } from '../model/runnerClass'
-import { forecasts, frozenAt, jobsByRun, now, runsAsOf } from '../state/store'
+import { cancelRequested, forecasts, frozenAt, jobsByRun, now, runsAsOf } from '../state/store'
 import { settings } from '../state/settings'
 import { age, duration, shortClock, shortSha } from './format'
 import { seriesClass } from './palette'
@@ -168,6 +169,8 @@ export function RunGroup({ group, kind, defaultOpen, forecast }: Props) {
 
         {cancel.cancelling ? (
           <span class="group-cancelling">cancelling…</span>
+        ) : isCancelRequested(cancelRequested.value, run.id, nowMs) ? (
+          <span class="group-cancelling">cancel requested</span>
         ) : (
           <button
             ref={cancel.askRef}

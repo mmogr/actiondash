@@ -220,3 +220,20 @@ export function jobStep(job: WorkflowJob): { number: number; total: number; name
     steps.find((s) => s.conclusion === 'failure' || s.conclusion === 'timed_out')
   return step ? { number: step.number, total: steps.length, name: step.name } : null
 }
+
+/**
+ * What cancelling a set of jobs' runs would give back: the slots they hold,
+ * by pool, and how many of their jobs are waiting.
+ */
+export function staleImpact(jobs: readonly DashJob[]): {
+  holding: Partial<Record<RunnerClass, number>>
+  waiting: number
+} {
+  const holding: Partial<Record<RunnerClass, number>> = {}
+  let waiting = 0
+  for (const j of jobs) {
+    if (RUNNING_STATUSES.has(j.job.status)) holding[j.cls] = (holding[j.cls] ?? 0) + 1
+    else waiting++
+  }
+  return { holding, waiting }
+}
