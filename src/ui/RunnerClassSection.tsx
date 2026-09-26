@@ -3,6 +3,7 @@ import { groupByRun } from '../model/queue'
 import { matchesFilter } from '../model/filter'
 import { RUNNER_CLASS_LABEL } from '../model/runnerClass'
 import { filter, forecasts, now } from '../state/store'
+import { settings } from '../state/settings'
 import { InsightCard } from './InsightCard'
 import { RunGroup } from './RunGroup'
 import { SlotLanes } from './SlotLanes'
@@ -30,8 +31,9 @@ export function RunnerClassSection({ bucket, headline }: Props) {
   // Grouped before filtering so a hidden run still counts towards the queue
   // positions of the runs behind it.
   const current = filter.value
-  const running = groupByRun(bucket.running).filter((g) => matchesFilter(g, current))
-  const queued = groupByRun(bucket.queued).filter((g) => matchesFilter(g, current))
+  const login = settings.value.login
+  const running = groupByRun(bucket.running).filter((g) => matchesFilter(g, current, login))
+  const queued = groupByRun(bucket.queued).filter((g) => matchesFilter(g, current, login))
   const empty = used === 0 && bucket.queued.length === 0
   const filteredOut = !empty && running.length === 0 && queued.length === 0
 

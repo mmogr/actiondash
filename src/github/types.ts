@@ -48,6 +48,11 @@ export interface WorkflowRun {
   html_url: string
   /** Present in the listing payload; optional so older fixtures still type-check. */
   head_commit?: { message: string } | null
+  /** Who the run belongs to: the pusher, or whoever opened the pull request. */
+  actor?: { login: string } | null
+  /** Who set this attempt going, when it differs, such as someone re-running it. */
+  triggering_actor?: { login: string } | null
+  run_attempt?: number
 }
 
 /** A run annotated with the repository it was fetched from. */

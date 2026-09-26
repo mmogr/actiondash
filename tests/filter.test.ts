@@ -28,8 +28,8 @@ describe('matchesFilter', () => {
     // The watch list is not case-normalised, so the chip must not be either.
     const [group] = groupByRun([entry()])
 
-    expect(matchesFilter(group!, { repo: 'Acme/App', staleOnly: false })).toBe(true)
-    expect(matchesFilter(group!, { repo: 'acme/other', staleOnly: false })).toBe(false)
+    expect(matchesFilter(group!, { ...NO_FILTER, repo: 'Acme/App' })).toBe(true)
+    expect(matchesFilter(group!, { ...NO_FILTER, repo: 'acme/other' })).toBe(false)
   })
 
   it('keeps only superseded runs when asked', () => {
@@ -37,7 +37,23 @@ describe('matchesFilter', () => {
     const [fresh] = groupByRun([entry()])
     const [stale] = groupByRun([entry({ supersededBy: newer })])
 
-    expect(matchesFilter(fresh!, { repo: null, staleOnly: true })).toBe(false)
-    expect(matchesFilter(stale!, { repo: null, staleOnly: true })).toBe(true)
+    expect(matchesFilter(fresh!, { ...NO_FILTER, staleOnly: true })).toBe(false)
+    expect(matchesFilter(stale!, { ...NO_FILTER, staleOnly: true })).toBe(true)
+  })
+})
+
+describe('the Mine filter', () => {
+  it("keeps the runs the reader pushed or set going, and nobody else's", () => {
+    const [theirs] = groupByRun([entry({ run: makeRun({ id: 1, actor: { login: 'sam' } }) })])
+    const [pushed] = groupByRun([entry({ run: makeRun({ id: 2, actor: { login: 'Dana-K' } }) })])
+    const [rerun] = groupByRun([
+      entry({ run: makeRun({ id: 3, actor: { login: 'sam' }, triggering_actor: { login: 'dana-k' } }) }),
+    ])
+    const mine = { ...NO_FILTER, mine: true }
+
+    expect(matchesFilter(theirs!, mine, 'dana-k')).toBe(false)
+    expect(matchesFilter(pushed!, mine, 'dana-k')).toBe(true)
+    expect(matchesFilter(rerun!, mine, 'dana-k')).toBe(true)
+    expect(matchesFilter(pushed!, mine, null)).toBe(false)
   })
 })

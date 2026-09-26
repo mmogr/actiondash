@@ -45,12 +45,17 @@ export interface Settings {
   alerts: AlertPrefs
   /** The reader declined the install offer; it is not made again. */
   installDismissed: boolean
+  /**
+   * The GitHub login the token belongs to, so the reader's own runs can be
+   * told apart from everyone else's. A login is public, not a secret.
+   */
+  login: string | null
 }
 
 /** What actually sits in storage: the settings, plus the observation epoch. */
 type StoredSettings = Partial<Settings> & { observedEpoch?: number }
 
-const DEFAULTS: Settings = {
+export const DEFAULT_SETTINGS: Settings = {
   token: null,
   repos: [],
   plan: 'free',
@@ -58,7 +63,9 @@ const DEFAULTS: Settings = {
   observedMax: {},
   alerts: NO_ALERTS,
   installDismissed: false,
+  login: null,
 }
+const DEFAULTS = DEFAULT_SETTINGS
 
 function load(): Settings {
   try {
@@ -81,6 +88,7 @@ function load(): Settings {
           : {},
       alerts: sanitiseAlerts(parsed.alerts),
       installDismissed: parsed.installDismissed === true,
+      login: typeof parsed.login === 'string' && parsed.login !== '' ? parsed.login : null,
     }
   } catch {
     // Private browsing, disabled site data, or corrupt JSON. Start clean.

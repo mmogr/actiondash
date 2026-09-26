@@ -1,9 +1,11 @@
 import { useState } from 'preact/hooks'
 import type { WorkflowJob } from '../github/types'
 import { runOutlook, type BucketForecast, type JobForecast } from '../model/forecast'
+import { isMine } from '../model/mine'
 import { jobStep, runProgress, type RunGroup as Group } from '../model/queue'
 import { RUNNER_CLASS_LABEL } from '../model/runnerClass'
 import { forecasts, frozenAt, jobsByRun, now, runsAsOf } from '../state/store'
+import { settings } from '../state/settings'
 import { age, duration, shortClock, shortSha } from './format'
 import { seriesClass } from './palette'
 import { useCancelRun } from './useCancelRun'
@@ -110,7 +112,8 @@ export function RunGroup({ group, kind, defaultOpen, forecast }: Props) {
   if (failed.length > 0) classes.push('has-failed')
 
   return (
-    <div class={classes.join(' ')}>
+    // data-run rather than an id: a run with jobs in two pools has two rows.
+    <div class={classes.join(' ')} data-run={run.id}>
       <div class="group-head">
         <button
           class="group-toggle"
@@ -131,6 +134,7 @@ export function RunGroup({ group, kind, defaultOpen, forecast }: Props) {
               </a>
             </span>
             {run.name && <span class="group-workflow">{run.name}</span>}
+            {isMine(run, settings.value.login) && <span class="you-tag">you</span>}
             {supersededBy && <span class="badge">STALE</span>}
             {asOf !== null && <span class="asof">as of {shortClock(asOf)}</span>}
             <span class="group-age">{age(group.since, nowMs)}</span>

@@ -97,7 +97,12 @@ export function Setup() {
       const ownersOf = (list: readonly RepoRef[]): string =>
         [...new Set(list.map((r) => r.owner))].sort().join(',')
       const ownersChanged = ownersOf(settings.value.repos) !== ownersOf(refs)
-      updateSettings({ token, repos: refs, ...(ownersChanged ? { observedMax: {} } : {}) })
+      updateSettings({
+        token,
+        repos: refs,
+        ...(connectedAs ? { login: connectedAs } : {}),
+        ...(ownersChanged ? { observedMax: {} } : {}),
+      })
       pendingToken.value = null
       clearJobCache()
       resetData()

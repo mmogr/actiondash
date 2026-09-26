@@ -78,3 +78,12 @@ describe('stored observations', () => {
     expect(written.plan).toBe('team')
   })
 })
+
+describe('the stored login', () => {
+  it('is kept when it is a name, and dropped otherwise', async () => {
+    expect((await loadWith({ login: 'dana-k' })).mod.settings.value.login).toBe('dana-k')
+    expect((await loadWith({ login: 42 })).mod.settings.value.login).toBeNull()
+    expect((await loadWith({ login: '' })).mod.settings.value.login).toBeNull()
+    expect((await loadWith({})).mod.settings.value.login).toBeNull()
+  })
+})
