@@ -33,6 +33,8 @@ export interface JobForecast {
   typical: number | null
   /** True when the duration came from other jobs of the class rather than this one. */
   guessed: boolean
+  /** Successful runs of this job the estimate is drawn from; 0 when guessed. */
+  samples: number
   /** True when a running job has already taken longer than any kept run of it. */
   overdue: boolean
 }
@@ -63,17 +65,44 @@ interface Lane {
 function usual(
   entry: DashJob,
   durations: DurationMap,
-): { typical: number | null; guessed: boolean; max: number | null } {
+): { typical: number | null; guessed: boolean; samples: number; max: number | null } {
   const key = durationKey(entry.repo, entry.job.name)
   const own = typicalSeconds(durations, key)
   if (own !== undefined) {
     const range = rangeSeconds(durations, key)
-    return { typical: own, guessed: false, max: range ? range[1] : own }
+    const samples = durations[key]?.secs.length ?? 0
+    return { typical: own, guessed: false, samples, max: range ? range[1] : own }
   }
   const fallback = fallbackSeconds(durations, entry.cls)
   return fallback === undefined
-    ? { typical: null, guessed: true, max: null }
-    : { typical: fallback, guessed: true, max: fallback }
+    ? { typical: null, guessed: true, samples: 0, max: null }
+    : { typical: fallback, guessed: true, samples: 0, max: fallback }
+}
+
+/**
+ * One run's outlook across every pool its jobs use. A run that builds on
+ * macOS and tests on Linux is done when both are, and unknown if either is.
+ */
+export function runOutlook(runId: number, forecasts: Iterable<BucketForecast>): RunForecast | null {
+  let found: RunForecast | null = null
+  for (const forecast of forecasts) {
+    const part = forecast.runs.get(runId)
+    if (!part) continue
+    if (found === null) {
+      found = { ...part }
+      continue
+    }
+    found = {
+      firstStart:
+        found.firstStart === null
+          ? part.firstStart
+          : part.firstStart === null
+            ? found.firstStart
+            : Math.min(found.firstStart, part.firstStart),
+      allDone: found.allDone === null || part.allDone === null ? null : Math.max(found.allDone, part.allDone),
+    }
+  }
+  return found
 }
 
 /**
@@ -93,14 +122,14 @@ export function forecastBucket(
 
   // Running jobs, soonest to finish first, so lane 1 is the one that frees next.
   const runningForecasts = running.map((entry) => {
-    const { typical, guessed, max } = usual(entry, durations)
+    const { typical, guessed, samples, max } = usual(entry, durations)
     const elapsedMs = entry.since > 0 ? nowMs - entry.since : 0
     const end =
       typical === null
         ? null
         : Math.max(entry.since + typical * 1000, nowMs + MIN_REMAINING_MS)
     const overdue = max !== null && entry.since > 0 && elapsedMs > max * 1000
-    return { entry, end, typical, guessed, overdue }
+    return { entry, end, typical, guessed, samples, overdue }
   })
   runningForecasts.sort((a, b) => (a.end ?? Infinity) - (b.end ?? Infinity))
 
@@ -114,6 +143,7 @@ export function forecastBucket(
       end: f.end,
       typical: f.typical,
       guessed: f.guessed,
+      samples: f.samples,
       overdue: f.overdue,
     })
   })
@@ -139,7 +169,7 @@ export function forecastBucket(
       if (lane.freeAt === null) continue
       if (laneIndex === -1 || lane.freeAt < lanes[laneIndex]!.freeAt!) laneIndex = i
     }
-    const { typical, guessed } = usual(entry, durations)
+    const { typical, guessed, samples } = usual(entry, durations)
     if (laneIndex === -1) {
       // Every slot's release time is unknown, so nothing behind them is either.
       jobs.set(entry.job.id, {
@@ -149,6 +179,7 @@ export function forecastBucket(
         end: null,
         typical,
         guessed,
+        samples,
         overdue: false,
       })
       queueClearsAt = null
@@ -158,7 +189,7 @@ export function forecastBucket(
     const start = Math.max(lane.freeAt!, nowMs)
     const end = typical === null ? null : start + typical * 1000
     lane.freeAt = end
-    jobs.set(entry.job.id, { entry, lane: laneIndex, start, end, typical, guessed, overdue: false })
+    jobs.set(entry.job.id, { entry, lane: laneIndex, start, end, typical, guessed, samples, overdue: false })
     if (queueClearsAt !== null) queueClearsAt = end === null ? null : Math.max(queueClearsAt, end)
   }
 

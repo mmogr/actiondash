@@ -171,3 +171,52 @@ export function groupByRun(jobs: readonly DashJob[]): RunGroup[] {
   })
   return [...groups.values()]
 }
+
+/** Conclusions that mean a job did not do its work. */
+const FAILED_CONCLUSIONS = new Set(['failure', 'timed_out'])
+
+export function isFailedJob(job: WorkflowJob): boolean {
+  return job.status === 'completed' && job.conclusion !== null && FAILED_CONCLUSIONS.has(job.conclusion)
+}
+
+export interface RunProgress {
+  /** Jobs that have finished, however they finished. */
+  done: number
+  running: number
+  queued: number
+  /** Finished jobs that failed or timed out, in listing order. */
+  failed: WorkflowJob[]
+}
+
+/**
+ * How far a whole run has got, from every job its listing reports, across
+ * every pool. Jobs gated behind others with `needs:` do not exist until those
+ * finish, so this describes the jobs there are, not the run's eventual size.
+ */
+export function runProgress(jobs: readonly WorkflowJob[] | undefined): RunProgress {
+  const progress: RunProgress = { done: 0, running: 0, queued: 0, failed: [] }
+  for (const job of jobs ?? []) {
+    if (job.status === 'completed') {
+      progress.done++
+      if (isFailedJob(job)) progress.failed.push(job)
+    } else if (RUNNING_STATUSES.has(job.status)) {
+      progress.running++
+    } else if (QUEUED_STATUSES.has(job.status)) {
+      progress.queued++
+    }
+  }
+  return progress
+}
+
+/**
+ * The step worth naming: the one in progress, or for a job that failed, the
+ * step it failed at. Null when the listing carries no steps.
+ */
+export function jobStep(job: WorkflowJob): { number: number; total: number; name: string } | null {
+  const steps = job.steps
+  if (!steps || steps.length === 0) return null
+  const step =
+    steps.find((s) => s.status === 'in_progress') ??
+    steps.find((s) => s.conclusion === 'failure' || s.conclusion === 'timed_out')
+  return step ? { number: step.number, total: steps.length, name: step.name } : null
+}

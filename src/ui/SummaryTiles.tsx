@@ -26,8 +26,9 @@ export function SummaryTiles({ bucket, forecast, insight, nowMs }: Props) {
     next = 'free now'
     nextNote = `${cap - used} of ${cap} ${pool} slots idle`
   } else if (forecast.nextSlotAt === null) {
-    next = '?'
-    nextNote = 'no durations learned yet'
+    // Not a question mark: say what is missing and what will fill it in.
+    next = 'learning'
+    nextNote = 'estimates appear as jobs finish'
   } else {
     next = relative(forecast.nextSlotAt, nowMs)
     const job = forecast.nextToFinish
@@ -36,12 +37,12 @@ export function SummaryTiles({ bucket, forecast, insight, nowMs }: Props) {
 
   const clears = forecast.queueClearsAt
   const clearsText =
-    bucket.queued.length === 0 ? 'nothing waiting' : clears === null ? '?' : shortClock(clears)
+    bucket.queued.length === 0 ? 'nothing waiting' : clears === null ? 'learning' : shortClock(clears)
   const clearsNote =
     bucket.queued.length === 0
       ? `${pool} queue is empty`
       : clears === null
-        ? 'some durations unknown'
+        ? 'some jobs not yet seen to finish'
         : insight && insight.queueClearsAtIfCancelled !== null
           ? `${shortClock(insight.queueClearsAtIfCancelled)} if you cancel #${insight.run.run_number}`
           : `${bucket.queued.length} queued ${pool} job${bucket.queued.length === 1 ? '' : 's'}`

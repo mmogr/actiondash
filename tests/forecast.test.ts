@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { forecastBucket, insightFor } from '../src/model/forecast'
+import { forecastBucket, insightFor, runOutlook, type BucketForecast } from '../src/model/forecast'
 import { recordCompleted, type DurationMap } from '../src/model/durations'
 import { buildBuckets, type ClassBucket } from '../src/model/queue'
 import { PLANS } from '../src/model/plans'
@@ -215,5 +215,44 @@ describe('insightFor', () => {
     const bucket = macos([old, fresh], [queuedJob(20, 2, 'a', 4), queuedJob(10, 1, 'a', 2)])
 
     expect(insightFor(bucket, learned({ a: 5 }), NOW)).toBeNull()
+  })
+})
+
+describe('runOutlook', () => {
+  function part(runId: number, firstStart: number | null, allDone: number | null): BucketForecast {
+    return {
+      lanes: 0,
+      jobs: new Map(),
+      runs: new Map([[runId, { firstStart, allDone }]]),
+      nextSlotAt: null,
+      nextToFinish: null,
+      queueClearsAt: null,
+    }
+  }
+
+  it('is done when every pool is, and starts when the first pool does', () => {
+    const outlook = runOutlook(1, [part(1, NOW + 5 * MIN, NOW + 20 * MIN), part(1, NOW + MIN, NOW + 30 * MIN)])
+
+    expect(outlook).toEqual({ firstStart: NOW + MIN, allDone: NOW + 30 * MIN })
+  })
+
+  it('is unknown when any pool is', () => {
+    expect(runOutlook(1, [part(1, NOW, NOW + 20 * MIN), part(1, NOW, null)])?.allDone).toBeNull()
+  })
+
+  it('knows nothing of a run no pool holds', () => {
+    expect(runOutlook(2, [part(1, NOW, NOW)])).toBeNull()
+  })
+})
+
+describe('forecast sample counts', () => {
+  it('says how many successful runs an estimate rests on, and none for a guess', () => {
+    const run = makeRun({ id: 1 })
+    const jobs = [runningJob(1, 1, 'build', 2), runningJob(2, 1, 'never-seen', 2)]
+
+    const forecast = forecastBucket(macos([run], jobs), learned({ build: 12 }), NOW)
+
+    expect(forecast.jobs.get(1)).toMatchObject({ samples: 1, guessed: false })
+    expect(forecast.jobs.get(2)).toMatchObject({ samples: 0, guessed: true })
   })
 })

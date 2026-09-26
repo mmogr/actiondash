@@ -70,6 +70,17 @@ export interface WorkflowJob {
   /** Present once the job completes; optional so older fixtures still type-check. */
   completed_at?: string | null
   html_url: string
+  /** The job's steps, in order. Optional for the same reason. */
+  steps?: WorkflowStep[]
+}
+
+/** One step of a job, as the jobs listing reports it. */
+export interface WorkflowStep {
+  /** One-based position in the job. */
+  number: number
+  name: string
+  status: string
+  conclusion: string | null
 }
 
 export type RunnerClass = 'macos' | 'linux' | 'windows' | 'self-hosted' | 'other'
