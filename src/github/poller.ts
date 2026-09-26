@@ -8,12 +8,14 @@ import {
   resetRetryAfter,
 } from './client'
 import { listJobs, listRuns } from './api'
-import { repoKey, type RepoRef, type RunWithRepo, type WorkflowJob } from './types'
+import { repoKey, type RunWithRepo, type WorkflowJob } from './types'
 import { settings, updateSettings } from '../state/settings'
 import { learnDurations } from '../state/durations'
 import { recordHistory } from '../state/history'
 import { PLANS, type ObservedMax } from '../model/plans'
 import { buildBuckets } from '../model/queue'
+import { classify, isComplete, snapshotUsable, type Problem, type RepoProblem } from '../model/health'
+import { refreshBlock, type PacingReason, type RefreshBlock } from '../model/status'
 import {
   buckets,
   effectiveIntervalMs,
@@ -21,14 +23,18 @@ import {
   firstLoadDone,
   jobsByRun,
   lastPoll,
+  nextPollAt,
+  online,
+  pacingReason,
   pollCost,
   polling,
   pollProgress,
   rateLimit,
   rateLimited,
+  repoProblems,
   runs,
+  runsAsOf,
   view,
-  warning,
 } from '../state/store'
 
 /**
@@ -149,11 +155,27 @@ interface JobCacheEntry {
 
 const jobCache = new Map<number, JobCacheEntry>()
 
+/**
+ * Each repository's last good run listing and when it was read. While a
+ * repository cannot be checked, this stands in for it, marked, so its runs do
+ * not vanish as if they had finished.
+ */
+const lastGood = new Map<string, { runs: RunWithRepo[]; at: number }>()
+/** When each repository now failing first failed. */
+const failingSince = new Map<string, number>()
+
 let timer: ReturnType<typeof setTimeout> | null = null
 let inFlight: AbortController | null = null
 let generation = 0
 /** Billed requests consumed by the most recent poll. */
 let lastBilled = 1
+/** When the most recent poll started, to space refreshes on demand. */
+let lastStartedAt: number | null = null
+/**
+ * True between startPolling and stopPolling. A 401 stops polling from inside
+ * a poll whose own finally would otherwise schedule the next one.
+ */
+let started = false
 
 /**
  * Runs fn over items, at most limit at a time, and stops handing out items at
@@ -181,25 +203,8 @@ async function mapLimit<T>(
   await Promise.all(workers)
 }
 
-function describe(err: unknown, repo: RepoRef): string {
-  if (err instanceof GitHubError) {
-    if (err.status === 404) {
-      return `${repo.owner}/${repo.name} not found. The token may not include this repository.`
-    }
-    // A rate-limit refusal also arrives as 403. Reported as a permissions
-    // problem it would send the reader to the wrong place entirely.
-    if (isRateLimitError(err)) {
-      return `Request allowance exhausted. Polling pauses until it refills.`
-    }
-    if (err.status === 403) {
-      return `${repo.owner}/${repo.name} refused: ${err.message} Check that the token grants Actions: Read and write.`
-    }
-    if (err.status === 429) {
-      return `Rate limited on ${repo.owner}/${repo.name}. Polling will slow down automatically.`
-    }
-    return `${repo.owner}/${repo.name}: ${err.message}`
-  }
-  return `${repo.owner}/${repo.name}: ${(err as Error).message}`
+function detailOf(err: unknown): string {
+  return err instanceof Error ? err.message : String(err)
 }
 
 /** The last few samples, deliberately not persisted: a reload starts over. */
@@ -326,8 +331,12 @@ async function learnFinishedRuns(ids: readonly number[], signal: AbortSignal): P
 export async function pollOnce(): Promise<void> {
   const { token, repos } = settings.value
   if (!token || repos.length === 0) return
+  // Offline, every request would fail and every repository would read as down.
+  // Nothing is asked; the page says it is offline and waits.
+  if (!online.peek()) return
 
   inFlight?.abort()
+  lastStartedAt = Date.now()
   const controller = new AbortController()
   inFlight = controller
   const mine = ++generation
@@ -335,8 +344,15 @@ export async function pollOnce(): Promise<void> {
   polling.value = true
   resetRetryAfter()
   const billedBefore = getBilledCount()
-  const problems: string[] = []
+  const problems = new Map<string, { problem: Problem; detail: string }>()
   const byRepo = new Map<string, RunWithRepo[]>()
+  // Runs shown from an older answer, with when it was read.
+  const asOf = new Map<number, number>()
+  // Repositories standing in with their last good listing, and when it was read.
+  const standIns = new Map<string, number>()
+  // Runs of repositories that did not answer. Not seen does not mean finished,
+  // so their cached jobs are kept and nothing is spent learning them.
+  const keep = new Set<number>()
   let completed = 0
   pollProgress.value = { done: 0, total: repos.length }
 
@@ -370,6 +386,7 @@ export async function pollOnce(): Promise<void> {
     batch(() => {
       runs.value = all
       jobsByRun.value = jobs
+      runsAsOf.value = new Map(asOf)
       rateLimit.value = getRateLimit()
     })
   }
@@ -399,7 +416,10 @@ export async function pollOnce(): Promise<void> {
       // the last snapshot stands, the reader is told, and a poll built on a
       // snapshot it could not refresh gets no vote on the ceiling.
       contemporaneous = false
-      problems.push(describe(err, { owner: run.repoOwner, name: run.repoName }))
+      const key = repoKey({ owner: run.repoOwner, name: run.repoName })
+      if (!problems.has(key)) problems.set(key, { problem: classify(err), detail: detailOf(err) })
+      const cached = jobCache.get(run.id)
+      if (cached) asOf.set(run.id, cached.fetchedAt)
     }
   }
 
@@ -434,6 +454,9 @@ export async function pollOnce(): Promise<void> {
     for (const bucket of buildBuckets(all, cachedJobs(all), PLANS[settings.value.plan])) {
       if (bucket.cap === null || bucket.running.length <= bucket.cap) continue
       for (const { run } of bucket.running) {
+        // An older answer is shown marked; asking its repository again now
+        // would only fail again.
+        if (asOf.has(run.id)) continue
         const cached = jobCache.get(run.id)
         if (cached && now - cached.fetchedAt > SAMPLE_MAX_AGE_MS) suspect.add(run.id)
       }
@@ -452,10 +475,23 @@ export async function pollOnce(): Promise<void> {
         const repoRuns = mergeRunLists(queued, running, MAX_RUNS_PER_REPO)
         await fetchJobsFor(repoRuns)
         byRepo.set(repoKey(repo), repoRuns)
+        lastGood.set(repoKey(repo), { runs: repoRuns, at: Date.now() })
       } catch (err) {
         if (err instanceof GitHubError && err.status === 401) throw err
         if (isRateLimitError(err)) throw err
-        problems.push(describe(err, repo))
+        const key = repoKey(repo)
+        const problem = classify(err)
+        problems.set(key, { problem, detail: detailOf(err) })
+        const snap = lastGood.get(key)
+        if (snap) {
+          for (const run of snap.runs) keep.add(run.id)
+          if (snapshotUsable(problem, snap.at, Date.now())) {
+            byRepo.set(key, snap.runs)
+            standIns.set(key, snap.at)
+            for (const run of snap.runs) asOf.set(run.id, snap.at)
+            contemporaneous = false
+          }
+        }
       } finally {
         completed++
         if (mine === generation) {
@@ -470,25 +506,42 @@ export async function pollOnce(): Promise<void> {
     await remeasureOverCap()
     if (controller.signal.aborted || mine !== generation) return
 
-    const active = [...byRepo.values()].flat()
-    const vanished = pruneJobCache(new Set(active.map((r) => r.id)))
+    const listed = [...byRepo.values()].flat()
+    const vanished = pruneJobCache(new Set([...listed.map((r) => r.id), ...keep]))
     await learnFinishedRuns(vanished, controller.signal)
     if (controller.signal.aborted || mine !== generation) return
     lastBilled = Math.max(1, getBilledCount() - billedBefore)
 
+    const nowMs = Date.now()
+    const health = new Map<string, RepoProblem>()
+    for (const repo of repos) {
+      const key = repoKey(repo)
+      const found = problems.get(key)
+      if (!found) {
+        failingSince.delete(key)
+        continue
+      }
+      const since = failingSince.get(key) ?? nowMs
+      failingSince.set(key, since)
+      health.set(key, { ...found, since, asOf: standIns.get(key) ?? null })
+    }
+
     publish()
     learnFromCache()
-    recordHistory(buckets.value, Date.now(), effectiveIntervalMs.value || settings.value.pollIntervalMs)
+    // A poll that missed a repository is not a picture of the pools, so it is
+    // left out of history, where the gap is drawn as one.
+    if (isComplete(repos.length, health)) {
+      recordHistory(buckets.value, nowMs, effectiveIntervalMs.value || settings.value.pollIntervalMs)
+    }
     batch(() => {
-      lastPoll.value = Date.now()
+      lastPoll.value = nowMs
       pollCost.value = lastBilled
       firstLoadDone.value = true
       rateLimited.value = null
-      // Several runs of one repository can fail the same way in one poll.
-      warning.value = problems.length > 0 ? [...new Set(problems)].join(' ') : null
+      repoProblems.value = health
       fatalError.value = null
     })
-    if (contemporaneous) recordObserved()
+    if (contemporaneous && health.size === 0) recordObserved()
   } catch (err) {
     if (controller.signal.aborted) return
     if (err instanceof GitHubError && err.status === 401) {
@@ -530,42 +583,55 @@ export interface PacingInput {
   nowMs: number
 }
 
+export interface Pacing {
+  ms: number
+  reason: PacingReason
+}
+
 /**
- * The delay before the next poll.
+ * The delay before the next poll, and why.
  *
  * Spreads at most BUDGET_SAFETY of the remaining requests across the time left
  * in the window, so the dashboard cannot spend its way to a hard stop. The
  * configured interval is a floor: when the budget is comfortable, that is what
  * gets used, and the pacing is invisible.
  */
-export function computeInterval(input: PacingInput): number {
+export function computePacing(input: PacingInput): Pacing {
   const { baseMs, remaining, resetEpochSec, billedPerPoll, retryAfterMs, nowMs } = input
 
   // An explicit instruction from the API wins outright.
   if (retryAfterMs > 0) {
-    return Math.min(MAX_RETRY_AFTER_MS, Math.max(baseMs, retryAfterMs))
+    const ms = Math.min(MAX_RETRY_AFTER_MS, Math.max(baseMs, retryAfterMs))
+    return { ms, reason: ms > baseMs ? 'retry-after' : 'floor' }
   }
 
-  if (remaining === null) return baseMs
+  if (remaining === null) return { ms: baseMs, reason: 'floor' }
 
   // Waiting beyond the reset buys nothing, since the allowance refills there.
   const msToReset = Math.max(0, resetEpochSec * 1000 - nowMs)
   const ceiling = Math.max(baseMs, msToReset + RESET_MARGIN_MS)
 
-  if (remaining <= 0) return ceiling
+  if (remaining <= 0) return { ms: ceiling, reason: 'refill' }
 
   const billed = Math.max(1, billedPerPoll)
   const secondsToReset = Math.max(60, resetEpochSec - nowMs / 1000)
   const affordablePolls = (remaining * BUDGET_SAFETY) / billed
-  if (affordablePolls <= 0) return ceiling
+  if (affordablePolls <= 0) return { ms: ceiling, reason: 'refill' }
 
   const requiredMs = (secondsToReset / affordablePolls) * 1000
-  return Math.min(ceiling, Math.max(baseMs, requiredMs))
+  if (requiredMs <= baseMs) return { ms: baseMs, reason: 'floor' }
+  if (requiredMs >= ceiling) return { ms: ceiling, reason: 'refill' }
+  return { ms: requiredMs, reason: 'budget' }
 }
 
-function nextInterval(): number {
+/** The delay before the next poll. */
+export function computeInterval(input: PacingInput): number {
+  return computePacing(input).ms
+}
+
+function nextPacing(): Pacing {
   const limit = getRateLimit()
-  return computeInterval({
+  return computePacing({
     baseMs: settings.value.pollIntervalMs,
     remaining: limit ? limit.remaining : null,
     resetEpochSec: limit ? limit.reset : 0,
@@ -576,12 +642,45 @@ function nextInterval(): number {
 }
 
 function schedule(): void {
+  // Stopped pollers stay stopped. A poll superseded by a newer one leaves the
+  // scheduling to that one, which is still in flight.
+  if (!started || polling.peek()) return
   if (timer !== null) clearTimeout(timer)
-  const delay = nextInterval()
-  effectiveIntervalMs.value = delay
+  const { ms, reason } = nextPacing()
+  batch(() => {
+    effectiveIntervalMs.value = ms
+    pacingReason.value = reason
+    nextPollAt.value = Date.now() + ms
+  })
   timer = setTimeout(() => {
     void pollOnce().finally(schedule)
-  }, delay)
+  }, ms)
+}
+
+/** Why a refresh on demand would not be allowed right now, or null when it would. */
+export function whyNoRefresh(nowMs = Date.now()): RefreshBlock | null {
+  return refreshBlock({
+    online: online.peek(),
+    limited: rateLimited.peek() !== null,
+    polling: polling.peek(),
+    pacing: pacingReason.peek(),
+    lastStartedAt,
+    nowMs,
+  })
+}
+
+/**
+ * Polls now instead of when the timer says. Refused while the pacer is holding
+ * back, so asking cannot spend more than waiting would. `force` is for a poll
+ * the reader's own action needs, such as seeing a cancel take effect.
+ */
+export function refreshNow(options: { force?: boolean } = {}): boolean {
+  if (!started) return false
+  if (!options.force && whyNoRefresh() !== null) return false
+  if (timer !== null) clearTimeout(timer)
+  timer = null
+  void pollOnce().finally(schedule)
+  return true
 }
 
 /**
@@ -590,27 +689,36 @@ function schedule(): void {
  * flight reschedules itself when it finishes.
  */
 export function reschedule(): void {
-  if (timer === null || polling.peek()) return
+  if (!started || timer === null || polling.peek()) return
   schedule()
 }
 
 export function startPolling(): void {
   stopPolling()
+  started = true
   void pollOnce().finally(schedule)
 }
 
 export function stopPolling(): void {
+  started = false
   if (timer !== null) clearTimeout(timer)
   timer = null
   inFlight?.abort()
   inFlight = null
   generation++
   polling.value = false
+  nextPollAt.value = null
 }
 
-/** Clears cached job data, so the next poll refetches everything. */
+/**
+ * Clears cached job data and everything remembered about each repository, so
+ * the next poll refetches everything and trusts nothing older.
+ */
 export function clearJobCache(): void {
   jobCache.clear()
+  lastGood.clear()
+  failingSince.clear()
   recentSamples.length = 0
   lastBilled = 1
+  lastStartedAt = null
 }

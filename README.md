@@ -203,14 +203,42 @@ mechanisms bring it back inside:
    of the last poll and the allowance left before the window resets, spending
    at most 60 percent of it. Your configured interval is a floor, not a
    promise. When a poll turns out to be expensive the cadence stretches, the
-   footer says `paced to 40s`, and the budget holds. `retry-after` and
-   `x-poll-interval` are obeyed ahead of any of this.
+   status at the top says `Paced · next 38s`, and the budget holds.
+   `retry-after` and `x-poll-interval` are obeyed ahead of any of this.
 
 Because the interval is derived from the remaining allowance rather than
 checked against a threshold, overrunning is not something the dashboard can do.
 The worst case is that it waits for the window to refill, which it will say it
 is doing. The footer always shows the live cost, for example
 `13/refresh, ~3,100/hr`, so the number is never a mystery.
+
+The status at the top doubles as the refresh button. It refuses while the
+pacer is holding back, and within ten seconds of the last check, the fastest
+interval on offer, so checking on demand can never spend more than waiting.
+Coming back to a tab that was hidden checks at once if a check is overdue, and
+a changed interval applies immediately.
+
+### When GitHub cannot be reached
+
+A list that is empty because nobody could ask is not an empty queue, so the
+dashboard never presents one as clear:
+
+- **"All clear" means every repository answered.** When none did, or the page
+  is offline, or the hourly allowance is used up, the Now screen says it
+  cannot check and that this is not an all-clear, and says why.
+- **A repository that stops answering keeps its last good runs** for up to ten
+  minutes, marked `as of 14:02`, and is named in a strip above the list with
+  the reason. Its runs are not treated as finished: nothing is spent learning
+  their timings, and no "slot frees" alert fires because they dropped out.
+  A repository that answers 404 or 403 gets no such stand-in, since asking
+  again will not change the answer.
+- **History and alerts skip incomplete polls.** A poll that missed a repository
+  is not recorded, so the Trends chart hatches the gap as "not recorded"
+  rather than drawing a dip, and alerts compare only complete polls. A
+  repository the token cannot see does not count as missing, or one removed
+  repository would stop both for good.
+- **Offline, nothing is asked.** The page says so, and checks again as soon as
+  the device is back online.
 
 Jobs are grouped by the concurrency pool they draw from, read off the runner
 labels. Self-hosted is detected first and on purpose, because a self-hosted
@@ -264,8 +292,8 @@ Stating your plan outright clears the observation too, on the grounds that it
 is newer evidence than an old inference.
 
 The refresh interval is deliberately not part of setup. Before the first poll
-there is nothing to base it on, so it lives in the footer beside the live cost
-readout, where the effect of changing it is visible. It is a floor rather than
+there is nothing to base it on, so it lives in Settings, where it can be
+changed once the live cost in the footer shows what it buys. It is a floor rather than
 a promise, since the budget pacer will stretch it when a poll turns out to be
 expensive.
 

@@ -104,12 +104,12 @@ export function Trends() {
               </span>
             )}
             <span>
-              <span class="swatch silence" /> page closed
+              <span class="swatch silence" /> not recorded
             </span>
           </div>
           <div class="occ-hint">
             {samples.length === 0
-              ? 'The chart fills in while the dashboard is open. It records only what this browser watches.'
+              ? 'The chart fills in while the dashboard is open and GitHub is answering. It records only what this browser watches.'
               : 'Touch or hover the chart to read one moment.'}
           </div>
         </div>

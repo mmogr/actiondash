@@ -2,7 +2,7 @@ import { effect } from '@preact/signals'
 import { alertsFor, type Alert } from './model/alerts'
 import type { ClassBucket } from './model/queue'
 import { settings } from './state/settings'
-import { buckets, firstLoadDone, lastPoll } from './state/store'
+import { buckets, firstLoadDone, lastPoll, pollComplete } from './state/store'
 
 /**
  * Shows the alerts the reader asked for, while the page is open.
@@ -62,8 +62,23 @@ export function watchForAlerts(): void {
   effect(() => {
     const polled = lastPoll.value
     const current = buckets.value
+    const complete = pollComplete.value
+    // A reset clears the last poll. What came before belonged to another set
+    // of repositories and must not be compared with what comes next.
+    if (polled === null) {
+      previous = null
+      lastSeenPoll = null
+      return
+    }
     if (!firstLoadDone.value || polled === lastSeenPoll) return
     lastSeenPoll = polled
+    // A poll that missed a repository cannot be compared with one that did not,
+    // since that repository's runs would look finished. Start again from the
+    // next complete one.
+    if (!complete) {
+      previous = null
+      return
+    }
     const before = previous
     previous = current
     if (before === null) return

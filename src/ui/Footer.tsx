@@ -1,6 +1,5 @@
-import { settings } from '../state/settings'
-import { effectiveIntervalMs, lastPoll, pollCost, projectedHourlyCost, rateLimit } from '../state/store'
-import { clockTime } from './format'
+import { lastPoll, now, pollCost, projectedHourlyCost, rateLimit } from '../state/store'
+import { age, clockTime } from './format'
 
 /** The status line: when the data was last refreshed and what it is costing. */
 export function Footer() {
@@ -8,13 +7,14 @@ export function Footer() {
   const polled = lastPoll.value
   const cost = pollCost.value
   const hourly = projectedHourlyCost.value
-  const interval = effectiveIntervalMs.value
-  // True when the budget forced a slower cadence than the one chosen.
-  const slowed = interval > settings.value.pollIntervalMs + 500
 
   return (
     <div class="footer">
-      <span>{polled ? `Updated ${clockTime(polled)}` : 'Not yet polled'}</span>
+      {polled ? (
+        <span title={clockTime(polled)}>Updated {age(polled, now.value)} ago</span>
+      ) : (
+        <span>Not yet checked</span>
+      )}
 
       {limit && (
         <span title={`Resets at ${clockTime(limit.reset * 1000)}`}>
@@ -32,15 +32,6 @@ export function Footer() {
           }
         >
           {cost}/refresh, ~{hourly.toLocaleString()}/hr
-        </span>
-      )}
-
-      {slowed && (
-        <span
-          class="slowed"
-          title="The refresh interval was stretched automatically to stay inside the hourly request budget."
-        >
-          paced to {Math.round(interval / 1000)}s
         </span>
       )}
     </div>

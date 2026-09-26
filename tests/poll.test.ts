@@ -1,9 +1,10 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { clearCache } from '../src/github/client'
-import { clearJobCache, pollOnce, startPolling, stopPolling } from '../src/github/poller'
+import { clearJobCache, pollOnce, refreshNow, startPolling, stopPolling } from '../src/github/poller'
 import type { RunWithRepo, WorkflowJob } from '../src/github/types'
 import { settings } from '../src/state/settings'
 import { clearDurations, durations } from '../src/state/durations'
+import { clearHistory, history } from '../src/state/history'
 import { durationKey, typicalSeconds } from '../src/model/durations'
 import * as store from '../src/state/store'
 import { deferred, FakeGitHub, json, type Reply } from './fake-github'
@@ -30,6 +31,27 @@ function scriptRuns(queued: RunWithRepo[], running: RunWithRepo[]): void {
     /\/actions\/runs\?status=in_progress&/,
     json({ total_count: running.length, workflow_runs: running }),
   )
+}
+
+/** Run listings for one repository only, for tests that watch several. */
+function scriptRunsFor(
+  repo: { owner: string; name: string },
+  queued: RunWithRepo[],
+  running: RunWithRepo[],
+): void {
+  const base = `/repos/${repo.owner}/${repo.name}/actions/runs\\?status=`
+  gh.on(new RegExp(`${base}queued&`), json({ total_count: queued.length, workflow_runs: queued }))
+  gh.on(new RegExp(`${base}in_progress&`), json({ total_count: running.length, workflow_runs: running }))
+}
+
+/**
+ * Both run listings of one repository answer with the same failure. Declared
+ * as the same routes scriptRunsFor uses, so it replaces them in place.
+ */
+function failRunsFor(repo: { owner: string; name: string }, reply: Reply): void {
+  const base = `/repos/${repo.owner}/${repo.name}/actions/runs\\?status=`
+  gh.on(new RegExp(`${base}queued&`), reply)
+  gh.on(new RegExp(`${base}in_progress&`), reply)
 }
 
 function jobsReply(jobs: WorkflowJob[]): Reply {
@@ -91,8 +113,8 @@ afterEach(() => {
     for (const id of shown) expect(scriptedJobIds).toContain(id)
 
     // The token goes in the Authorization header and nowhere else. The path
-    // that could leak it is a GitHubError's url, through describe(), into the
-    // warning banner.
+    // that could leak it is a GitHubError's message, through a repository's
+    // problem detail, into the store.
     for (const call of gh.calls) {
       expect(call.url).not.toContain(TOKEN)
       expect(call.headers.get('authorization')).toBe(`Bearer ${TOKEN}`)
@@ -105,7 +127,9 @@ afterEach(() => {
     clearJobCache()
     clearCache()
     clearDurations()
+    clearHistory()
     store.resetData()
+    store.online.value = true
     vi.restoreAllMocks()
     vi.unstubAllGlobals()
     vi.useRealTimers()
@@ -124,7 +148,8 @@ describe('pollOnce', () => {
 
     expect(macos()?.running).toHaveLength(1)
     expect(macos()?.queued).toHaveLength(1)
-    expect(store.warning.value).toBeNull()
+    expect(store.repoProblems.value.size).toBe(0)
+    expect(store.dataHealth.value).toBe('ok')
     expect(store.fatalError.value).toBeNull()
     expect(store.firstLoadDone.value).toBe(true)
     expect(gh.calls).toHaveLength(4)
@@ -145,7 +170,8 @@ describe('pollOnce', () => {
     // A failure says nothing about whether the jobs still hold slots, so the
     // pool must not read as empty, and the reader must be told.
     expect(macos()?.running).toHaveLength(5)
-    expect(store.warning.value).toContain('Server Error')
+    expect(store.repoProblems.value.get('acme/app')?.detail).toContain('Server Error')
+    expect(store.runsAsOf.value.has(1)).toBe(true)
   })
 
   it('reports a failed job listing on the first poll', async () => {
@@ -154,7 +180,7 @@ describe('pollOnce', () => {
 
     await pollOnce()
 
-    expect(store.warning.value).toContain('Server Error')
+    expect(store.repoProblems.value.get('acme/app')?.problem).toBe('server')
   })
 
   it('drops a run that finished between the run and job listings', async () => {
@@ -167,7 +193,7 @@ describe('pollOnce', () => {
 
     expect(macos()?.running).toHaveLength(0)
     expect(macos()?.queued).toHaveLength(0)
-    expect(store.warning.value).toBeNull()
+    expect(store.repoProblems.value.size).toBe(0)
   })
 
   it('never lets a superseded poll overwrite newer job data', async () => {
@@ -406,5 +432,184 @@ describe('pollOnce, with job snapshots of different ages', () => {
     await pollOnce()
 
     expect(jobCalls(1)).toHaveLength(1)
+  })
+})
+
+describe('when GitHub cannot be reached', () => {
+  const APP = { owner: 'acme', name: 'app' }
+  const SITE = { owner: 'acme', name: 'site' }
+  const T0 = Date.parse('2026-09-21T10:00:00Z')
+  const serverError = json({ message: 'Server Error' }, { status: 502 })
+  const jobCalls = (runId: number) => gh.calls.filter((c) => c.url.includes(`/runs/${runId}/jobs`))
+
+  beforeEach(() => {
+    vi.useFakeTimers({ toFake: ['Date'] })
+    vi.setSystemTime(T0)
+    settings.value = { ...settings.value, repos: [APP, SITE] }
+  })
+
+  /** A first poll where both repositories answer, each with one running run. */
+  async function bothAnswer(): Promise<void> {
+    scriptRunsFor(APP, [], [makeRun({ id: 1, status: 'in_progress' })])
+    scriptRunsFor(SITE, [], [makeRun({ id: 2, repoName: 'site', status: 'in_progress' })])
+    scriptJobs(1, [makeJob({ run_id: 1, status: 'in_progress' })])
+    scriptJobs(2, [makeJob({ run_id: 2, status: 'in_progress' })])
+    await pollOnce()
+    expect(macos()?.running).toHaveLength(2)
+  }
+
+  it("keeps a repository's last good runs, marked, while it does not answer", async () => {
+    await bothAnswer()
+
+    vi.setSystemTime(T0 + 60_000)
+    failRunsFor(SITE, serverError)
+    await pollOnce()
+
+    // Its run did not finish just because nobody could ask about it.
+    expect(macos()?.running).toHaveLength(2)
+    expect(store.runsAsOf.value.get(2)).toBe(T0)
+    expect(store.dataHealth.value).toBe('partial')
+    expect(store.repoProblems.value.get('acme/site')).toMatchObject({ problem: 'server', asOf: T0 })
+  })
+
+  it('stops standing in after ten minutes, and spends nothing on the runs it drops', async () => {
+    await bothAnswer()
+    failRunsFor(SITE, serverError)
+
+    vi.setSystemTime(T0 + 10 * 60_000 + 1_000)
+    await pollOnce()
+
+    expect(macos()?.running.map((j) => j.run.id)).toEqual([1])
+    expect(store.repoProblems.value.get('acme/site')?.asOf).toBeNull()
+    // Not seen is not finished: no final listing is fetched to learn from.
+    expect(jobCalls(2)).toHaveLength(1)
+  })
+
+  it('never stands in for a repository the token cannot see', async () => {
+    await bothAnswer()
+
+    failRunsFor(SITE, json({ message: 'Not Found' }, { status: 404 }))
+    await pollOnce()
+
+    expect(macos()?.running.map((j) => j.run.id)).toEqual([1])
+    expect(store.repoProblems.value.get('acme/site')?.problem).toBe('missing')
+    expect(jobCalls(2)).toHaveLength(1)
+  })
+
+  it('says it could not check, not that all is clear, when nothing answers', async () => {
+    failRunsFor(APP, serverError)
+    failRunsFor(SITE, serverError)
+
+    await pollOnce()
+
+    expect(store.firstLoadDone.value).toBe(true)
+    expect(store.totalRunning.value + store.totalQueued.value).toBe(0)
+    expect(store.dataHealth.value).toBe('unreachable')
+  })
+
+  it('says the allowance is used up, not that all is clear, when the first poll is refused', async () => {
+    const reset = Math.floor(T0 / 1000) + 600
+    gh.on(
+      /\/actions\/runs\?status=/,
+      json(
+        { message: 'API rate limit exceeded' },
+        { status: 403, headers: { 'x-ratelimit-remaining': '0', 'x-ratelimit-reset': String(reset) } },
+      ),
+    )
+
+    await pollOnce()
+
+    expect(store.dataHealth.value).toBe('limited')
+    expect(store.rateLimited.value).toBe(reset)
+  })
+
+  it('records no history for a poll that missed a repository', async () => {
+    await bothAnswer()
+    const recorded = () => history.value.samples.at(-1)?.until
+
+    vi.setSystemTime(T0 + 15_000)
+    failRunsFor(SITE, serverError)
+    await pollOnce()
+    expect(recorded()).toBe(T0)
+
+    vi.setSystemTime(T0 + 30_000)
+    scriptRunsFor(SITE, [], [makeRun({ id: 2, repoName: 'site', status: 'in_progress' })])
+    await pollOnce()
+    expect(recorded()).toBe(T0 + 30_000)
+  })
+
+  it('still records history when the only repository missing is one the token cannot see', async () => {
+    await bothAnswer()
+
+    vi.setSystemTime(T0 + 15_000)
+    failRunsFor(SITE, json({ message: 'Not Found' }, { status: 404 }))
+    await pollOnce()
+
+    expect(history.value.samples.at(-1)?.until).toBe(T0 + 15_000)
+  })
+
+  it('gives a poll with a stand-in no vote on the ceiling', async () => {
+    // Each poll moves both runs, so their jobs are read fresh and every poll
+    // would be a fair sample, but for the stand-in.
+    const moved = (i: number) => `2026-09-21T10:0${i}:00Z`
+    const poll = async (i: number, siteAnswers: boolean) => {
+      vi.setSystemTime(T0 + i * 15_000)
+      scriptRunsFor(APP, [], [makeRun({ id: 1, status: 'in_progress', updated_at: moved(i) })])
+      if (siteAnswers) {
+        scriptRunsFor(SITE, [], [makeRun({ id: 2, repoName: 'site', status: 'in_progress', updated_at: moved(i) })])
+      } else {
+        failRunsFor(SITE, serverError)
+      }
+      await pollOnce()
+    }
+
+    await bothAnswer()
+    for (let i = 1; i <= 3; i++) await poll(i, false)
+    expect(settings.value.observedMax).toEqual({})
+
+    for (let i = 4; i <= 6; i++) await poll(i, true)
+    expect(settings.value.observedMax.macos).toBe(2)
+  })
+
+  it('asks nothing while offline', async () => {
+    store.online.value = false
+
+    await pollOnce()
+
+    expect(gh.calls).toHaveLength(0)
+    expect(store.dataHealth.value).toBe('offline')
+  })
+})
+
+describe('the poll schedule', () => {
+  it('stops for good once the token is rejected', async () => {
+    gh.on(/\/actions\/runs\?status=/, json({ message: 'Bad credentials' }, { status: 401 }))
+
+    startPolling()
+    await until(() => store.view.value === 'setup')
+    for (let i = 0; i < 5; i++) await new Promise((r) => setTimeout(r, 0))
+
+    // The poll that saw the 401 ends by scheduling the next one, unless the
+    // poller remembers it was stopped.
+    expect(store.nextPollAt.value).toBeNull()
+    expect(refreshNow({ force: true })).toBe(false)
+    store.view.value = 'dashboard'
+  })
+
+  it('refuses a refresh on demand within ten seconds of the last poll', async () => {
+    vi.useFakeTimers({ toFake: ['Date'] })
+    vi.setSystemTime(Date.parse('2026-09-21T10:00:00Z'))
+    scriptRuns([], [])
+
+    startPolling()
+    await until(() => store.nextPollAt.value !== null)
+    const asked = gh.calls.length
+
+    expect(refreshNow()).toBe(false)
+    expect(gh.calls).toHaveLength(asked)
+
+    vi.setSystemTime(Date.now() + 10_000)
+    expect(refreshNow()).toBe(true)
+    await until(() => gh.calls.length > asked)
   })
 })
