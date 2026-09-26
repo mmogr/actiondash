@@ -145,11 +145,18 @@ storage, so use a short token expiry.
 
 The page installs to the home screen: Share, then Add to Home Screen on an
 iPhone or iPad, or the Install offer on Android and desktop Chrome. Installed,
-it opens as an app and, on the Alerts tab, can notify you when a slot frees,
-a queued job starts or a run is superseded.
+it opens as an app and, on the Alerts tab, can notify you.
+
+Alerts come in two groups. **Your runs**: when one of yours takes its first
+slot, and when it finishes, naming any job that failed and never guessing at
+the result. These two switch on when you allow notifications. **Everyone**:
+when a slot frees, any queued job starts, or a run is superseded, all off
+until you choose them. Tapping an alert opens the dashboard at the run it is
+about, and a test button shows what one looks like.
 
 Alerts arrive while the page is open. There is no server, so nothing can wake
-it in the background; keep it in the foreground while you wait on a slot.
+it in the background; keep it in the foreground while you wait on a slot. A
+browser can hold back a background tab's alert for up to a minute.
 
 ## Token setup
 

@@ -15,14 +15,20 @@ self.addEventListener('activate', (event) => {
   event.waitUntil(self.clients.claim())
 })
 
-// Tapping a notification brings the dashboard forward, or opens it.
+// Tapping a notification brings the dashboard forward at the run it was
+// about, or opens the dashboard there.
 self.addEventListener('notificationclick', (event) => {
   event.notification.close()
+  const data = event.notification.data
+  const runId = data && typeof data.runId === 'number' ? data.runId : null
   event.waitUntil(
     self.clients.matchAll({ type: 'window', includeUncontrolled: true }).then((clients) => {
       const open = clients.find((c) => 'focus' in c)
-      if (open) return open.focus()
-      return self.clients.openWindow('./')
+      if (open) {
+        if (runId !== null) open.postMessage({ type: 'show-run', runId })
+        return open.focus()
+      }
+      return self.clients.openWindow(runId !== null ? './#run=' + runId : './')
     }),
   )
 })

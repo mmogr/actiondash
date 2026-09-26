@@ -122,6 +122,8 @@ function sanitiseAlerts(raw: unknown): AlertPrefs {
   if (typeof raw !== 'object' || raw === null) return NO_ALERTS
   const r = raw as Partial<AlertPrefs>
   return {
+    myStarted: r.myStarted === true,
+    myFinished: r.myFinished === true,
     slotFreed: r.slotFreed === true,
     jobStarted: r.jobStarted === true,
     superseded: r.superseded === true,
