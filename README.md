@@ -12,7 +12,7 @@ actiondash shows those three things in one page, across every repository you
 choose, and lets you cancel the runs that are wasting slots.
 
 ```
-macOS                          5/5 in use    7 queued    ~14m wait
+macOS                 5/5 in use    7 queued    oldest waiting 16m
 
   RUNNING
   ▾ app #412  STALE                                        11m   cancel
@@ -35,24 +35,28 @@ Above the list, the macOS pool is drawn as one row per slot: the job holding
 it from its start to its expected end, then the queued jobs expected to take
 it next as dashed outlines, in the order they will start. Expected ends come
 from how long each job usually takes, learned from the jobs the dashboard has
-watched finish and kept in local storage (job names and seconds, nothing
-else). A job never seen before is guessed from the others of its class and
-marked as a guess. Two tiles say when the next slot frees and when the queue
+watched succeed and kept in local storage (job names and seconds, nothing
+else). Failed and cancelled jobs teach nothing: a test that fails in two
+minutes says nothing about how long it takes to pass. A job never seen before
+is guessed from the others of its class and marked as a guess. Two tiles say when the next slot frees and when the queue
 clears, and when a superseded run is holding up a real one, a note says which
 run to cancel first and what that buys.
 
 The Trends screen draws what this browser has watched: slots in use and jobs
 queued over the last hour to week, with any time the page was closed hatched
 rather than smoothed over; today's slot time by repository; the last ten
-durations of each job of interest with today's marked; and where the hourly
-request allowance lands at the reset. All of it comes from the same polls and
-is kept in local storage as counts, timestamps and repository names.
+successful durations of each job of interest with the current run marked; and
+where the hourly request allowance lands at the reset. It draws the macOS pool
+unless another has a record, in which case chips switch between them. All of
+it comes from the same polls and is kept in local storage as counts,
+timestamps and repository names.
 
 Learning a finished run's final timings costs one extra request per run, and
 is skipped whenever fewer than 200 requests remain in the hour.
 
 Jobs are grouped by the run that owns them, because cancelling acts on a run.
-Cancel asks once before it acts. Chips above the list narrow it to one
+Cancel asks once before it acts, with focus on Keep, and Escape backs out.
+Chips above the list narrow it to one
 repository or to superseded runs only; the pool figures are never narrowed.
 
 ## Security model

@@ -2,7 +2,10 @@ import { useEffect, useState } from 'preact/hooks'
 import type { AlertPrefs } from '../model/alerts'
 import { notificationPermission, requestPermission, type Permission } from '../notify'
 import { settings, updateSettings } from '../state/settings'
-import { isInstalled } from './install'
+import { isAppleMobile, isInstalled } from './install'
+
+const HOME_SCREEN =
+  'On iPhone and iPad, notifications only work once the page is added to the Home Screen. Use Share, then Add to Home Screen.'
 
 const CHOICES: { key: keyof AlertPrefs; label: string; detail: string }[] = [
   {
@@ -26,10 +29,18 @@ export function AlertsView() {
   const [permission, setPermission] = useState<Permission>(notificationPermission())
   const [asking, setAsking] = useState(false)
   const prefs = settings.value.alerts
-  const installed = isInstalled()
+  // iOS offers notifications only to a Home Screen app, so a Safari tab
+  // reports them as unsupported when the real answer is "install it first".
+  const needsHomeScreen = isAppleMobile() && !isInstalled()
 
+  // Permission can change in the browser's own settings while the page is away.
   useEffect(() => {
-    setPermission(notificationPermission())
+    const reread = () => {
+      if (document.visibilityState === 'visible') setPermission(notificationPermission())
+    }
+    reread()
+    document.addEventListener('visibilitychange', reread)
+    return () => document.removeEventListener('visibilitychange', reread)
   }, [])
 
   async function ask() {
@@ -54,7 +65,11 @@ export function AlertsView() {
           you wait on a slot.
         </p>
         {permission === 'unsupported' ? (
-          <div class="hint bad">This browser does not offer notifications to web pages.</div>
+          needsHomeScreen ? (
+            <div class="hint">{HOME_SCREEN}</div>
+          ) : (
+            <div class="hint bad">This browser does not offer notifications to web pages.</div>
+          )
         ) : permission === 'denied' ? (
           <div class="hint bad">
             Notifications are blocked for this site. Allow them in the browser's site settings to
@@ -69,12 +84,7 @@ export function AlertsView() {
             </button>
           </div>
         )}
-        {!installed && permission !== 'unsupported' && (
-          <div class="hint">
-            On iPhone and iPad, notifications only work once the page is added to the Home
-            Screen. Use Share, then Add to Home Screen.
-          </div>
-        )}
+        {needsHomeScreen && permission !== 'unsupported' && <div class="hint">{HOME_SCREEN}</div>}
       </div>
 
       <div class="card">

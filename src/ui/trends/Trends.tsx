@@ -1,5 +1,5 @@
-import { useState } from 'preact/hooks'
-import { atCapacityMs, dayKey, slice } from '../../model/history'
+import { atCapacityMs, dayKey, recordedPools, slice } from '../../model/history'
+import { capFor, PLANS } from '../../model/plans'
 import { RUNNER_CLASS_LABEL } from '../../model/runnerClass'
 import { durations } from '../../state/durations'
 import { history } from '../../state/history'
@@ -12,6 +12,8 @@ import {
   pollCost,
   projectedHourlyCost,
   rateLimit,
+  trendsPool,
+  trendsRange,
 } from '../../state/store'
 import { BudgetBar } from './BudgetBar'
 import { DurationStrips } from './DurationStrips'
@@ -31,17 +33,18 @@ const RANGES = [
  * here is built from data the polls already carry.
  */
 export function Trends() {
-  const [range, setRange] = useState(1)
+  const range = trendsRange.value
   const nowMs = now.value
   const span = RANGES[range]?.ms ?? RANGES[1]!.ms
   const fromMs = nowMs - span
   const state = history.value
   const samples = slice(state, fromMs, nowMs)
 
-  // The scarce pool: the first with a ceiling, macOS in practice.
-  const pool = buckets.value.find((b) => b.cap !== null) ?? buckets.value[0]
-  const cls = pool?.cls ?? 'macos'
-  const cap = pool?.cap ?? null
+  // The scarce pool unless the reader picked another that has a record.
+  const pools = recordedPools(state)
+  const picked = trendsPool.value
+  const cls = picked !== null && pools.includes(picked) ? picked : 'macos'
+  const cap = capFor(PLANS[settings.value.plan], cls)
   const atCap = cap === null ? 0 : atCapacityMs(samples, cls, cap)
   const recorded = samples.reduce((sum, s) => sum + (s.until - s.t), 0)
 
@@ -49,11 +52,31 @@ export function Trends() {
     <div class="trends">
       <div class="chips" role="group" aria-label="Range">
         {RANGES.map((r, i) => (
-          <button key={r.label} class={`chip${i === range ? ' on' : ''}`} aria-pressed={i === range} onClick={() => setRange(i)}>
+          <button
+            key={r.label}
+            class={`chip${i === range ? ' on' : ''}`}
+            aria-pressed={i === range}
+            onClick={() => (trendsRange.value = i)}
+          >
             {r.label}
           </button>
         ))}
       </div>
+
+      {pools.length > 1 && (
+        <div class="chips" role="group" aria-label="Pool">
+          {pools.map((p) => (
+            <button
+              key={p}
+              class={`chip${p === cls ? ' on' : ''}`}
+              aria-pressed={p === cls}
+              onClick={() => (trendsPool.value = p)}
+            >
+              {RUNNER_CLASS_LABEL[p]}
+            </button>
+          ))}
+        </div>
+      )}
 
       <section class="section">
         <div class="section-head">

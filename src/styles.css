@@ -150,6 +150,12 @@ a {
   color: var(--accent);
 }
 
+/* Keyboard focus shows on everything, including the borderless toggles. */
+:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+}
+
 code,
 .mono {
   font-family: var(--mono);
@@ -161,8 +167,9 @@ code,
 .shell {
   max-width: 1180px;
   margin: 0 auto;
-  /* Room at the bottom for the tab bar. */
-  padding: 20px 18px calc(84px + env(safe-area-inset-bottom));
+  /* Room at the bottom for the tab bar, and clear of a notch or rounded corner. */
+  padding: max(20px, env(safe-area-inset-top)) max(18px, env(safe-area-inset-right))
+    calc(84px + env(safe-area-inset-bottom)) max(18px, env(safe-area-inset-left));
 }
 
 .topbar {
@@ -1121,7 +1128,8 @@ code,
   display: flex;
   justify-content: center;
   gap: 4px;
-  padding: 4px 8px calc(6px + env(safe-area-inset-bottom));
+  padding: 4px max(8px, env(safe-area-inset-right)) calc(6px + env(safe-area-inset-bottom))
+    max(8px, env(safe-area-inset-left));
   background: var(--surface);
   border-top: 1px solid var(--border);
   z-index: 10;
@@ -1152,8 +1160,11 @@ code,
   stroke-linejoin: round;
 }
 
+/* A bar and weight as well as colour, so the current tab reads without colour. */
 .tab.on {
   color: var(--text);
+  font-weight: 600;
+  box-shadow: inset 0 2px 0 var(--accent);
 }
 
 .tab:hover:not(:disabled) {
@@ -1321,8 +1332,10 @@ code,
 /* ---------- phones ---------- */
 
 @media (max-width: 760px) {
+  /* The bottom clears the fixed tab bar, about 60px tall plus the home indicator. */
   .shell {
-    padding: 14px max(12px, env(safe-area-inset-right)) 48px max(12px, env(safe-area-inset-left));
+    padding: max(14px, env(safe-area-inset-top)) max(12px, env(safe-area-inset-right))
+      calc(76px + env(safe-area-inset-bottom)) max(12px, env(safe-area-inset-left));
   }
 
   .topbar {
@@ -1339,14 +1352,15 @@ code,
     flex-direction: column;
   }
 
-  /* Title and stats share the first line; the meter takes a full line under them. */
+  /* Title and stats share the first line when they fit, and the stats take a
+     line of their own when they do not; the meter always takes a full line.
+     The title never shrinks, or longer stats would run into it. */
   .section-head {
     gap: 8px 12px;
   }
 
   .section-title {
-    flex: 1;
-    min-width: 0;
+    flex: 1 0 auto;
   }
 
   .meter {
@@ -1356,6 +1370,7 @@ code,
   }
 
   .section-stats {
+    flex: 1 1 auto;
     flex-wrap: wrap;
     justify-content: flex-end;
     gap: 4px 12px;

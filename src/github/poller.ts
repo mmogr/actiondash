@@ -584,6 +584,16 @@ function schedule(): void {
   }, delay)
 }
 
+/**
+ * Re-arms the pending timer from the current settings, so a changed interval
+ * applies now rather than after the delay chosen under the old one. A poll in
+ * flight reschedules itself when it finishes.
+ */
+export function reschedule(): void {
+  if (timer === null || polling.peek()) return
+  schedule()
+}
+
 export function startPolling(): void {
   stopPolling()
   void pollOnce().finally(schedule)
