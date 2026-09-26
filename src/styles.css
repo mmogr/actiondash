@@ -1352,14 +1352,15 @@ code,
     flex-direction: column;
   }
 
-  /* Title and stats share the first line; the meter takes a full line under them. */
+  /* Title and stats share the first line when they fit, and the stats take a
+     line of their own when they do not; the meter always takes a full line.
+     The title never shrinks, or longer stats would run into it. */
   .section-head {
     gap: 8px 12px;
   }
 
   .section-title {
-    flex: 1;
-    min-width: 0;
+    flex: 1 0 auto;
   }
 
   .meter {
@@ -1369,6 +1370,7 @@ code,
   }
 
   .section-stats {
+    flex: 1 1 auto;
     flex-wrap: wrap;
     justify-content: flex-end;
     gap: 4px 12px;
