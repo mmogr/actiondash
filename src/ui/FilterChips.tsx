@@ -2,6 +2,7 @@ import { repoKey, type RepoRef } from '../github/types'
 import { settings } from '../state/settings'
 import { NO_FILTER } from '../model/filter'
 import { buckets, filter, myRunsNow, stale } from '../state/store'
+import { BulkCancel } from './BulkCancel'
 import { seriesClass } from './palette'
 
 /**
@@ -62,6 +63,7 @@ export function FilterChips() {
         chip(current.staleOnly, 'Superseded', () => {
           filter.value = { ...NO_FILTER, staleOnly: !current.staleOnly }
         })}
+      {anyStale && <BulkCancel />}
     </div>
   )
 }

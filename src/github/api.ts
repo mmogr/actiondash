@@ -75,6 +75,22 @@ export async function cancelRun(repo: RepoRef, runId: number): Promise<void> {
   }
 }
 
+/**
+ * Re-runs the jobs of a finished run that failed, and the jobs that depend on
+ * them. Needs the same Actions write access as cancelling.
+ */
+export async function rerunFailedJobs(repo: RepoRef, runId: number): Promise<void> {
+  await apiFetch(`${repoPath(repo)}/actions/runs/${runId}/rerun-failed-jobs`, {
+    method: 'POST',
+    noCache: true,
+  })
+}
+
+/** Re-runs every job of a finished run, such as one cancelled by mistake. */
+export async function rerunRun(repo: RepoRef, runId: number): Promise<void> {
+  await apiFetch(`${repoPath(repo)}/actions/runs/${runId}/rerun`, { method: 'POST', noCache: true })
+}
+
 /** Confirms the token really carries Actions access on a specific repository. */
 export async function probeActionsAccess(repo: RepoRef): Promise<void> {
   await apiFetch(`${repoPath(repo)}/actions/runs?per_page=1`, { noCache: true })

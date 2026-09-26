@@ -219,7 +219,10 @@ export async function apiFetch<T>(
     throw new GitHubError(res.status, message, key, docs)
   }
 
-  const data = (res.status === 204 ? undefined : await res.json()) as T
+  // A write can answer 201 or 202 with no body at all, which res.json() would
+  // reject, so only a body that is there is parsed.
+  const text = res.status === 204 ? '' : await res.text()
+  const data = (text ? JSON.parse(text) : undefined) as T
 
   const etag = res.headers.get('etag')
   if (useCache && etag) rememberEtag(key, { etag, body: data })

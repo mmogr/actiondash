@@ -69,12 +69,25 @@ it comes from the same polls and is kept in local storage as counts,
 timestamps and repository names.
 
 Learning a finished run's final timings costs one extra request per run, and
-is skipped whenever fewer than 200 requests remain in the hour.
+is skipped whenever fewer than 200 requests remain in the hour. The same
+listing says how the run ended, so a Recently finished list on the Now screen
+shows the runs this page saw finish in the last hour: which job failed, with
+a link to its log, or that it passed, was cancelled, or left the queue
+unfinished, such as to wait for an approval. It stays under "All clear" too,
+so the quiet screen still shows what just failed. A run with failed jobs
+offers Re-run failed, and a run cancelled from this page offers Re-run, as
+the way back from a mistaken cancel. Both ask first, and need only the
+Actions write access that cancelling already uses. The list is kept for the
+session only.
 
 Jobs are grouped by the run that owns them, because cancelling acts on a run.
 Cancel asks once before it acts, with focus on Keep, and Escape backs out.
-Chips above the list narrow it to one repository, to your own runs, or to
-superseded runs only; the pool figures are never narrowed.
+A cancelled run says "cancel requested" until GitHub reflects it, rather than
+offering the button again. Chips above the list narrow it to one repository,
+to your own runs, or to superseded runs only; the pool figures are never
+narrowed. When runs are superseded, a button beside the chips cancels them
+all, saying first what they hold, and sends the cancels a second apart as
+GitHub asks.
 
 Your own runs, the ones you pushed or set going, come first: a card at the top
 of the Now screen says when each starts or should be done, and which run is

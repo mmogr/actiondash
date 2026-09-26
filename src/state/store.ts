@@ -6,6 +6,7 @@ import { forecastBucket, insightFor, type BucketForecast, type Insight } from '.
 import { NO_FILTER, type ViewFilter } from '../model/filter'
 import { dataHealthOf, isComplete, type RepoProblem } from '../model/health'
 import { myRuns } from '../model/mine'
+import type { FinishedRun } from '../model/finished'
 import type { PacingReason } from '../model/status'
 import { PLANS } from '../model/plans'
 import { settings } from './settings'
@@ -60,6 +61,14 @@ export const repoProblems = signal<Map<string, RepoProblem>>(new Map())
  * while, marked, rather than having them vanish as if they had finished.
  */
 export const runsAsOf = signal<Map<number, number>>(new Map())
+
+/** Runs this page saw finish, newest first. Session-only. */
+export const recentlyFinished = signal<FinishedRun[]>([])
+/**
+ * Runs cancelled from this page, with when. GitHub takes a moment to reflect a
+ * cancel, and a row whose button came straight back would invite a second one.
+ */
+export const cancelRequested = signal<Map<number, number>>(new Map())
 
 /**
  * Requests per hour at the current cost and cadence. This is the number that
@@ -164,6 +173,8 @@ export function resetData(): void {
   effectiveIntervalMs.value = 0
   repoProblems.value = new Map()
   runsAsOf.value = new Map()
+  recentlyFinished.value = []
+  cancelRequested.value = new Map()
   firstLoadDone.value = false
   pollProgress.value = { done: 0, total: 0 }
   rateLimited.value = null

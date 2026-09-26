@@ -7,7 +7,8 @@ import { clearDurations, durations } from '../src/state/durations'
 import { clearHistory, history } from '../src/state/history'
 import { durationKey, typicalSeconds } from '../src/model/durations'
 import * as store from '../src/state/store'
-import { deferred, FakeGitHub, json, type Reply } from './fake-github'
+import { deferred, empty, FakeGitHub, json, type Reply } from './fake-github'
+import { cancelRuns, rerun } from '../src/ui/actions'
 import { makeJob, makeRun } from './helpers'
 
 /**
@@ -603,5 +604,129 @@ describe('the poll schedule', () => {
     vi.setSystemTime(Date.now() + 10_000)
     expect(refreshNow()).toBe(true)
     await until(() => gh.calls.length > asked)
+  })
+})
+
+describe('finished runs', () => {
+  const START = '2026-09-09T10:00:00Z'
+  const running = (id: number, runId = 1, name = 'build') =>
+    makeJob({ id, run_id: runId, name, status: 'in_progress', started_at: START })
+  const ended = (id: number, conclusion: string, runId = 1, name = 'build') =>
+    makeJob({ id, run_id: runId, name, status: 'completed', conclusion, started_at: START, completed_at: START })
+  const jobCalls = (runId: number) => gh.calls.filter((c) => c.url.includes(`/runs/${runId}/jobs`))
+
+  /** A run seen running, then gone, with the final listing GitHub gives for it. */
+  async function runThatFinishes(finalJobs: WorkflowJob[]): Promise<void> {
+    scriptRuns([], [makeRun({ id: 1, status: 'in_progress' })])
+    scriptJobs(1, [running(10), running(11, 1, 'test-ui')])
+    await pollOnce()
+    scriptRuns([], [])
+    scriptJobs(1, finalJobs)
+    await pollOnce()
+  }
+
+  it('names the job that failed in a run that finished between polls', async () => {
+    await runThatFinishes([ended(10, 'success'), ended(11, 'failure', 1, 'test-ui')])
+
+    const [finished] = store.recentlyFinished.value
+    expect(finished?.outcome).toBe('failed')
+    expect(finished?.failedJobs.map((j) => j.name)).toEqual(['test-ui'])
+  })
+
+  it('tells how a run ended from its last snapshot when that was complete, asking nothing', async () => {
+    scriptRuns([], [makeRun({ id: 1, status: 'in_progress' })])
+    scriptJobs(1, [ended(10, 'success')])
+    await pollOnce()
+
+    scriptRuns([], [])
+    await pollOnce()
+
+    expect(store.recentlyFinished.value[0]?.outcome).toBe('succeeded')
+    expect(jobCalls(1)).toHaveLength(1)
+  })
+
+  it('says a run left unfinished when its final listing still has jobs waiting', async () => {
+    await runThatFinishes([ended(10, 'success'), makeJob({ id: 11, run_id: 1, status: 'waiting' })])
+
+    expect(store.recentlyFinished.value[0]?.outcome).toBe('left')
+  })
+
+  it('does not guess how a run ended when the allowance was too low to look', async () => {
+    const low = { 'x-ratelimit-limit': '5000', 'x-ratelimit-remaining': '150', 'x-ratelimit-reset': '9999999999' }
+    scriptRuns([], [makeRun({ id: 1, status: 'in_progress' })])
+    scriptJobs(1, [running(10)])
+    await pollOnce()
+
+    gh.on(/\/actions\/runs\?status=queued&/, json({ total_count: 0, workflow_runs: [] }, { headers: low }))
+    gh.on(/\/actions\/runs\?status=in_progress&/, json({ total_count: 0, workflow_runs: [] }, { headers: low }))
+    await pollOnce()
+
+    expect(store.recentlyFinished.value[0]?.outcome).toBe('unknown')
+  })
+
+  it('never lists as finished a run whose repository stopped answering', async () => {
+    scriptRuns([], [makeRun({ id: 1, status: 'in_progress' })])
+    scriptJobs(1, [running(10)])
+    await pollOnce()
+
+    gh.on(/\/actions\/runs\?status=queued&/, json({ message: 'Server Error' }, { status: 502 }))
+    gh.on(/\/actions\/runs\?status=in_progress&/, json({ message: 'Server Error' }, { status: 502 }))
+    await pollOnce()
+
+    expect(store.recentlyFinished.value).toEqual([])
+  })
+
+  it('re-runs failed jobs, though GitHub answers with no body', async () => {
+    await runThatFinishes([ended(10, 'failure')])
+    gh.on(/\/runs\/1\/rerun-failed-jobs$/, empty(201))
+
+    const ok = await rerun(REPO, store.recentlyFinished.value[0]!.run, 'failed')
+
+    expect(ok).toBe(true)
+    expect(gh.calls.at(-1)).toMatchObject({ method: 'POST' })
+    expect(store.recentlyFinished.value[0]?.rerunAsked).toBe(true)
+    expect(store.actionError.value).toBeNull()
+  })
+
+  it('keeps a failed cancel on screen through the next poll', async () => {
+    const a = makeRun({ id: 1, status: 'in_progress' })
+    const b = makeRun({ id: 2, status: 'in_progress' })
+    gh.on(/\/runs\/1\/cancel$/, json({}, { status: 202 }))
+    gh.on(/\/runs\/2\/cancel$/, json({ message: 'Resource not accessible' }, { status: 403 }))
+
+    const done = await cancelRuns(
+      [
+        { repo: REPO, run: a },
+        { repo: REPO, run: b },
+      ],
+      { spacingMs: 0 },
+    )
+    scriptRuns([], [])
+    await pollOnce()
+
+    expect(done).toBe(1)
+    expect(store.actionError.value).toContain('#2')
+    expect(store.cancelRequested.value.has(1)).toBe(true)
+    expect(store.cancelRequested.value.has(2)).toBe(false)
+  })
+
+  it('remembers a run was cancelled from here, so undoing it is offered', async () => {
+    const run = makeRun({ id: 1, status: 'in_progress' })
+    scriptRuns([], [run])
+    scriptJobs(1, [running(10)])
+    await pollOnce()
+
+    gh.on(/\/runs\/1\/cancel$/, json({}, { status: 202 }))
+    await cancelRuns([{ repo: REPO, run }], { spacingMs: 0 })
+    // GitHub still lists it for a moment; it stays marked as asked for.
+    await pollOnce()
+    expect(store.cancelRequested.value.has(1)).toBe(true)
+
+    scriptRuns([], [])
+    scriptJobs(1, [ended(10, 'cancelled')])
+    await pollOnce()
+
+    expect(store.recentlyFinished.value[0]).toMatchObject({ outcome: 'cancelled', cancelledHere: true })
+    expect(store.cancelRequested.value.has(1)).toBe(false)
   })
 })

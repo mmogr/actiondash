@@ -32,6 +32,7 @@ import { Trends } from './trends/Trends'
 import { AlertsView } from './AlertsView'
 import { InstallBanner } from './InstallBanner'
 import { YourRuns } from './YourRuns'
+import { RecentlyFinished } from './RecentlyFinished'
 
 export function Dashboard() {
   useEffect(() => {
@@ -218,6 +219,7 @@ export function Dashboard() {
               </div>
             </section>
           ) : null}
+          <RecentlyFinished />
         </>
       )}
 

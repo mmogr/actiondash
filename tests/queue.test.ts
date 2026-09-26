@@ -6,7 +6,9 @@ import {
   isFailedJob,
   jobStep,
   runProgress,
+  staleImpact,
   staleJobs,
+  type DashJob,
 } from '../src/model/queue'
 import { PLANS } from '../src/model/plans'
 import type { WorkflowJob } from '../src/github/types'
@@ -280,5 +282,27 @@ describe('jobStep', () => {
 
   it('says nothing when the listing carries no steps', () => {
     expect(jobStep(makeJob({}))).toBeNull()
+  })
+})
+
+describe('staleImpact', () => {
+  it('counts the slots held, by pool, and the jobs waiting', () => {
+    const job = (id: number, status: string, cls: DashJob['cls']): DashJob => ({
+      job: makeJob({ id, status }),
+      run: makeRun({ id }),
+      repo: { owner: 'acme', name: 'app' },
+      cls,
+      supersededBy: makeRun({ id: 99 }),
+      since: 1,
+    })
+
+    const impact = staleImpact([
+      job(1, 'in_progress', 'macos'),
+      job(2, 'in_progress', 'macos'),
+      job(3, 'in_progress', 'linux'),
+      job(4, 'queued', 'macos'),
+    ])
+
+    expect(impact).toEqual({ holding: { macos: 2, linux: 1 }, waiting: 1 })
   })
 })
