@@ -7,6 +7,8 @@ import { age, relative, shortClock } from './format'
 import { seriesClass } from './palette'
 
 const SHOWN = 3
+/** Within this of now, an estimate reads as "now", as relative() also has it. */
+const NOW_WINDOW_MS = 45_000
 
 /**
  * The reader's own runs, above everything else: when each starts or should be
@@ -39,14 +41,20 @@ export function YourRuns() {
 function YourRun({ m, nowMs }: { m: MyRun; nowMs: number }) {
   const { run } = m
   const state = m.stale ? 'stale' : m.state
+  // An estimate that has arrived, or passed, is said as "now" rather than as a clock time.
+  const due = (at: number) => at - nowMs < NOW_WINDOW_MS
   const when =
     m.state === 'running'
       ? m.doneAt === null
         ? `running ${age(m.since, nowMs)} so far`
-        : `current jobs done ~${shortClock(m.doneAt)} · ${relative(m.doneAt, nowMs)}`
+        : due(m.doneAt)
+          ? 'current jobs finishing now'
+          : `current jobs done ~${shortClock(m.doneAt)} · ${relative(m.doneAt, nowMs)}`
       : m.startsAt === null
         ? `waiting ${age(m.since, nowMs)} so far`
-        : `starts ~${shortClock(m.startsAt)} · ${relative(m.startsAt, nowMs)}`
+        : due(m.startsAt)
+          ? 'starting now'
+          : `starts ~${shortClock(m.startsAt)} · ${relative(m.startsAt, nowMs)}`
   const where = m.position
     ? m.position.behind
       ? `position ${m.position.at} of ${m.position.of} in ${RUNNER_CLASS_LABEL[m.position.cls]} · behind ${m.position.behind.repoName} #${m.position.behind.run_number}`
