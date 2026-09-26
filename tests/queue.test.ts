@@ -1,5 +1,13 @@
 import { describe, expect, it } from 'vitest'
-import { buildBuckets, distinctRuns, groupByRun, staleJobs } from '../src/model/queue'
+import {
+  buildBuckets,
+  distinctRuns,
+  groupByRun,
+  isFailedJob,
+  jobStep,
+  runProgress,
+  staleJobs,
+} from '../src/model/queue'
 import { PLANS } from '../src/model/plans'
 import type { WorkflowJob } from '../src/github/types'
 import { makeJob, makeRun } from './helpers'
@@ -209,5 +217,68 @@ describe('groupByRun', () => {
 
     expect(group?.since).toBe(Date.parse('2026-09-09T10:02:00Z'))
     expect(group?.jobs).toHaveLength(3)
+  })
+})
+
+describe('runProgress', () => {
+  const done = (id: number, conclusion: string) => makeJob({ id, status: 'completed', conclusion })
+
+  it('counts the whole run, and names the jobs that failed or timed out', () => {
+    const jobs = [
+      done(1, 'success'),
+      done(2, 'skipped'),
+      done(3, 'failure'),
+      done(4, 'timed_out'),
+      done(5, 'cancelled'),
+      makeJob({ id: 6, status: 'in_progress' }),
+      makeJob({ id: 7, status: 'queued' }),
+      makeJob({ id: 8, status: 'waiting' }),
+    ]
+
+    const progress = runProgress(jobs)
+
+    expect(progress).toMatchObject({ done: 5, running: 1, queued: 2 })
+    expect(progress.failed.map((j) => j.id)).toEqual([3, 4])
+  })
+
+  it('reads an unknown run as nothing yet', () => {
+    expect(runProgress(undefined)).toEqual({ done: 0, running: 0, queued: 0, failed: [] })
+  })
+
+  it('does not call a job failed until it has finished', () => {
+    expect(isFailedJob(makeJob({ status: 'in_progress', conclusion: null }))).toBe(false)
+    expect(isFailedJob(done(1, 'cancelled'))).toBe(false)
+    expect(isFailedJob(done(1, 'failure'))).toBe(true)
+  })
+})
+
+describe('jobStep', () => {
+  const step = (number: number, status: string, conclusion: string | null = null) => ({
+    number,
+    name: `step ${number}`,
+    status,
+    conclusion,
+  })
+
+  it('names the step in progress', () => {
+    const job = makeJob({
+      steps: [step(1, 'completed', 'success'), step(2, 'in_progress'), step(3, 'queued')],
+    })
+
+    expect(jobStep(job)).toEqual({ number: 2, total: 3, name: 'step 2' })
+  })
+
+  it('names the step a failed job stopped at', () => {
+    const job = makeJob({
+      status: 'completed',
+      conclusion: 'failure',
+      steps: [step(1, 'completed', 'success'), step(2, 'completed', 'failure'), step(3, 'completed', 'skipped')],
+    })
+
+    expect(jobStep(job)?.number).toBe(2)
+  })
+
+  it('says nothing when the listing carries no steps', () => {
+    expect(jobStep(makeJob({}))).toBeNull()
   })
 })

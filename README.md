@@ -15,12 +15,18 @@ choose, and lets you cancel the runs that are wasting slots.
 macOS                 5/5 in use    7 queued    oldest waiting 16m
 
   RUNNING
-  ▾ app #412  STALE                                        11m   cancel
+  ▾ app #412  CI  STALE                                    11m   cancel
     5 jobs · feat/parser · Add the parser benchmark
     Superseded by #414 on d4e5f6a
-      build-arm                                            11m
-      build-x64                                            11m
-      ...
+    3 done · 2 running · current jobs done ~14:38
+      build-arm                            11m · usually 14m   log ↗
+        step 6 of 11 · xcodebuild archive
+      build-x64                            11m · usually 13m   log ↗
+  ▾ ios-client #213  Release                               23m   cancel
+    test-ui failed 4m ago · still holds 1 macOS slot
+      ✗ test-ui                                     failed   log ↗
+        at step 9 of 14 · Run UI tests
+      archive                              15m · usually 19m   log ↗
 
   QUEUED - waiting for a slot
   ▸ app #414  4 jobs                                        9m   cancel
@@ -38,9 +44,20 @@ from how long each job usually takes, learned from the jobs the dashboard has
 watched succeed and kept in local storage (job names and seconds, nothing
 else). Failed and cancelled jobs teach nothing: a test that fails in two
 minutes says nothing about how long it takes to pass. A job never seen before
-is guessed from the others of its class and marked as a guess. Two tiles say when the next slot frees and when the queue
-clears, and when a superseded run is holding up a real one, a note says which
-run to cancel first and what that buys.
+is guessed from the others of its class and marked as a guess, and the
+tooltip on any "usually" says how many runs it rests on. Two tiles say when
+the next slot frees and when the queue clears, and when a superseded run is
+holding up a real one, a note says which run to cancel first and what that
+buys.
+
+A running run says how far it has got and when the jobs it has now should be
+done; jobs that wait on others with `needs:` do not exist yet, so the estimate
+is for the current jobs. A job that has already failed while the rest of its
+run carries on is named in red with how many slots the run still holds, since
+that is a run worth a look before it finishes. It says only that the job
+failed: `continue-on-error` can still let the run pass. Every running or
+failed job links to its log on GitHub, and a running job shows the step it
+is on. All of this comes from the job listings the dashboard already reads.
 
 The Trends screen draws what this browser has watched: slots in use and jobs
 queued over the last hour to week, with any time the page was closed hatched
