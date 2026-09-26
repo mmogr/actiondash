@@ -1,7 +1,15 @@
 import { PLANS, type PlanId } from '../model/plans'
+import { problemText } from '../model/health'
+import { joinList, keptList } from '../model/setup'
+import { repoKey } from '../github/types'
 import { clearJobCache, reschedule, stopPolling } from '../github/poller'
+import { durations } from '../state/durations'
+import { history } from '../state/history'
 import { forgetEverything, settings, updateSettings } from '../state/settings'
-import { resetData, tab, view } from '../state/store'
+import { frozenAt, repoProblems, resetData, tab, view } from '../state/store'
+import { shortClock } from './format'
+import { seriesClass } from './palette'
+import { useConfirm } from './useConfirm'
 
 const INTERVALS = [
   { ms: 10_000, label: '10s' },
@@ -11,10 +19,23 @@ const INTERVALS = [
 ]
 
 export function SettingsView() {
-  const repoCount = settings.value.repos.length
+  const forget = useConfirm()
+  const { repos, login, plan } = settings.value
+  const problems = repoProblems.value
+  const frozen = frozenAt.value
+  // What Forget takes away, said before it does.
+  const lost = [
+    'the token',
+    ...keptList({
+      repoCount: repos.length,
+      planLabel: PLANS[plan].label,
+      learnedJobs: Object.keys(durations.value).length,
+      hasHistory: history.value.samples.length > 0,
+    }),
+  ]
 
   function onForget() {
-    if (!confirm('Remove the stored token and all settings from this browser?')) return
+    forget.done()
     stopPolling()
     clearJobCache()
     resetData()
@@ -27,14 +48,15 @@ export function SettingsView() {
       <div class="card">
         <h2>Account</h2>
         <p>
-          The plan sets the denominator on the occupancy meters. The API does not expose the
-          limit, so if the guess is wrong the dashboard offers to correct it from what it sees.
+          The plan sets the ceiling on the meters, because GitHub does not report it. For macOS,
+          Free, Pro and Team all allow 5 jobs at once; the plan changes only the Linux and Windows
+          ceiling. If the pick is wrong, the dashboard offers to correct it from what it sees.
         </p>
         <div class="field-row">
           <label>
             Plan{' '}
             <select
-              value={settings.value.plan}
+              value={plan}
               onChange={(e) =>
                 updateSettings({
                   plan: (e.target as HTMLSelectElement).value as PlanId,
@@ -82,11 +104,28 @@ export function SettingsView() {
       <div class="card">
         <h2>Repositories</h2>
         <p>
-          Watching {repoCount} {repoCount === 1 ? 'repository' : 'repositories'}. Concurrency
-          limits apply to the whole account, so watch every repository with active work.
+          Concurrency limits apply to the whole account, so watch every repository with active
+          work.
+          {frozen !== null && ` None has been checked since ${shortClock(frozen)}.`}
         </p>
+        <ul class="watch-list">
+          {repos.map((repo) => {
+            const problem = problems.get(repoKey(repo))
+            return (
+              <li key={repoKey(repo)}>
+                <span class={`swatch ${seriesClass(repo)}`} />
+                <span class="watch-name">{repoKey(repo)}</span>
+                {problem && (
+                  <span class="watch-problem" title={problem.detail}>
+                    not answering: {problemText(problem.problem)}, since {shortClock(problem.since)}
+                  </span>
+                )}
+              </li>
+            )
+          })}
+        </ul>
         <div class="field-row">
-          <button onClick={() => (view.value = 'setup')}>Choose repositories</button>
+          <button onClick={() => (view.value = 'setup')}>Edit repositories</button>
         </div>
       </div>
 
@@ -102,16 +141,37 @@ export function SettingsView() {
       </div>
 
       <div class="card">
-        <h2>This browser</h2>
+        <h2>Token</h2>
         <p>
+          {login ? (
+            <>
+              Connected as <b>{login}</b>.{' '}
+            </>
+          ) : null}
           The token and every setting live in this browser's local storage and nowhere else.
-          Forgetting removes all of it.
         </p>
         <div class="field-row">
-          <button class="danger" onClick={onForget}>
-            Forget token
+          <button onClick={() => (view.value = 'setup')}>Replace token</button>
+          <button
+            ref={forget.askRef}
+            class="danger"
+            onClick={forget.confirming ? forget.keep : forget.ask}
+            aria-expanded={forget.confirming}
+          >
+            Forget token and data
           </button>
         </div>
+        {forget.confirming && (
+          <div class="confirm-row" role="group" aria-label="Confirm forget" onKeyDown={forget.onKeyDown}>
+            <span>Remove {joinList(lost)} from this browser?</span>
+            <button ref={forget.keepRef} onClick={forget.keep}>
+              Keep
+            </button>
+            <button class="danger solid" onClick={onForget}>
+              Yes, forget
+            </button>
+          </div>
+        )}
       </div>
     </div>
   )

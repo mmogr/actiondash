@@ -1,5 +1,6 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
-import { clearCache } from '../src/github/client'
+import { clearCache, GitHubError } from '../src/github/client'
+import { probeRepos } from '../src/github/api'
 import { clearJobCache, pollOnce, refreshNow, startPolling, stopPolling } from '../src/github/poller'
 import type { RunWithRepo, WorkflowJob } from '../src/github/types'
 import { DEFAULT_SETTINGS, settings } from '../src/state/settings'
@@ -586,6 +587,8 @@ describe('the poll schedule', () => {
     // poller remembers it was stopped.
     expect(store.nextPollAt.value).toBeNull()
     expect(refreshNow({ force: true })).toBe(false)
+    // Remembered, so a reload lands on recovery rather than a dead dashboard.
+    expect(settings.value.tokenRejectedAt).toEqual(expect.any(Number))
     store.view.value = 'dashboard'
   })
 
@@ -728,5 +731,27 @@ describe('finished runs', () => {
 
     expect(store.recentlyFinished.value[0]).toMatchObject({ outcome: 'cancelled', cancelledHere: true })
     expect(store.cancelRequested.value.has(1)).toBe(false)
+  })
+})
+
+describe('probeRepos', () => {
+  const SITE = { owner: 'acme', name: 'site' }
+  const probe = (repo: { owner: string; name: string }) =>
+    new RegExp(`/repos/${repo.owner}/${repo.name}/actions/runs\\?per_page=1$`)
+
+  it('checks every repository and names the ones the token cannot read', async () => {
+    gh.on(probe(REPO), json({ total_count: 0, workflow_runs: [] }))
+    gh.on(probe(SITE), json({ message: 'Not Found' }, { status: 404 }))
+
+    const failures = await probeRepos([REPO, SITE])
+
+    expect(failures.map((f) => f.repo)).toEqual([SITE])
+    expect((failures[0]!.error as GitHubError).status).toBe(404)
+  })
+
+  it('stops at a rejected token, since every answer would be the same', async () => {
+    gh.on(/\/actions\/runs\?per_page=1$/, json({ message: 'Bad credentials' }, { status: 401 }))
+
+    await expect(probeRepos([REPO, SITE])).rejects.toBeInstanceOf(GitHubError)
   })
 })

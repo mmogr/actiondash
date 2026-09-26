@@ -15,7 +15,9 @@ import { durations } from './durations'
 export type View = 'setup' | 'dashboard'
 
 export const view = signal<View>(
-  settings.value.token && settings.value.repos.length > 0 ? 'dashboard' : 'setup',
+  settings.value.token && settings.value.repos.length > 0 && settings.value.tokenRejectedAt === null
+    ? 'dashboard'
+    : 'setup',
 )
 
 /** Which screen of the dashboard is showing. Kept in the address, so a reload stays put. */

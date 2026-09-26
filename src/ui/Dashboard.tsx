@@ -105,9 +105,9 @@ export function Dashboard() {
         <div class="banner warn">
           <span>
             {advice.dimension === 'macos'
-              ? `${observed.macos} macOS jobs have been seen running at once, which the ${plan.label} limit of ${plan.macos} cannot produce.`
-              : `${observed.total} jobs have been seen running at once, which the ${plan.label} limit of ${plan.total} cannot produce.`}{' '}
-            The meters below are measuring against the wrong ceiling.
+              ? `${observed.macos} macOS jobs have run at once, more than the ${plan.label} limit of ${plan.macos}.`
+              : `${observed.total} jobs have run at once, more than the ${plan.label} limit of ${plan.total}.`}{' '}
+            The meters are using the wrong ceiling.
           </span>
           <div class="banner-actions">
             <button onClick={() => updateSettings({ plan: advice.plan })}>
@@ -124,11 +124,10 @@ export function Dashboard() {
         <div class="banner warn">
           <span>
             {advice.dimension === 'macos'
-              ? `${observed.macos} macOS jobs were counted running at once, which ${advice.pastEveryPlan ? 'no published plan' : 'no plan below Enterprise'} allows.`
-              : `${observed.total} jobs were counted running at once, which no published plan allows.`}{' '}
-            That is more likely a counting problem than a plan problem: the watched repositories may
-            span more than one owner, whose pools GitHub meters separately, or a self-hosted machine
-            may be counted as a hosted one. Rechecking rebuilds the figure from the next few polls.
+              ? `${observed.macos} macOS jobs were counted running at once, more than ${advice.pastEveryPlan ? 'any published plan' : 'any plan below Enterprise'} allows.`
+              : `${observed.total} jobs were counted running at once, more than any published plan allows.`}{' '}
+            More likely the count is off: repositories from more than one account, or a self-hosted
+            machine counted as hosted.
           </span>
           <div class="banner-actions">
             <button onClick={() => updateSettings({ observedMax: {} })}>Recheck</button>

@@ -79,6 +79,16 @@ describe('stored observations', () => {
   })
 })
 
+describe('a rejected token', () => {
+  it('is remembered as a time, and anything else reads as not rejected', async () => {
+    expect((await loadWith({ tokenRejectedAt: 1_789_000_000_000 })).mod.settings.value.tokenRejectedAt).toBe(
+      1_789_000_000_000,
+    )
+    expect((await loadWith({ tokenRejectedAt: 'yesterday' })).mod.settings.value.tokenRejectedAt).toBeNull()
+    expect((await loadWith({})).mod.settings.value.tokenRejectedAt).toBeNull()
+  })
+})
+
 describe('the stored login', () => {
   it('is kept when it is a name, and dropped otherwise', async () => {
     expect((await loadWith({ login: 'dana-k' })).mod.settings.value.login).toBe('dana-k')

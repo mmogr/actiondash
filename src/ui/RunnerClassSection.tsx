@@ -4,6 +4,7 @@ import { matchesFilter } from '../model/filter'
 import { RUNNER_CLASS_LABEL } from '../model/runnerClass'
 import { filter, forecasts, now } from '../state/store'
 import { settings } from '../state/settings'
+import { PLANS } from '../model/plans'
 import { InsightCard } from './InsightCard'
 import { RunGroup } from './RunGroup'
 import { SlotLanes } from './SlotLanes'
@@ -57,7 +58,13 @@ export function RunnerClassSection({ bucket, headline }: Props) {
         )}
 
         <div class="section-stats">
-          <span>
+          <span
+            title={
+              cap === null
+                ? undefined
+                : `${cap} is the ${RUNNER_CLASS_LABEL[bucket.cls]} limit on the ${PLANS[settings.value.plan].label} plan you chose. GitHub does not report it.`
+            }
+          >
             <b>{used}</b>
             {cap === null ? ' running' : `/${cap} in use`}
           </span>

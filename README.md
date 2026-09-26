@@ -164,11 +164,25 @@ Create a **fine-grained** personal access token at
 | Everything else | Leave unset |
 
 `Actions: Read and write` is the whole grant. Read covers listing runs and jobs;
-write is needed only to cancel a run. The dashboard never reads your code, so
-**do not grant Contents**. Set an expiry of 30 to 90 days.
+write is needed only to cancel or re-run a run. The dashboard never reads your
+code, so **do not grant Contents**. Set an expiry of 30 to 90 days.
 
 A classic token also works but is a worse idea: its `repo` scope reaches every
 repository you can see. The setup screen warns if you paste one.
+
+Opening the dashboard checks that the token can read Actions on every
+repository you picked, and names any it cannot, so a typo or a repository
+missing from the token shows up there rather than later. Picking repositories
+from more than one account draws a warning with a button to keep one, since
+each account's slots are metered separately.
+
+When the token expires or is revoked, the dashboard stops, remembers that it
+was rejected, and opens on a recovery screen instead: regenerate the token on
+GitHub, which keeps its permissions and repositories, and paste the new one.
+Your repositories, plan, learned durations and history are kept, and if the
+new token belongs to the same account and can read every repository, the
+dashboard comes straight back. Settings shows which account is connected, and
+forgetting the token asks first and says what it removes.
 
 ## Running locally
 
