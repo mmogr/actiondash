@@ -597,6 +597,8 @@ export async function pollOnce(): Promise<void> {
   } catch (err) {
     if (controller.signal.aborted) return
     if (err instanceof GitHubError && err.status === 401) {
+      // Remembered, so a reload lands on recovery too.
+      updateSettings({ tokenRejectedAt: Date.now() })
       batch(() => {
         fatalError.value = 'The token was rejected. It may have expired or been revoked.'
         view.value = 'setup'

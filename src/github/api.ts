@@ -1,5 +1,5 @@
 /** Typed wrappers over the handful of GitHub endpoints this dashboard uses. */
-import { apiFetch, apiFetchAll, type ApiOptions } from './client'
+import { apiFetch, apiFetchAll, GitHubError, isRateLimitError, type ApiOptions } from './client'
 import { JOBS_QUERY, runsQuery, type RunStatus } from './queries'
 import type { Repo, RepoRef, RunWithRepo, User, WorkflowJob, WorkflowRun } from './types'
 
@@ -94,4 +94,31 @@ export async function rerunRun(repo: RepoRef, runId: number): Promise<void> {
 /** Confirms the token really carries Actions access on a specific repository. */
 export async function probeActionsAccess(repo: RepoRef): Promise<void> {
   await apiFetch(`${repoPath(repo)}/actions/runs?per_page=1`, { noCache: true })
+}
+
+/**
+ * Probes each repository, a few at a time, and says which the token cannot
+ * read. A rejected token or an exhausted allowance ends the whole check,
+ * since every other answer would be the same refusal.
+ */
+export async function probeRepos(
+  repos: readonly RepoRef[],
+  limit = 5,
+): Promise<{ repo: RepoRef; error: unknown }[]> {
+  const failures: { repo: RepoRef; error: unknown }[] = []
+  let cursor = 0
+  const worker = async (): Promise<void> => {
+    while (cursor < repos.length) {
+      const repo = repos[cursor++]!
+      try {
+        await probeActionsAccess(repo)
+      } catch (err) {
+        if (err instanceof GitHubError && err.status === 401) throw err
+        if (isRateLimitError(err)) throw err
+        failures.push({ repo, error: err })
+      }
+    }
+  }
+  await Promise.all(Array.from({ length: Math.min(limit, repos.length) }, worker))
+  return failures
 }

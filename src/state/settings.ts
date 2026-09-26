@@ -50,6 +50,12 @@ export interface Settings {
    * told apart from everyone else's. A login is public, not a secret.
    */
   login: string | null
+  /**
+   * When GitHub last rejected the stored token, until a working one replaces
+   * it. Kept so a reload lands on recovery rather than on a dashboard that
+   * cannot poll.
+   */
+  tokenRejectedAt: number | null
 }
 
 /** What actually sits in storage: the settings, plus the observation epoch. */
@@ -64,6 +70,7 @@ export const DEFAULT_SETTINGS: Settings = {
   alerts: NO_ALERTS,
   installDismissed: false,
   login: null,
+  tokenRejectedAt: null,
 }
 const DEFAULTS = DEFAULT_SETTINGS
 
@@ -89,6 +96,10 @@ function load(): Settings {
       alerts: sanitiseAlerts(parsed.alerts),
       installDismissed: parsed.installDismissed === true,
       login: typeof parsed.login === 'string' && parsed.login !== '' ? parsed.login : null,
+      tokenRejectedAt:
+        typeof parsed.tokenRejectedAt === 'number' && Number.isFinite(parsed.tokenRejectedAt)
+          ? parsed.tokenRejectedAt
+          : null,
     }
   } catch {
     // Private browsing, disabled site data, or corrupt JSON. Start clean.
