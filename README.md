@@ -73,8 +73,19 @@ is skipped whenever fewer than 200 requests remain in the hour.
 
 Jobs are grouped by the run that owns them, because cancelling acts on a run.
 Cancel asks once before it acts, with focus on Keep, and Escape backs out.
-Chips above the list narrow it to one
-repository or to superseded runs only; the pool figures are never narrowed.
+Chips above the list narrow it to one repository, to your own runs, or to
+superseded runs only; the pool figures are never narrowed.
+
+Your own runs, the ones you pushed or set going, come first: a card at the top
+of the Now screen says when each starts or should be done, and which run is
+just ahead of it in line, and your rows carry a `you` tag. The dashboard knows
+which runs are yours from the login it reads when you connect; a browser set up
+before that was kept asks for it once. The tab's title follows your run too,
+such as `#214 starts ~14:22`, so it can be read from the tab strip.
+
+The address keeps the screen, as `#now`, `#trends`, `#alerts` or `#settings`,
+so a reload stays where you were, and `#run=<id>` opens the Now screen at one
+run.
 
 ## Security model
 

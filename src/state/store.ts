@@ -5,6 +5,7 @@ import { buildBuckets, staleJobs } from '../model/queue'
 import { forecastBucket, insightFor, type BucketForecast, type Insight } from '../model/forecast'
 import { NO_FILTER, type ViewFilter } from '../model/filter'
 import { dataHealthOf, isComplete, type RepoProblem } from '../model/health'
+import { myRuns } from '../model/mine'
 import type { PacingReason } from '../model/status'
 import { PLANS } from '../model/plans'
 import { settings } from './settings'
@@ -16,9 +17,12 @@ export const view = signal<View>(
   settings.value.token && settings.value.repos.length > 0 ? 'dashboard' : 'setup',
 )
 
-/** Which screen of the dashboard is showing. Session-only: a reload lands on Now. */
+/** Which screen of the dashboard is showing. Kept in the address, so a reload stays put. */
 export type Tab = 'now' | 'trends' | 'alerts' | 'settings'
 export const tab = signal<Tab>('now')
+
+/** A run a link or a notification asked to show, until the Now screen has shown it. */
+export const pendingRun = signal<number | null>(null)
 
 /** The reader's narrowing of the run list. Session-only for the same reason. */
 export const filter = signal<ViewFilter>(NO_FILTER)
@@ -137,6 +141,11 @@ export const forecasts = computed(() => {
   }
   return map
 })
+
+/** The reader's own active runs, running first. */
+export const myRunsNow = computed(() =>
+  myRuns(buckets.value, forecasts.value, jobsByRun.value, settings.value.login),
+)
 
 export const totalQueued = computed(() =>
   buckets.value.reduce((sum, b) => sum + b.queued.length, 0),

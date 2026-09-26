@@ -1,6 +1,7 @@
 import { repoKey, type RepoRef } from '../github/types'
 import { settings } from '../state/settings'
-import { buckets, filter, stale } from '../state/store'
+import { NO_FILTER } from '../model/filter'
+import { buckets, filter, myRunsNow, stale } from '../state/store'
 import { seriesClass } from './palette'
 
 /**
@@ -18,9 +19,10 @@ export function FilterChips() {
     active.has(repoKey(r).toLowerCase()),
   )
   const anyStale = stale.value.length > 0
+  const mineCount = myRunsNow.value.length
   const current = filter.value
 
-  if (repos.length < 2 && !anyStale) return null
+  if (repos.length < 2 && !anyStale && mineCount === 0) return null
 
   const chip = (on: boolean, label: preact.ComponentChildren, onClick: () => void) => (
     <button class={`chip${on ? ' on' : ''}`} aria-pressed={on} onClick={onClick}>
@@ -30,9 +32,19 @@ export function FilterChips() {
 
   return (
     <div class="chips" role="group" aria-label="Show">
-      {chip(current.repo === null && !current.staleOnly, 'All', () => {
-        filter.value = { repo: null, staleOnly: false }
+      {chip(current.repo === null && !current.staleOnly && !current.mine, 'All', () => {
+        filter.value = NO_FILTER
       })}
+      {mineCount > 0 &&
+        chip(
+          current.mine,
+          <>
+            Mine <span class="chip-count">{mineCount}</span>
+          </>,
+          () => {
+            filter.value = { ...NO_FILTER, mine: !current.mine }
+          },
+        )}
       {repos.map((repo) => {
         const key = repoKey(repo)
         return chip(
@@ -42,13 +54,13 @@ export function FilterChips() {
             {repo.name}
           </>,
           () => {
-            filter.value = { repo: current.repo === key ? null : key, staleOnly: false }
+            filter.value = { ...NO_FILTER, repo: current.repo === key ? null : key }
           },
         )
       })}
       {anyStale &&
         chip(current.staleOnly, 'Superseded', () => {
-          filter.value = { repo: null, staleOnly: !current.staleOnly }
+          filter.value = { ...NO_FILTER, staleOnly: !current.staleOnly }
         })}
     </div>
   )

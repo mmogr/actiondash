@@ -1,4 +1,5 @@
 import { useEffect } from 'preact/hooks'
+import { getUser } from '../github/api'
 import { refreshNow, startPolling, stopPolling } from '../github/poller'
 import { distinctRuns } from '../model/queue'
 import { settings, updateSettings } from '../state/settings'
@@ -30,6 +31,7 @@ import { TabBar } from './TabBar'
 import { Trends } from './trends/Trends'
 import { AlertsView } from './AlertsView'
 import { InstallBanner } from './InstallBanner'
+import { YourRuns } from './YourRuns'
 
 export function Dashboard() {
   useEffect(() => {
@@ -51,6 +53,13 @@ export function Dashboard() {
     window.addEventListener('offline', goOffline)
     document.addEventListener('visibilitychange', onVisible)
     startPolling()
+    // Set up before the login was kept: one request, once, to learn whose
+    // runs are whose. Nothing depends on it, so a failure is left alone.
+    if (settings.value.token && settings.value.login === null) {
+      getUser()
+        .then((user) => updateSettings({ login: user.login }))
+        .catch(() => {})
+    }
     return () => {
       stopPolling()
       window.removeEventListener('online', goOnline)
@@ -177,6 +186,7 @@ export function Dashboard() {
           {!nothingActive ? (
             <>
               <InstallBanner />
+              <YourRuns />
               <FilterChips />
               {list.map((bucket, i) => (
                 <RunnerClassSection key={bucket.cls} bucket={bucket} headline={i === 0} />

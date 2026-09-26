@@ -2,7 +2,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { clearCache } from '../src/github/client'
 import { clearJobCache, pollOnce, refreshNow, startPolling, stopPolling } from '../src/github/poller'
 import type { RunWithRepo, WorkflowJob } from '../src/github/types'
-import { settings } from '../src/state/settings'
+import { DEFAULT_SETTINGS, settings } from '../src/state/settings'
 import { clearDurations, durations } from '../src/state/durations'
 import { clearHistory, history } from '../src/state/history'
 import { durationKey, typicalSeconds } from '../src/model/durations'
@@ -94,15 +94,7 @@ beforeEach(() => {
       consoleOutput.push(args)
     })
   }
-  settings.value = {
-    token: TOKEN,
-    repos: [REPO],
-    plan: 'pro',
-    pollIntervalMs: 15_000,
-    observedMax: {},
-    alerts: { slotFreed: false, jobStarted: false, superseded: false },
-    installDismissed: false,
-  }
+  settings.value = { ...DEFAULT_SETTINGS, token: TOKEN, repos: [REPO], plan: 'pro' }
 })
 
 afterEach(() => {
