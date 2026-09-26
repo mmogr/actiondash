@@ -79,6 +79,20 @@ describe('stored observations', () => {
   })
 })
 
+describe('stored alert choices', () => {
+  it('keeps each choice only when it was set on, so older settings start with every alert off', async () => {
+    const { mod } = await loadWith({ alerts: { myFinished: true, slotFreed: 'yes' } })
+
+    expect(mod.settings.value.alerts).toEqual({
+      myStarted: false,
+      myFinished: true,
+      slotFreed: false,
+      jobStarted: false,
+      superseded: false,
+    })
+  })
+})
+
 describe('a rejected token', () => {
   it('is remembered as a time, and anything else reads as not rejected', async () => {
     expect((await loadWith({ tokenRejectedAt: 1_789_000_000_000 })).mod.settings.value.tokenRejectedAt).toBe(

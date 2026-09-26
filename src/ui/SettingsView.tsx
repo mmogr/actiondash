@@ -132,7 +132,7 @@ export function SettingsView() {
       <div class="card">
         <h2>Alerts</h2>
         <p>
-          Be told when a slot frees, a queued job starts or a run is superseded, while the page is
+          Be told when your own run starts or finishes, or about the whole pool, while the page is
           open.
         </p>
         <div class="field-row">

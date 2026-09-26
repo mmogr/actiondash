@@ -19,6 +19,13 @@ export function parseHash(hash: string): Route | null {
   return (TABS as readonly string[]).includes(h) ? { tab: h as Tab } : null
 }
 
+/** Reads a message from the service worker asking to show a run, or null. */
+export function parseShowRun(data: unknown): number | null {
+  if (typeof data !== 'object' || data === null) return null
+  const { type, runId } = data as { type?: unknown; runId?: unknown }
+  return type === 'show-run' && typeof runId === 'number' && Number.isSafeInteger(runId) ? runId : null
+}
+
 /** Switches to Now, clears any narrowing that could hide the run, and asks for it. */
 export function showRun(id: number): void {
   batch(() => {
