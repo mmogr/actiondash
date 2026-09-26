@@ -1,5 +1,5 @@
 import { useEffect } from 'preact/hooks'
-import { startPolling, stopPolling } from '../github/poller'
+import { refreshNow, startPolling, stopPolling } from '../github/poller'
 import { distinctRuns } from '../model/queue'
 import { settings, updateSettings } from '../state/settings'
 import { PLANS } from '../model/plans'
@@ -7,19 +7,21 @@ import { adviceFor } from '../model/advice'
 import {
   actionError,
   buckets,
+  dataHealth,
   fatalError,
-  firstLoadDone,
-  lastPoll,
+  nextPollAt,
   observationDismissed,
-  polling,
+  online,
   pollProgress,
-  rateLimited,
+  repoProblems,
   stale,
   tab,
   totalQueued,
   totalRunning,
-  warning,
 } from '../state/store'
+import { CantCheck } from './CantCheck'
+import { HealthStrip } from './HealthStrip'
+import { StatusPill } from './StatusPill'
 import { RunnerClassSection } from './RunnerClassSection'
 import { FilterChips } from './FilterChips'
 import { Footer } from './Footer'
@@ -31,15 +33,38 @@ import { InstallBanner } from './InstallBanner'
 
 export function Dashboard() {
   useEffect(() => {
+    const goOnline = () => {
+      online.value = true
+      refreshNow({ force: true })
+    }
+    const goOffline = () => {
+      online.value = false
+    }
+    // A hidden tab's timers are throttled, so a poll can be long overdue by
+    // the time the reader comes back. Only then is it brought forward.
+    const onVisible = () => {
+      const due = nextPollAt.peek()
+      if (document.visibilityState === 'visible' && due !== null && due < Date.now()) refreshNow()
+    }
+    online.value = navigator.onLine !== false
+    window.addEventListener('online', goOnline)
+    window.addEventListener('offline', goOffline)
+    document.addEventListener('visibilitychange', onVisible)
     startPolling()
-    return stopPolling
+    return () => {
+      stopPolling()
+      window.removeEventListener('online', goOnline)
+      window.removeEventListener('offline', goOffline)
+      document.removeEventListener('visibilitychange', onVisible)
+    }
   }, [])
 
-  const loading = !firstLoadDone.value
+  const health = dataHealth.value
   const progress = pollProgress.value
-  const limitedUntil = rateLimited.value
   const list = buckets.value
-  const nothingActive = !loading && totalRunning.value === 0 && totalQueued.value === 0
+  const nothingActive = totalRunning.value === 0 && totalQueued.value === 0
+  const cantCheck = health === 'offline' || health === 'limited' || health === 'unreachable'
+  const answered = settings.value.repos.length - repoProblems.value.size
 
   const observed = settings.value.observedMax
   const plan = PLANS[settings.value.plan]
@@ -55,10 +80,7 @@ export function Dashboard() {
           actiondash <span>/ {repoCount} repos</span>
         </div>
         <div class="topbar-meta">
-          <span>
-            <span class={`dot${polling.value ? ' live' : ''}`} />
-            {polling.value ? 'polling' : 'idle'}
-          </span>
+          <StatusPill />
           <span>{totalRunning.value} running</span>
           <span>{totalQueued.value} queued</span>
           {staleRunCount > 0 && (
@@ -68,14 +90,6 @@ export function Dashboard() {
           )}
         </div>
       </div>
-
-      {limitedUntil !== null && (
-        <div class="banner error">
-          The hourly request allowance is used up. Polling resumes when it refills at{' '}
-          {new Date(limitedUntil * 1000).toLocaleTimeString()}. This token is shared with anything
-          else that uses it, such as the gh command line.
-        </div>
-      )}
 
       {advice.kind === 'suggest' && (
         <div class="banner warn">
@@ -130,22 +144,13 @@ export function Dashboard() {
         </div>
       )}
 
-      {warning.value && (
-        <div class="banner warn" role="status">
-          <span>{warning.value}</span>
-          <button class="link" onClick={() => (warning.value = null)}>
-            dismiss
-          </button>
-        </div>
-      )}
-
       {tab.value === 'settings' ? (
         <SettingsView />
       ) : tab.value === 'trends' ? (
         <Trends />
       ) : tab.value === 'alerts' ? (
         <AlertsView />
-      ) : loading ? (
+      ) : health === 'none' ? (
         <section class="section">
           <div class="section-head">
             <div class="section-title">Loading</div>
@@ -165,27 +170,44 @@ export function Dashboard() {
             Checking each repository for running and queued jobs. Rows appear as they arrive.
           </div>
         </section>
-      ) : nothingActive ? (
-        <section class="section">
-          <div class="section-head">
-            <div class="section-title">All clear</div>
-            <div class="section-stats">
-              <span>{repoCount} repositories checked</span>
-            </div>
-          </div>
-          <div class="empty">
-            No jobs are running or queued in any watched repository. Nothing is competing for a
-            concurrency slot right now.
-            {lastPoll.value ? ` Last checked ${new Date(lastPoll.value).toLocaleTimeString()}.` : ''}
-          </div>
-        </section>
       ) : (
         <>
-          <InstallBanner />
-          <FilterChips />
-          {list.map((bucket, i) => (
-            <RunnerClassSection key={bucket.cls} bucket={bucket} headline={i === 0} />
-          ))}
+          {cantCheck && <CantCheck />}
+          {health === 'partial' && <HealthStrip />}
+          {!nothingActive ? (
+            <>
+              <InstallBanner />
+              <FilterChips />
+              {list.map((bucket, i) => (
+                <RunnerClassSection key={bucket.cls} bucket={bucket} headline={i === 0} />
+              ))}
+            </>
+          ) : health === 'ok' ? (
+            // The only place the page says the pools are clear, and only when
+            // every repository answered.
+            <section class="section">
+              <div class="section-head">
+                <div class="section-title">All clear</div>
+                <div class="section-stats">
+                  <span>All {repoCount} repositories checked</span>
+                </div>
+              </div>
+              <div class="empty">
+                No jobs are running or queued in any watched repository. Nothing is competing for
+                a concurrency slot right now.
+              </div>
+            </section>
+          ) : health === 'partial' ? (
+            <section class="section">
+              <div class="section-head">
+                <div class="section-title">Nothing running or queued</div>
+              </div>
+              <div class="empty">
+                Nothing is running or queued in the {answered} repositor
+                {answered === 1 ? 'y' : 'ies'} that answered. The others could not be checked.
+              </div>
+            </section>
+          ) : null}
         </>
       )}
 

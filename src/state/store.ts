@@ -4,6 +4,8 @@ import type { RateLimit } from '../github/client'
 import { buildBuckets, staleJobs } from '../model/queue'
 import { forecastBucket, insightFor, type BucketForecast, type Insight } from '../model/forecast'
 import { NO_FILTER, type ViewFilter } from '../model/filter'
+import { dataHealthOf, isComplete, type RepoProblem } from '../model/health'
+import type { PacingReason } from '../model/status'
 import { PLANS } from '../model/plans'
 import { settings } from './settings'
 import { durations } from './durations'
@@ -38,6 +40,22 @@ export const rateLimit = signal<RateLimit | null>(null)
 export const pollCost = signal(0)
 /** The delay actually being used, which the budget may stretch past the setting. */
 export const effectiveIntervalMs = signal(0)
+/** Why that delay is what it is. */
+export const pacingReason = signal<PacingReason>('floor')
+/** When the next poll is due, or null while polling is stopped. */
+export const nextPollAt = signal<number | null>(null)
+
+/** False while the browser reports no network. Nothing is asked of GitHub then. */
+export const online = signal(typeof navigator === 'undefined' || navigator.onLine !== false)
+
+/** Repositories that did not answer the last poll, by owner/name. */
+export const repoProblems = signal<Map<string, RepoProblem>>(new Map())
+/**
+ * Runs shown from an older answer than the last poll's, with when that answer
+ * was read. A repository that stops answering keeps its last good runs for a
+ * while, marked, rather than having them vanish as if they had finished.
+ */
+export const runsAsOf = signal<Map<number, number>>(new Map())
 
 /**
  * Requests per hour at the current cost and cadence. This is the number that
@@ -51,8 +69,6 @@ export const projectedHourlyCost = computed(() => {
 
 /** Fatal, blocks the view. */
 export const fatalError = signal<string | null>(null)
-/** Transient, shown as a dismissible banner. */
-export const warning = signal<string | null>(null)
 /**
  * A cancel or re-run the reader asked for that did not go through. Kept apart
  * from the poll's own messages so the next poll cannot wipe it before it is read.
@@ -78,6 +94,34 @@ export const buckets = computed(() =>
 )
 
 export const stale = computed(() => staleJobs(buckets.value))
+
+/** Whether the page is showing what GitHub says now, and if not, why not. */
+export const dataHealth = computed(() =>
+  dataHealthOf({
+    online: online.value,
+    limited: rateLimited.value !== null,
+    loaded: firstLoadDone.value,
+    repoCount: settings.value.repos.length,
+    problems: repoProblems.value,
+  }),
+)
+
+/** True when the last poll saw every repository it could see. */
+export const pollComplete = computed(() => {
+  const health = dataHealth.value
+  if (health === 'ok') return true
+  return health === 'partial' && isComplete(settings.value.repos.length, repoProblems.value)
+})
+
+/**
+ * When every row on the page was last read, while nothing is being read at
+ * all: offline, or out of allowance. A repository that is asked but does not
+ * answer marks its own rows instead; see runsAsOf.
+ */
+export const frozenAt = computed(() => {
+  const health = dataHealth.value
+  return health === 'offline' || health === 'limited' ? lastPoll.value : null
+})
 
 /**
  * Forecasts and the insight, by runner class. Recomputed as the clock ticks so
@@ -109,11 +153,12 @@ export function resetData(): void {
   rateLimit.value = null
   pollCost.value = 0
   effectiveIntervalMs.value = 0
+  repoProblems.value = new Map()
+  runsAsOf.value = new Map()
   firstLoadDone.value = false
   pollProgress.value = { done: 0, total: 0 }
   rateLimited.value = null
   fatalError.value = null
-  warning.value = null
   actionError.value = null
   observationDismissed.value = false
   trendsRange.value = 1

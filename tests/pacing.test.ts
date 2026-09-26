@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { computeInterval, type PacingInput } from '../src/github/poller'
+import { computeInterval, computePacing, type PacingInput } from '../src/github/poller'
 
 const NOW = 1_789_000_000_000
 const RESET = NOW / 1000 + 3600 // a full hour left in the window
@@ -84,5 +84,21 @@ describe('computeInterval', () => {
       input({ remaining: 200, billedPerPoll: 10, resetEpochSec: NOW / 1000 + 120 }),
     )
     expect(late).toBeLessThan(early)
+  })
+})
+
+describe('computePacing', () => {
+  it('says why the next poll is as far away as it is', () => {
+    expect(computePacing(input({ billedPerPoll: 2 })).reason).toBe('floor')
+    expect(computePacing(input({ billedPerPoll: 24 })).reason).toBe('budget')
+    expect(computePacing(input({ retryAfterMs: 60_000 })).reason).toBe('retry-after')
+    expect(computePacing(input({ remaining: 0 })).reason).toBe('refill')
+    expect(computePacing(input({ remaining: null })).reason).toBe('floor')
+  })
+
+  it('agrees with computeInterval on the delay', () => {
+    for (const over of [{ billedPerPoll: 24 }, { remaining: 0 }, { retryAfterMs: 5_000 }]) {
+      expect(computePacing(input(over)).ms).toBe(computeInterval(input(over)))
+    }
   })
 })

@@ -1,7 +1,7 @@
 import { useState } from 'preact/hooks'
 import type { BucketForecast } from '../model/forecast'
 import type { RunGroup as Group } from '../model/queue'
-import { now } from '../state/store'
+import { frozenAt, now, runsAsOf } from '../state/store'
 import { age, duration, shortClock, shortSha } from './format'
 import { seriesClass } from './palette'
 import { useCancelRun } from './useCancelRun'
@@ -27,6 +27,9 @@ export function RunGroup({ group, kind, defaultOpen, forecast }: Props) {
   const first = jobs[0]
   const last = jobs[jobs.length - 1]
   const single = jobs.length === 1
+  // Shown from an older answer: its repository did not answer this time.
+  const asOf = runsAsOf.value.get(run.id) ?? null
+  const behind = asOf !== null || frozenAt.value !== null
 
   const countLabel = single ? first?.entry.job.name : `${jobs.length} jobs`
   const positions =
@@ -44,7 +47,7 @@ export function RunGroup({ group, kind, defaultOpen, forecast }: Props) {
       : null
 
   return (
-    <div class={`group${supersededBy ? ' is-stale' : ''}`}>
+    <div class={`group${supersededBy ? ' is-stale' : ''}${behind ? ' is-behind' : ''}`}>
       <div class="group-head">
         <button
           class="group-toggle"
@@ -65,6 +68,7 @@ export function RunGroup({ group, kind, defaultOpen, forecast }: Props) {
               </a>
             </span>
             {supersededBy && <span class="badge">STALE</span>}
+            {asOf !== null && <span class="asof">as of {shortClock(asOf)}</span>}
             <span class="group-age">{age(group.since, nowMs)}</span>
           </div>
           <div class="group-meta" title={`${countLabel} · ${run.head_branch ?? '-'} · ${describe(group)}`}>

@@ -85,7 +85,8 @@ export function SettingsView() {
         <h2>Polling</h2>
         <p>
           How often to ask GitHub. The interval stretches on its own when the hourly request
-          allowance would not last until it refills.
+          allowance would not last until it refills. To check now, select the status at the top of
+          the page.
         </p>
         <div class="field-row">
           <label>
@@ -104,7 +105,6 @@ export function SettingsView() {
               ))}
             </select>
           </label>
-          <button onClick={() => void pollOnce()}>Refresh now</button>
         </div>
       </div>
 
