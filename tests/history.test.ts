@@ -7,6 +7,7 @@ import {
   KEEP_DAYS,
   MAX_SAMPLES,
   record,
+  recordedPools,
   repoShare,
   sanitiseHistory,
   slice,
@@ -137,6 +138,19 @@ describe('selectors', () => {
     s = poll(s, macos(five.slice(0, 2)), T0 + 9 * INTERVAL)
 
     expect(atCapacityMs(s.samples, 'macos', 5)).toBe(4 * INTERVAL)
+  })
+
+  it('lists the pools anything was recorded in, in the usual order', () => {
+    const state: HistoryState = {
+      samples: [
+        { t: 1, until: 2, inUse: { linux: 3 }, queued: {} },
+        { t: 3, until: 4, inUse: {}, queued: { macos: 2, windows: 0 } },
+      ],
+      days: {},
+    }
+
+    expect(recordedPools(state)).toEqual(['macos', 'linux'])
+    expect(recordedPools(EMPTY_HISTORY)).toEqual([])
   })
 })
 

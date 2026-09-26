@@ -53,6 +53,18 @@ describe('recordCompleted', () => {
     expect(recordCompleted({}, REPO, jobs, NOW)).toEqual({})
   })
 
+  it('learns only from successes, so a job that fails fast cannot make it look quick', () => {
+    const jobs = [
+      done(1, 'test', 20),
+      { ...done(2, 'test', 2), conclusion: 'failure' },
+      { ...done(3, 'test', 1), conclusion: 'timed_out' },
+    ]
+
+    const map = recordCompleted({}, REPO, jobs, NOW)
+
+    expect(map[durationKey(REPO, 'test')]?.secs).toEqual([1200])
+  })
+
   it('keeps only the most recent runs of a job', () => {
     let map: DurationMap = {}
     for (let i = 1; i <= KEEP + 3; i++) map = recordCompleted(map, REPO, [done(i, 'build', i)], NOW)

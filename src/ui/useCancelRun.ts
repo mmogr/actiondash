@@ -1,8 +1,9 @@
-import { useState } from 'preact/hooks'
+import { useEffect, useRef, useState } from 'preact/hooks'
 import type { RepoRef, RunWithRepo } from '../github/types'
 import { cancelRun } from '../github/api'
 import { pollOnce } from '../github/poller'
-import { warning } from '../state/store'
+import { actionError } from '../state/store'
+import { useConfirm } from './useConfirm'
 
 /**
  * A two-step cancel. The first tap only asks; the second one acts. On a phone
@@ -10,27 +11,28 @@ import { warning } from '../state/store'
  * un-cancelled.
  */
 export function useCancelRun(repo: RepoRef, run: RunWithRepo) {
-  const [confirming, setConfirming] = useState(false)
+  const confirm = useConfirm()
   const [cancelling, setCancelling] = useState(false)
+  const wasCancelling = useRef(false)
 
-  async function confirm() {
-    setConfirming(false)
+  // The confirm row, and the button that had focus, are gone by now.
+  useEffect(() => {
+    if (wasCancelling.current && !cancelling) confirm.refocus()
+    wasCancelling.current = cancelling
+  }, [cancelling])
+
+  async function act() {
+    confirm.done()
     setCancelling(true)
     try {
       await cancelRun(repo, run.id)
       await pollOnce()
     } catch (err) {
-      warning.value = `Could not cancel run ${run.run_number}: ${(err as Error).message}`
+      actionError.value = `Could not cancel ${repo.name} run #${run.run_number}: ${(err as Error).message}`
     } finally {
       setCancelling(false)
     }
   }
 
-  return {
-    confirming,
-    cancelling,
-    ask: () => setConfirming(true),
-    keep: () => setConfirming(false),
-    confirm,
-  }
+  return { ...confirm, cancelling, confirm: act }
 }

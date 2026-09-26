@@ -1,4 +1,4 @@
-import { durationKey, type DurationMap } from '../../model/durations'
+import { durationKey, KEEP, type DurationMap } from '../../model/durations'
 import type { BucketForecast } from '../../model/forecast'
 import type { ClassBucket } from '../../model/queue'
 import { seriesClass } from '../palette'
@@ -6,7 +6,7 @@ import { duration } from '../format'
 
 /**
  * For each job the reader is likely to care about right now, the last few
- * durations as dots on one axis, with today's run marked. A run sitting past
+ * successful durations as dots on one axis, with the current run marked. A run sitting past
  * every previous one is either hung or the runner is slow, and that is worth
  * a nudge before the forecast quietly slides.
  */
@@ -71,7 +71,7 @@ export function DurationStrips({ durations, buckets, forecasts, nowMs }: Props) 
       <div class="section-head">
         <div class="section-title">How long jobs take</div>
         <div class="section-stats">
-          <span>last {shown.length > 0 ? '10 runs' : 'runs'} · today marked</span>
+          <span>up to {KEEP} successful runs · current run marked</span>
         </div>
       </div>
       {shown.length === 0 ? (
@@ -102,7 +102,7 @@ export function DurationStrips({ durations, buckets, forecasts, nowMs }: Props) 
                 <svg
                   viewBox={`0 0 ${WIDTH} ${HEIGHT}`}
                   role="img"
-                  aria-label={`${s.name} usually takes ${duration(lo)} to ${duration(hi)}${label ? `, today ${label}` : ''}`}
+                  aria-label={`${s.name} usually takes ${duration(lo)} to ${duration(hi)}${label ? `, this run ${label}` : ''}`}
                 >
                   <line class="strip-axis" x1="4" x2={AXIS_END} y1="19" y2="19" />
                   {s.secs.map((sec, i) => (

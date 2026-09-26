@@ -1,5 +1,6 @@
 import { repoKey, type RunnerClass } from '../github/types'
 import type { ClassBucket } from './queue'
+import { RUNNER_CLASS_ORDER } from './runnerClass'
 
 /**
  * What the pools looked like over time, as the dashboard saw them. Built from
@@ -200,4 +201,17 @@ export function sanitiseHistory(raw: unknown): HistoryState {
     }
   }
   return { samples: samples.slice(-MAX_SAMPLES), days }
+}
+
+/**
+ * The pools anything was ever recorded in, in the dashboard's usual order.
+ * Trends offers a choice only between these, so it never draws an empty chart.
+ */
+export function recordedPools(state: HistoryState): RunnerClass[] {
+  const seen = new Set<RunnerClass>()
+  for (const s of state.samples) {
+    for (const [cls, n] of Object.entries(s.inUse)) if (n) seen.add(cls as RunnerClass)
+    for (const [cls, n] of Object.entries(s.queued)) if (n) seen.add(cls as RunnerClass)
+  }
+  return RUNNER_CLASS_ORDER.filter((cls) => seen.has(cls))
 }

@@ -7,7 +7,7 @@ import { InsightCard } from './InsightCard'
 import { RunGroup } from './RunGroup'
 import { SlotLanes } from './SlotLanes'
 import { SummaryTiles } from './SummaryTiles'
-import { meanAge } from './format'
+import { oldestWait } from './format'
 
 interface Props {
   bucket: ClassBucket
@@ -21,7 +21,7 @@ export function RunnerClassSection({ bucket, headline }: Props) {
   const cap = bucket.cap
   const pct = cap ? Math.min(100, (used / cap) * 100) : 0
   const atCapacity = cap !== null && used >= cap
-  const wait = meanAge(bucket.queued, nowMs)
+  const wait = oldestWait(bucket.queued, nowMs)
   const outlook = forecasts.value.get(bucket.cls)
   const forecast = outlook?.forecast
   const insight = outlook?.insight ?? null
@@ -62,7 +62,7 @@ export function RunnerClassSection({ bucket, headline }: Props) {
           <span>
             <b>{bucket.queued.length}</b> queued
           </span>
-          {wait && <span>~{wait} wait</span>}
+          {wait && <span>oldest waiting {wait}</span>}
         </div>
       </div>
 

@@ -2,9 +2,9 @@ import { useState } from 'preact/hooks'
 import { PLANS, type PlanId } from '../model/plans'
 import { distinctRuns } from '../model/queue'
 import { cancelRun } from '../github/api'
-import { clearJobCache, pollOnce, stopPolling } from '../github/poller'
+import { clearJobCache, pollOnce, reschedule, stopPolling } from '../github/poller'
 import { forgetEverything, settings, updateSettings } from '../state/settings'
-import { resetData, stale, tab, view, warning } from '../state/store'
+import { actionError, resetData, stale, tab, view } from '../state/store'
 
 const INTERVALS = [
   { ms: 10_000, label: '10s' },
@@ -36,7 +36,9 @@ export function SettingsView() {
       }
     }
     setCancelling(false)
-    warning.value = failures.length > 0 ? `Some cancels failed. ${failures.join(' ')}` : null
+    if (failures.length > 0) {
+      actionError.value = `${failures.length} of ${count} cancels failed. ${failures.join(' ')}`
+    }
     await pollOnce()
   }
 
@@ -90,9 +92,10 @@ export function SettingsView() {
             Refresh{' '}
             <select
               value={String(settings.value.pollIntervalMs)}
-              onChange={(e) =>
+              onChange={(e) => {
                 updateSettings({ pollIntervalMs: Number((e.target as HTMLSelectElement).value) })
-              }
+                reschedule()
+              }}
             >
               {INTERVALS.map((i) => (
                 <option key={i.ms} value={String(i.ms)}>

@@ -19,12 +19,14 @@ export function shortSha(sha: string): string {
   return sha.slice(0, 7)
 }
 
-/** Mean wait of a set of jobs, formatted, or null when the set is empty. */
-export function meanAge(jobs: readonly DashJob[], nowMs: number): string | null {
-  const timed = jobs.filter((j) => j.since > 0)
-  if (timed.length === 0) return null
-  const total = timed.reduce((sum, j) => sum + (nowMs - j.since), 0)
-  return age(nowMs - total / timed.length, nowMs)
+/**
+ * How long the longest-waiting job has waited, formatted, or null when none
+ * has a start time. A fact about the past, so it never reads as a forecast.
+ */
+export function oldestWait(jobs: readonly DashJob[], nowMs: number): string | null {
+  let oldest = Infinity
+  for (const j of jobs) if (j.since > 0 && j.since < oldest) oldest = j.since
+  return oldest === Infinity ? null : age(oldest, nowMs)
 }
 
 export function clockTime(ms: number): string {

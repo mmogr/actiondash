@@ -41,11 +41,13 @@ function seconds(job: WorkflowJob): number | null {
 }
 
 /**
- * Folds every completed job in the list into the map. Returns the same map
+ * Folds every successful job in the list into the map. Returns the same map
  * when nothing new was learned, so callers can skip a storage write.
  *
- * Only a job that ran to a conclusion teaches anything: a cancelled job's
- * duration is how long someone waited before giving up.
+ * Only a success says how long the job takes. A cancelled job's duration is
+ * how long someone waited before giving up, and a failed one stopped wherever
+ * it broke: a test that fails in two minutes would drag "usually" down and
+ * make every forecast behind it optimistic.
  */
 export function recordCompleted(
   map: DurationMap,
@@ -55,7 +57,7 @@ export function recordCompleted(
 ): DurationMap {
   let next: DurationMap | null = null
   for (const job of jobs) {
-    if (job.status !== 'completed' || job.conclusion === 'cancelled' || job.conclusion === 'skipped') continue
+    if (job.status !== 'completed' || job.conclusion !== 'success') continue
     const secs = seconds(job)
     if (secs === null) continue
     const key = durationKey(repo, job.name)

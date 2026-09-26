@@ -1,5 +1,5 @@
 import { computed, signal } from '@preact/signals'
-import type { RunWithRepo, WorkflowJob } from '../github/types'
+import type { RunnerClass, RunWithRepo, WorkflowJob } from '../github/types'
 import type { RateLimit } from '../github/client'
 import { buildBuckets, staleJobs } from '../model/queue'
 import { forecastBucket, insightFor, type BucketForecast, type Insight } from '../model/forecast'
@@ -54,11 +54,21 @@ export const fatalError = signal<string | null>(null)
 /** Transient, shown as a dismissible banner. */
 export const warning = signal<string | null>(null)
 /**
+ * A cancel or re-run the reader asked for that did not go through. Kept apart
+ * from the poll's own messages so the next poll cannot wipe it before it is read.
+ */
+export const actionError = signal<string | null>(null)
+/**
  * Set when the reader dismisses the suspect-observation banner. Session-only on
  * purpose: the underlying figure rebuilds from the next few polls, so silencing
  * it for good belongs to clearing the observation, not to hiding the notice.
  */
 export const observationDismissed = signal(false)
+
+/** Trends range, as an index into its range list, kept across tab switches. */
+export const trendsRange = signal(1)
+/** The pool Trends is drawing, or null for the scarce one. */
+export const trendsPool = signal<RunnerClass | null>(null)
 
 /** Ticks once a second so relative ages re-render without a re-poll. */
 export const now = signal(Date.now())
@@ -104,7 +114,10 @@ export function resetData(): void {
   rateLimited.value = null
   fatalError.value = null
   warning.value = null
+  actionError.value = null
   observationDismissed.value = false
+  trendsRange.value = 1
+  trendsPool.value = null
   tab.value = 'now'
   filter.value = NO_FILTER
 }

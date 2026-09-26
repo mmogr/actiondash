@@ -50,7 +50,7 @@ export function RunGroup({ group, kind, defaultOpen, forecast }: Props) {
           class="group-toggle"
           onClick={() => setOpen(!open)}
           aria-expanded={open}
-          aria-label={`${open ? 'Collapse' : 'Expand'} run ${run.run_number}`}
+          aria-label={`Jobs of ${group.repo.name} #${run.run_number}`}
         >
           {open ? '▾' : '▸'}
         </button>
@@ -89,9 +89,11 @@ export function RunGroup({ group, kind, defaultOpen, forecast }: Props) {
           <span class="group-cancelling">cancelling…</span>
         ) : (
           <button
+            ref={cancel.askRef}
             class={supersededBy ? 'danger' : ''}
-            onClick={cancel.ask}
-            disabled={cancel.confirming}
+            onClick={cancel.confirming ? cancel.keep : cancel.ask}
+            aria-expanded={cancel.confirming}
+            aria-label={`Cancel ${group.repo.name} run #${run.run_number}${single ? '' : ` (${jobs.length} jobs)`}`}
             title="Cancel this workflow run"
           >
             cancel
@@ -100,12 +102,19 @@ export function RunGroup({ group, kind, defaultOpen, forecast }: Props) {
       </div>
 
       {cancel.confirming && (
-        <div class="group-confirm" role="group" aria-label="Confirm cancel">
+        <div
+          class="group-confirm"
+          role="group"
+          aria-label="Confirm cancel"
+          onKeyDown={cancel.onKeyDown}
+        >
           <span>
             Cancel run #{run.run_number}
             {single ? '' : ` and its ${jobs.length} jobs`}?
           </span>
-          <button onClick={cancel.keep}>Keep</button>
+          <button ref={cancel.keepRef} onClick={cancel.keep}>
+            Keep
+          </button>
           <button class="danger solid" onClick={() => void cancel.confirm()}>
             Yes, cancel
           </button>

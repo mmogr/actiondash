@@ -18,7 +18,8 @@ export function InsightCard({ insight, nowMs }: Props) {
   const startsNow = insight.startsAtIfCancelled <= nowMs + 30_000
 
   return (
-    <div class="insight" role="status">
+    // Not a live region: the countdown in this text changes every second.
+    <div class="insight">
       <svg viewBox="0 0 24 24" aria-hidden="true">
         <circle cx="12" cy="12" r="9" />
         <path d="M12 8v4" />
@@ -35,8 +36,10 @@ export function InsightCard({ insight, nowMs }: Props) {
         {duration(saving / 1000)} sooner.
       </div>
       {cancel.confirming ? (
-        <div class="insight-actions">
-          <button onClick={cancel.keep}>Keep</button>
+        <div class="insight-actions" role="group" aria-label="Confirm cancel" onKeyDown={cancel.onKeyDown}>
+          <button ref={cancel.keepRef} onClick={cancel.keep}>
+            Keep
+          </button>
           <button class="danger solid" onClick={() => void cancel.confirm()}>
             Yes, cancel #{insight.run.run_number}
           </button>
@@ -44,7 +47,7 @@ export function InsightCard({ insight, nowMs }: Props) {
       ) : cancel.cancelling ? (
         <span class="group-cancelling">cancelling…</span>
       ) : (
-        <button class="danger" onClick={cancel.ask}>
+        <button ref={cancel.askRef} class="danger" onClick={cancel.ask}>
           Cancel #{insight.run.run_number}
         </button>
       )}

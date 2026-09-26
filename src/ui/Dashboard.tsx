@@ -5,6 +5,7 @@ import { settings, updateSettings } from '../state/settings'
 import { PLANS } from '../model/plans'
 import { adviceFor } from '../model/advice'
 import {
+  actionError,
   buckets,
   fatalError,
   firstLoadDone,
@@ -114,10 +115,23 @@ export function Dashboard() {
         </div>
       )}
 
-      {fatalError.value && <div class="banner error">{fatalError.value}</div>}
+      {fatalError.value && (
+        <div class="banner error" role="alert">
+          {fatalError.value}
+        </div>
+      )}
+
+      {actionError.value && (
+        <div class="banner error" role="alert">
+          <span>{actionError.value}</span>
+          <button class="link" onClick={() => (actionError.value = null)}>
+            dismiss
+          </button>
+        </div>
+      )}
 
       {warning.value && (
-        <div class="banner warn">
+        <div class="banner warn" role="status">
           <span>{warning.value}</span>
           <button class="link" onClick={() => (warning.value = null)}>
             dismiss
