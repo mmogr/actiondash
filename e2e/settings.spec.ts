@@ -96,6 +96,9 @@ test('forgetting removes the token and every stored figure, and nothing is asked
   await github.expectNoNewCalls(async () => {
     await confirm.getByRole('button', { name: 'Yes, forget' }).click()
     await expect(page.getByLabel('Personal access token')).toBeVisible()
+    // The button that held focus went with the dashboard, so focus starts
+    // again at the top of setup rather than on nothing.
+    await expect(page.getByRole('heading', { name: '1. Personal access token' })).toBeFocused()
     for (const key of Object.values(KEYS)) expect(await stored(page, key), key).toBeNull()
     // Long enough for several polls, had polling carried on.
     await page.clock.fastForward(60_000)

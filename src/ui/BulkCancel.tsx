@@ -20,17 +20,25 @@ function slotsText(holding: Partial<Record<RunnerClass, number>>): string | null
  * already been replaced by a newer commit on the same branch.
  */
 export function BulkCancel() {
-  const confirm = useConfirm()
   const [progress, setProgress] = useState<{ done: number; of: number } | null>(null)
+  const confirm = useConfirm(progress !== null)
   const nowMs = now.value
   const requested = cancelRequested.value
   const jobs = stale.value.filter((j) => !isCancelRequested(requested, j.run.id, nowMs))
   const targets = distinctRuns(jobs)
+  const asked = distinctRuns(stale.value).length - targets.length
 
-  if (progress !== null) {
+  const status =
+    progress !== null
+      ? `Cancelling ${progress.done} of ${progress.of}…`
+      : targets.length === 0 && asked > 0
+        ? `Cancel requested for ${asked} superseded run${asked === 1 ? '' : 's'}.`
+        : null
+  // One node for every status, so focus survives the text changing.
+  if (status !== null) {
     return (
-      <span class="bulk-progress" role="status">
-        Cancelling {progress.done} of {progress.of}…
+      <span ref={confirm.statusRef} class="bulk-progress" role="status" tabIndex={-1}>
+        {status}
       </span>
     )
   }
@@ -39,7 +47,11 @@ export function BulkCancel() {
   const n = targets.length
   const { holding, waiting } = staleImpact(jobs)
   const slots = slotsText(holding)
-  const effect = [slots ? `hold ${slots}` : null, waiting > 0 ? `have ${waiting} job${waiting === 1 ? '' : 's'} waiting` : null]
+  const one = n === 1
+  const effect = [
+    slots ? `${one ? 'holds' : 'hold'} ${slots}` : null,
+    waiting > 0 ? `${one ? 'has' : 'have'} ${waiting} job${waiting === 1 ? '' : 's'} waiting` : null,
+  ]
     .filter(Boolean)
     .join(' and ')
 
@@ -63,7 +75,7 @@ export function BulkCancel() {
       {confirm.confirming && (
         <div class="bulk-confirm" role="group" aria-label="Confirm cancel" onKeyDown={confirm.onKeyDown}>
           <span>
-            Cancel {n} superseded run{n === 1 ? '' : 's'}?{effect ? ` ${n === 1 ? 'It' : 'They'} ${effect}.` : ''}
+            Cancel {n} superseded run{one ? '' : 's'}?{effect ? ` ${one ? 'It' : 'They'} ${effect}.` : ''}
           </span>
           <button ref={confirm.keepRef} onClick={confirm.keep}>
             Keep

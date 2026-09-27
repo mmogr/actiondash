@@ -147,7 +147,8 @@ export const forecasts = computed(() => {
   for (const bucket of buckets.value) {
     map.set(bucket.cls, {
       forecast: forecastBucket(bucket, durations.value, now.value),
-      insight: bucket.cap === null ? null : insightFor(bucket, durations.value, now.value),
+      insight:
+        bucket.cap === null ? null : insightFor(bucket, durations.value, now.value, cancelRequested.value),
     })
   }
   return map

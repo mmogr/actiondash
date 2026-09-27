@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from 'preact/hooks'
+import { useState } from 'preact/hooks'
 import type { RepoRef, RunWithRepo } from '../github/types'
 import { cancelRuns } from './actions'
 import { useConfirm } from './useConfirm'
@@ -9,15 +9,8 @@ import { useConfirm } from './useConfirm'
  * un-cancelled from its row.
  */
 export function useCancelRun(repo: RepoRef, run: RunWithRepo) {
-  const confirm = useConfirm()
   const [cancelling, setCancelling] = useState(false)
-  const wasCancelling = useRef(false)
-
-  // The confirm row, and the button that had focus, are gone by now.
-  useEffect(() => {
-    if (wasCancelling.current && !cancelling) confirm.refocus()
-    wasCancelling.current = cancelling
-  }, [cancelling])
+  const confirm = useConfirm(cancelling)
 
   async function act() {
     confirm.done()
