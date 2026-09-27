@@ -291,6 +291,27 @@ test('cancelling every superseded run sends one cancel, then the next only after
   await expect(progress).toBeFocused()
 })
 
+test('the question for a single superseded run speaks of it in the singular', async ({ page, github }) => {
+  // Run 2, on a newer commit, supersedes run 1, which holds a slot and has
+  // a second job waiting for one.
+  github.runs(REPO, [], [
+    makeRun({ id: 1, run_number: 1, status: 'in_progress', head_sha: 'b'.repeat(40) }),
+    makeRun({ id: 2, run_number: 2, status: 'in_progress', head_sha: 'c'.repeat(40) }),
+  ])
+  github.jobs(1, [
+    makeJob({ id: 11, run_id: 1, status: 'in_progress', started_at: '2026-09-09T10:01:00Z' }),
+    makeJob({ id: 12, run_id: 1, name: 'test' }),
+  ])
+  github.jobs(2, [makeJob({ id: 21, run_id: 2, status: 'in_progress', started_at: '2026-09-09T10:02:00Z' })])
+
+  await page.goto('./')
+  await page.getByRole('button', { name: 'Cancel 1 superseded' }).click()
+
+  const confirm = page.locator('.bulk-confirm')
+  await expect(confirm).toContainText('Cancel 1 superseded run? It holds 1 macOS slot and has 1 job waiting.')
+  await expect(confirm.getByRole('button', { name: 'Yes, cancel 1' })).toBeVisible()
+})
+
 test('re-running a failed run asks first, sends one re-run of the failed jobs, and says it was requested', async ({
   page,
   github,

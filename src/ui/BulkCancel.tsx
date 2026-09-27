@@ -47,7 +47,11 @@ export function BulkCancel() {
   const n = targets.length
   const { holding, waiting } = staleImpact(jobs)
   const slots = slotsText(holding)
-  const effect = [slots ? `hold ${slots}` : null, waiting > 0 ? `have ${waiting} job${waiting === 1 ? '' : 's'} waiting` : null]
+  const one = n === 1
+  const effect = [
+    slots ? `${one ? 'holds' : 'hold'} ${slots}` : null,
+    waiting > 0 ? `${one ? 'has' : 'have'} ${waiting} job${waiting === 1 ? '' : 's'} waiting` : null,
+  ]
     .filter(Boolean)
     .join(' and ')
 
@@ -71,7 +75,7 @@ export function BulkCancel() {
       {confirm.confirming && (
         <div class="bulk-confirm" role="group" aria-label="Confirm cancel" onKeyDown={confirm.onKeyDown}>
           <span>
-            Cancel {n} superseded run{n === 1 ? '' : 's'}?{effect ? ` ${n === 1 ? 'It' : 'They'} ${effect}.` : ''}
+            Cancel {n} superseded run{one ? '' : 's'}?{effect ? ` ${one ? 'It' : 'They'} ${effect}.` : ''}
           </span>
           <button ref={confirm.keepRef} onClick={confirm.keep}>
             Keep
