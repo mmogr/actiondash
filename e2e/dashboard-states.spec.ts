@@ -195,3 +195,35 @@ test('the first check shows its progress repository by repository, then the runs
   await expect(loading).toHaveCount(0)
   await expect(page).toHaveTitle(`1/${PLANS.pro.macos} macOS · 0 queued`)
 })
+
+test('a run that arrives during the first check is shown at once, and the rest is not called quiet', async ({
+  page,
+  github,
+}) => {
+  const run = makeRun({ id: 1, run_number: 1, status: 'in_progress', repoName: 'site' })
+  github.runs(REPO, [], []).runs(SITE, [], [run])
+  github.jobs(1, [
+    makeJob({
+      id: 11,
+      run_id: 1,
+      status: 'in_progress',
+      started_at: '2026-09-09T10:01:00Z',
+      labels: ['ubuntu-latest'],
+    }),
+  ])
+  const app = deferred()
+  github.listing(REPO, 'queued', app.reply)
+  await page.goto('./')
+
+  const loading = page.locator('.section', { has: page.locator('.section-title', { hasText: /^Loading$/ }) })
+  await expect(page.locator('[data-run="1"]')).toBeVisible()
+  await expect(loading.locator('.section-stats')).toHaveText('1 of 2 repositories')
+  // The run is on Linux, so macOS has nothing in it, but only as far as one
+  // repository has said. The other may yet fill it.
+  await expect(page.getByText(/Nothing running or queued/)).toHaveCount(0)
+  await expect(page.getByText(/all clear/i)).toHaveCount(0)
+
+  app.resolve(json(EMPTY_LISTING))
+  await expect(loading).toHaveCount(0)
+  await expect(page.locator('[data-run="1"]')).toBeVisible()
+})
