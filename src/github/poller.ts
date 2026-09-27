@@ -1,4 +1,4 @@
-import { batch } from '@preact/signals'
+import { batch, untracked } from '@preact/signals'
 import {
   getBilledCount,
   getRateLimit,
@@ -711,13 +711,20 @@ function schedule(): void {
   }, ms)
 }
 
-/** Why a refresh on demand would not be allowed right now, or null when it would. */
+/**
+ * Why a refresh on demand would not be allowed right now, or null when it would.
+ *
+ * Reads its signals as a subscriber, so a component that calls it while
+ * rendering redraws the moment a check starts or ends, not on the next tick of
+ * the clock. lastStartedAt changes only as a check starts, which polling
+ * already reports.
+ */
 export function whyNoRefresh(nowMs = Date.now()): RefreshBlock | null {
   return refreshBlock({
-    online: online.peek(),
-    limited: rateLimited.peek() !== null,
-    polling: polling.peek(),
-    pacing: pacingReason.peek(),
+    online: online.value,
+    limited: rateLimited.value !== null,
+    polling: polling.value,
+    pacing: pacingReason.value,
     lastStartedAt,
     nowMs,
   })
@@ -730,7 +737,8 @@ export function whyNoRefresh(nowMs = Date.now()): RefreshBlock | null {
  */
 export function refreshNow(options: { force?: boolean } = {}): boolean {
   if (!started) return false
-  if (!options.force && whyNoRefresh() !== null) return false
+  // Untracked, so an effect that asks for a refresh is not re-run by the check it starts.
+  if (!options.force && untracked(() => whyNoRefresh()) !== null) return false
   if (timer !== null) clearTimeout(timer)
   timer = null
   void pollOnce().finally(schedule)

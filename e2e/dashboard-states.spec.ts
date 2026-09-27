@@ -105,6 +105,33 @@ test('when no repository answers the page says it cannot check, and Try again as
   await github.waitForCalls(LISTINGS, before + ONE_POLL)
 })
 
+test('Try again is greyed out the moment the check it asked for starts', async ({ page, github }) => {
+  github.failRuns(REPO, networkError()).failRuns(SITE, networkError())
+  await page.goto('./')
+
+  const alert = page.locator('section.cant-check[role="alert"]')
+  const tryAgain = alert.getByRole('button', { name: 'Try again' })
+  await expect(tryAgain).toBeVisible()
+  await page.clock.fastForward(10_000)
+  await expect(tryAgain).toHaveAttribute('aria-disabled', 'false')
+
+  const held = deferred()
+  github.failRuns(REPO, held.reply).failRuns(SITE, held.reply)
+  // With the clock stopped, the page's once-a-second tick cannot redraw the
+  // button, so only the check starting can grey it out.
+  await page.clock.pauseAt(new Date((await page.evaluate(() => Date.now())) + 1_000))
+  const before = github.callsTo(LISTINGS).length
+  await tryAgain.click()
+
+  await expect(tryAgain).toHaveAttribute('aria-disabled', 'true')
+  await expect(tryAgain).toHaveAttribute('title', 'Already checking.')
+  await github.waitForCalls(LISTINGS, before + ONE_POLL)
+
+  held.resolve(json(EMPTY_LISTING))
+  await expect(page.locator('.section-title', { hasText: /^All clear$/ })).toBeVisible()
+  await expect(alert).toHaveCount(0)
+})
+
 test('a spent allowance pauses checking until it refills, then checking resumes', async ({ page, github }) => {
   const refillsAt = Math.floor(FIXED_NOW.getTime() / 1000) + 30 * 60
   const refused = json(
