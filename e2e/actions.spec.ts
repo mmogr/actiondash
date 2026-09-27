@@ -234,6 +234,40 @@ test.describe('cancelling from the insight', () => {
   })
 })
 
+test('a run with jobs in two pools asks to cancel all its unfinished jobs, from either row', async ({
+  page,
+  github,
+}) => {
+  // Run 12 builds on two macOS slots and waits for a Linux one: one row in
+  // each pool, and one cancel that stops all three jobs.
+  github.runs(REPO, [], [makeRun({ id: 1, run_number: 12, status: 'in_progress' })])
+  github.jobs(1, [
+    makeJob({ id: 11, run_id: 1, name: 'build', status: 'in_progress', started_at: '2026-09-09T10:01:00Z' }),
+    makeJob({ id: 12, run_id: 1, name: 'build-arm', status: 'in_progress', started_at: '2026-09-09T10:01:00Z' }),
+    makeJob({ id: 13, run_id: 1, name: 'lint', labels: ['ubuntu-latest'] }),
+  ])
+
+  await page.goto('./')
+  const pool = (name: string) =>
+    page.locator('.section', { has: page.locator('.section-title', { hasText: new RegExp(`^${name}$`) }) })
+  const macosRow = pool('macOS').locator('[data-run="1"]')
+  const linuxRow = pool('Linux').locator('[data-run="1"]')
+  const macosCancel = macosRow.getByRole('button', { name: /^Cancel app run #12/ })
+  await expect(macosCancel).toHaveAccessibleName('Cancel app run #12 (3 unfinished jobs)')
+  await expect(linuxRow.getByRole('button', { name: /^Cancel app run #12/ })).toHaveAccessibleName(
+    'Cancel app run #12 (3 unfinished jobs)',
+  )
+
+  await github.expectNoNewCalls(async () => {
+    await macosCancel.click()
+    await expect(macosRow.getByRole('group', { name: 'Confirm cancel' })).toContainText(
+      'Cancel run #12 and its 3 unfinished jobs?',
+    )
+    await page.keyboard.press('Escape')
+    await expect(macosCancel).toBeFocused()
+  })
+})
+
 test('cancelling every superseded run sends one cancel, then the next only after a full second', async ({
   page,
   github,

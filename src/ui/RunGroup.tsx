@@ -70,6 +70,10 @@ export function RunGroup({ group, kind, defaultOpen, forecast }: Props) {
   const outlook = runOutlook(run.id, [...forecasts.value.values()].map((v) => v.forecast))
   const pool = RUNNER_CLASS_LABEL[first?.entry.cls ?? 'macos']
   const total = progress.done + progress.running + progress.queued
+  // A cancel stops the whole run, so the question counts every job it stops,
+  // in any pool, not only this row's.
+  const unfinished = Math.max(jobs.length, progress.running + progress.queued)
+  const stops = unfinished === 1 ? null : `${unfinished} unfinished jobs`
 
   // A job that failed while the rest of its run carries on. Said where the run
   // holds slots, or where it waits for them when nothing of it is running, and
@@ -179,7 +183,7 @@ export function RunGroup({ group, kind, defaultOpen, forecast }: Props) {
             class={supersededBy || failed.length > 0 ? 'danger' : ''}
             onClick={cancel.confirming ? cancel.keep : cancel.ask}
             aria-expanded={cancel.confirming}
-            aria-label={`Cancel ${group.repo.name} run #${run.run_number}${single ? '' : ` (${jobs.length} jobs)`}`}
+            aria-label={`Cancel ${group.repo.name} run #${run.run_number}${stops ? ` (${stops})` : ''}`}
             title="Cancel this workflow run"
           >
             cancel
@@ -196,7 +200,7 @@ export function RunGroup({ group, kind, defaultOpen, forecast }: Props) {
         >
           <span>
             Cancel run #{run.run_number}
-            {single ? '' : ` and its ${jobs.length} jobs`}?
+            {stops ? ` and its ${stops}` : ''}?
           </span>
           <button ref={cancel.keepRef} onClick={cancel.keep}>
             Keep
