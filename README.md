@@ -65,11 +65,12 @@ is on. All of this comes from the job listings the dashboard already reads.
 The Trends screen draws what this browser has watched: slots in use and jobs
 queued over the last hour to week, with any time the page was closed hatched
 rather than smoothed over; today's slot time by repository; the last ten
-successful durations of each job of interest with the current run marked; and
-where the hourly request allowance lands at the reset. It draws the macOS pool
-unless another has a record, in which case chips switch between them. All of
-it comes from the same polls and is kept in local storage as counts,
-timestamps and repository names.
+successful durations of each job of interest with the current run marked, each
+against that job's usual time so a job of seconds and one of half an hour line
+up on one scale; and where the hourly request allowance lands at the reset. It
+draws the macOS pool unless another has a record, in which case chips switch
+between them. All of it comes from the same polls and is kept in local storage
+as counts, timestamps and repository names.
 
 Learning a finished run's final timings costs one extra request per run, and
 is skipped whenever fewer than 200 requests remain in the hour. The same

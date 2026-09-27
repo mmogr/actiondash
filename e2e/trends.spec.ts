@@ -1,5 +1,6 @@
 import type { Page } from '@playwright/test'
 import type { HistoryState } from '../src/model/history'
+import { makeJob, makeRun } from '../tests/helpers'
 import { deferred, json } from '../tests/replies'
 import { expect, test } from './fixtures'
 import { dashboardSeed, FIXED_NOW, REPO } from './seed'
@@ -73,6 +74,76 @@ test.describe('with a recorded history', () => {
       await expect(range.locator('[aria-pressed="true"]')).toHaveCount(1)
       await expect(chart).toHaveAttribute('aria-label', `Slots in use and jobs queued over time. ${summary}`)
     }
+  })
+})
+
+test.describe('with learned durations', () => {
+  // A ten-minute job and a fifteen-second one, which no single scale in
+  // minutes could draw side by side.
+  const learned = (build: number[]) => ({
+    'acme/app::build': { secs: build, ids: build.map((_, i) => i + 1), cls: 'macos', seenAt: NOW - MINUTE },
+    'acme/app::lint': { secs: [15], ids: [100], cls: 'macos', seenAt: NOW - 2 * MINUTE },
+  })
+
+  function strips(page: Page) {
+    return page.locator('section', { has: page.locator('.section-title', { hasText: 'How long jobs take' }) })
+  }
+
+  test.describe('and nothing running', () => {
+    test.use({ seed: { ...dashboardSeed(), durations: learned([540, 600, 660]) } })
+
+    test('each job is drawn against its own usual time, so the usual lines up down the list', async ({
+      page,
+      github,
+    }) => {
+      github.runs(REPO, [], [])
+      await page.goto('./#trends')
+      const section = strips(page)
+      const build = section.getByRole('img', { name: /^build / })
+      const lint = section.getByRole('img', { name: /^lint / })
+
+      // Nothing is running, so nothing is said to be marked.
+      await expect(section.locator('.section-stats')).toHaveText('up to 10 successful runs')
+      await expect(build).toHaveAttribute('aria-label', 'build usually takes 10m, from 3 successful runs of 9m to 11m')
+      await expect(lint).toHaveAttribute('aria-label', 'lint usually takes 15s, from 1 successful run')
+      await expect(section.locator('.strip-usual')).toHaveText(['usually 10m', 'usually 15s'])
+
+      // Ten minutes in one row and fifteen seconds in the other sit at the same place.
+      const usualX = await lint.locator('circle').getAttribute('cx')
+      await expect(build.locator('circle').nth(1)).toHaveAttribute('cx', usualX!)
+      await expect(build.locator('circle').first()).not.toHaveAttribute('cx', usualX!)
+    })
+  })
+
+  test.describe('and a run going long', () => {
+    // One earlier run took 25 minutes, past twice the usual ten.
+    test.use({ seed: { ...dashboardSeed(), durations: learned([540, 590, 600, 660, 1500]) } })
+
+    test('a run past twice its usual is marked at the end of the scale, as is an earlier one', async ({
+      page,
+      github,
+    }) => {
+      github.runs(REPO, [], [makeRun({ id: 1, run_number: 12, status: 'in_progress' })])
+      // Thirty minutes in.
+      github.jobs(1, [
+        makeJob({ id: 11, run_id: 1, name: 'build', status: 'in_progress', started_at: '2026-09-09T09:35:00Z' }),
+      ])
+      await page.goto('./#trends')
+      const section = strips(page)
+      const build = section.getByRole('img', { name: /^build / })
+
+      await expect(section.locator('.section-stats')).toHaveText('up to 10 successful runs · current run marked')
+      await expect(build).toHaveAttribute(
+        'aria-label',
+        'build usually takes 10m, from 5 successful runs of 9m to 25m; this run 30m, past usual',
+      )
+      // Thirty minutes is past the end of a scale that runs to twice ten.
+      const axisEnd = await build.locator('.strip-axis').getAttribute('x2')
+      await expect(build.locator('.strip-today.over')).toHaveAttribute('x1', axisEnd!)
+      // The 25-minute run is not a dot on the scale but one pointer past its end.
+      await expect(build.locator('circle')).toHaveCount(4)
+      await expect(build.locator('path title')).toHaveText('25m, past 2× usual')
+    })
   })
 })
 
