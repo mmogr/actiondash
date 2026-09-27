@@ -2,6 +2,7 @@ import { render } from 'preact'
 import './styles.css'
 import { App } from './app'
 import { listenForShowRun, registerServiceWorker, watchForAlerts } from './notify'
+import { watchFocus } from './ui/focus'
 import { watchInstallPrompt } from './ui/install'
 import { watchRoute } from './ui/route'
 import { watchTitle } from './ui/title'
@@ -15,4 +16,5 @@ listenForShowRun()
 watchForAlerts()
 watchRoute()
 watchTitle()
+watchFocus(root)
 render(<App />, root)

@@ -1,10 +1,5 @@
 import { useLayoutEffect, useRef, useState } from 'preact/hooks'
-
-/** True when nothing in particular has focus, so moving it steals nothing. */
-function focusIsLost(): boolean {
-  const active = document.activeElement
-  return active === null || active === document.body
-}
+import { focusIsLost } from './focus'
 
 /**
  * The ask-then-act step behind every destructive button. Asking moves focus to
@@ -17,8 +12,9 @@ function focusIsLost(): boolean {
  * focus to whichever of the two is on the page: the asking button, or the
  * status attached to statusRef.
  *
- * Layout effects rather than passive ones, so focus has landed before anything
- * that runs after the render, such as a MutationObserver, can see it lost.
+ * Layout effects rather than passive ones, so focus has landed before the
+ * watcher in focus.ts, which runs after the render, can find it lost and send
+ * it to a heading instead.
  */
 export function useConfirm<Status extends HTMLElement = HTMLElement>(busy = false) {
   const [confirming, setConfirming] = useState(false)

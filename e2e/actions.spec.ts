@@ -131,6 +131,45 @@ test.describe('cancelling one run', () => {
     await alert.getByRole('button', { name: 'dismiss' }).click()
     await expect(alert).toBeHidden()
   })
+
+  test('when the next check takes away the row that held focus, focus moves to the nearest heading', async ({
+    page,
+    github,
+  }) => {
+    scriptOneRunningRun(github)
+    github.write(CANCEL_1)
+
+    await page.goto('./')
+    const row = page.locator('[data-run="1"]')
+    const cancel = row.getByRole('button', { name: 'Cancel app run #12' })
+    await expect(cancel).toBeVisible()
+
+    // By the check the cancel asks for, GitHub has cancelled the run and it
+    // has left the listings. That check is held until the row has focus.
+    const gone = deferred()
+    github.listing(REPO, 'queued', json({ total_count: 0, workflow_runs: [] }))
+    github.listing(REPO, 'in_progress', gone.reply)
+    github.jobs(1, [
+      makeJob({
+        id: 11,
+        run_id: 1,
+        status: 'completed',
+        conclusion: 'cancelled',
+        started_at: '2026-09-09T10:01:00Z',
+        completed_at: '2026-09-09T10:05:05Z',
+      }),
+    ])
+
+    await cancel.click()
+    await row.getByRole('group', { name: 'Confirm cancel' }).getByRole('button', { name: 'Yes, cancel' }).click()
+    const status = row.getByRole('status')
+    await expect(status).toHaveText('cancel requested')
+    await expect(status).toBeFocused()
+
+    gone.resolve(json({ total_count: 0, workflow_runs: [] }))
+    await expect(row).toHaveCount(0)
+    await expect(page.locator('.section-title', { hasText: /^All clear$/ })).toBeFocused()
+  })
 })
 
 /** Every build of acme/app takes ten minutes, so the insight has figures to work from. */
@@ -230,6 +269,8 @@ test.describe('cancelling from the insight', () => {
     await expect(insight).toContainText('The next free slot goes to app #2, which is superseded by #3.')
     await expect(confirm).toBeHidden()
     await expect(insight.getByRole('button', { name: 'Cancel #2', exact: true })).toBeVisible()
+    // Keep went with the question, so focus moves to the pool's heading.
+    await expect(page.locator('.section-title', { hasText: /^macOS$/ })).toBeFocused()
     expect(github.callsTo(ANY_CANCEL)).toEqual([])
   })
 })
