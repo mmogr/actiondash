@@ -3,7 +3,7 @@ import type { RepoRef } from '../src/github/types'
 import { deferred, json } from '../tests/replies'
 import { expect, test } from './fixtures'
 import { bearer, credential, ref, repo, REPOS_PATH, requests } from './scenarios'
-import { KEYS, TOKEN } from './seed'
+import { dashboardSeed, KEYS, REPO, TOKEN } from './seed'
 
 /**
  * A new visitor's way in: checking a token, choosing repositories and a plan,
@@ -331,4 +331,58 @@ test('the token field says what kind of token was pasted, before anything is sen
   await expect(oauth).toHaveCount(0)
 
   expect(github.calls).toEqual([])
+})
+
+test.describe('changing what a set-up dashboard watches', () => {
+  test.use({ seed: dashboardSeed({ observedMax: { macos: 3 } }) })
+
+  /** From the dashboard to setup by way of Settings, once the stored token has listed its repositories. */
+  async function editRepositories(page: Page): Promise<void> {
+    await page.goto('./')
+    await expect(page.locator('.section-title', { hasText: 'All clear' })).toBeVisible()
+    await page.getByRole('navigation', { name: 'Sections' }).getByRole('button', { name: 'Settings' }).click()
+    await page.getByRole('button', { name: 'Edit repositories' }).click()
+    await expect(page.getByText('Connected as octocat.', { exact: true })).toBeVisible()
+  }
+
+  test('a plan chosen and then discarded changes nothing', async ({ page, github }) => {
+    github.runs(REPO, [], [])
+    github.user()
+    github.repos([repo('acme/app')])
+
+    await editRepositories(page)
+    await expect(page.getByRole('button', { name: 'Back to dashboard' })).toBeVisible()
+    await page.getByLabel('Plan').selectOption('team')
+    const discard = page.getByRole('button', { name: 'Discard changes' })
+    await expect(discard).toBeVisible()
+    expect((await storedSettings(page))?.plan, 'the plan before Open dashboard').toBe('pro')
+
+    await discard.click()
+    await expect(page.getByRole('heading', { name: 'Account' })).toBeVisible()
+    await expect(page.getByLabel('Plan')).toHaveValue('pro')
+    const stored = await storedSettings(page)
+    expect(stored?.plan).toBe('pro')
+    expect(stored?.observedMax).toEqual({ macos: 3 })
+  })
+
+  test('a plan chosen in setup is kept once the dashboard opens, and the peak seen under the old one is forgotten', async ({
+    page,
+    github,
+  }) => {
+    github.runs(REPO, [], [])
+    github.user()
+    github.repos([repo('acme/app')])
+    github.probe(REPO)
+
+    await editRepositories(page)
+    await page.getByLabel('Plan').selectOption('team')
+    await page.getByRole('button', { name: 'Open dashboard' }).click()
+
+    await expect(page.locator('.section-title', { hasText: 'All clear' })).toBeVisible()
+    const stored = await storedSettings(page)
+    expect(stored?.plan).toBe('team')
+    expect(stored?.repos).toEqual([REPO])
+    // A peak seen under one plan says nothing about whether another explains it.
+    expect(stored?.observedMax).toEqual({})
+  })
 })

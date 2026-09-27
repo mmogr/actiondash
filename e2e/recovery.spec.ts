@@ -151,6 +151,35 @@ test.describe('a browser that was left on recovery', () => {
     expect(github.calls.map(bearer)).toEqual(github.calls.map(() => 'NEW_TOKEN'))
   })
 
+  test('a plan picked while another account was connected is kept when the right token goes straight back', async ({
+    page,
+    github,
+  }) => {
+    github.user('someone-else')
+    github.repos([repo('other/lib')])
+
+    await page.goto('./')
+    await expect(recoveryCard(page)).toBeVisible()
+    const field = page.getByLabel('Personal access token')
+    await field.fill(NEW_TOKEN)
+    await field.press('Enter')
+    await expect(page.getByText('Connected as someone-else. Choose repositories below.', { exact: true })).toBeVisible()
+    await page.getByLabel('Plan').selectOption('team')
+
+    github.user('octocat')
+    github.probe(REPO)
+    github.runs(REPO, [], [])
+    await field.fill(NEW_TOKEN)
+    await page.getByRole('button', { name: 'Reconnect' }).click()
+
+    await expect(allClear(page)).toBeVisible()
+    const stored = await storedSettings(page)
+    expect(credential(stored.token), 'the stored token').toBe('NEW_TOKEN')
+    expect(stored.repos).toEqual([REPO])
+    expect(stored.plan).toBe('team')
+    expect(stored.tokenRejectedAt).toBeNull()
+  })
+
   test('a replacement token whose repository list fails to load can be tried again without pasting it again', async ({
     page,
     github,

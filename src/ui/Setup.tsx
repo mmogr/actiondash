@@ -5,7 +5,7 @@ import { clearJobCache } from '../github/poller'
 import { parseRepo, repoKey, type Repo, type RepoRef } from '../github/types'
 import { classify, problemText } from '../model/health'
 import { PLANS, type PlanId } from '../model/plans'
-import { joinList, keptList, ownersOf, sameAccount, sameSelection } from '../model/setup'
+import { joinList, keptList, ownersOf, sameAccount, sameSelection, watchPatch } from '../model/setup'
 import { durations } from '../state/durations'
 import { history } from '../state/history'
 import { pendingToken, settings, tokenKind, updateSettings } from '../state/settings'
@@ -41,6 +41,8 @@ export function Setup() {
   )
   const [filter, setFilter] = useState('')
   const [manual, setManual] = useState('')
+  // Kept only when the dashboard opens, with the repositories chosen alongside it.
+  const [plan, setPlan] = useState<PlanId>(() => settings.value.plan)
   const [busy, setBusy] = useState(false)
   const [error, setError] = useState<string | null>(null)
   const [notice, setNotice] = useState<string | null>(null)
@@ -101,7 +103,14 @@ export function Setup() {
       if (sameAccount(settings.value.login, user.login)) {
         const failures = await probeRepos(settings.value.repos)
         if (failures.length === 0) {
-          updateSettings({ token, login: user.login, tokenRejectedAt: null })
+          // The watched repositories stand. The plan can differ only if an
+          // earlier token fell through to choosing them, and is kept if so.
+          updateSettings({
+            token,
+            login: user.login,
+            tokenRejectedAt: null,
+            ...watchPatch(settings.value.repos, settings.value.plan, settings.value.repos, plan),
+          })
           enterDashboard()
           return
         }
@@ -165,18 +174,11 @@ export function Setup() {
         setUnreadable({ keys: failures.map((f) => repoKey(f.repo)), text: unreadableText(failures) })
         return
       }
-      // The ceiling belongs to the account that owns the repositories, so a
-      // peak measured over one set of owners is no evidence about another. A
-      // repository added under an owner already watched leaves it standing.
-      const owners = (list: readonly RepoRef[]): string =>
-        [...new Set(list.map((r) => r.owner))].sort().join(',')
-      const ownersChanged = owners(settings.value.repos) !== owners(refs)
       updateSettings({
         token,
-        repos: refs,
+        ...watchPatch(settings.value.repos, settings.value.plan, refs, plan),
         tokenRejectedAt: null,
         ...(connectedAs ? { login: connectedAs } : {}),
-        ...(ownersChanged ? { observedMax: {} } : {}),
       })
       enterDashboard()
     } catch (err) {
@@ -193,6 +195,7 @@ export function Setup() {
   const canGoBack = stored !== null && rejectedAt === null && settings.value.repos.length > 0
   const changed =
     !sameSelection(settings.value.repos, selected) ||
+    plan !== settings.value.plan ||
     (pendingToken.value !== null && pendingToken.value !== stored)
   const kept = keptList({
     repoCount: settings.value.repos.length,
@@ -452,18 +455,13 @@ export function Setup() {
             <label>
               Plan{' '}
               <select
-                value={settings.value.plan}
+                value={plan}
                 disabled={busy}
-                onChange={(e) =>
-                  updateSettings({
-                    plan: (e.target as HTMLSelectElement).value as PlanId,
-                    observedMax: {},
-                  })
-                }
+                onChange={(e) => setPlan((e.target as HTMLSelectElement).value as PlanId)}
               >
-                {Object.values(PLANS).map((plan) => (
-                  <option key={plan.id} value={plan.id}>
-                    {plan.label} ({plan.macos} macOS, {plan.total} total)
+                {Object.values(PLANS).map((p) => (
+                  <option key={p.id} value={p.id}>
+                    {p.label} ({p.macos} macOS, {p.total} total)
                   </option>
                 ))}
               </select>
