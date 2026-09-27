@@ -52,4 +52,18 @@ describe('titleFor', () => {
     expect(titleFor({ health: 'ok', mine: [], headline: pool })).toBe('0/5 macOS · 0 queued')
     expect(titleFor({ health: 'ok', mine: [], headline: undefined })).toBe('actiondash')
   })
+
+  it('names the unchecked repositories before a partly checked pool', () => {
+    // Otherwise an idle pool with a repository missing reads as a fully checked one.
+    expect(titleFor({ health: 'partial', unchecked: 1, mine: [], headline: pool })).toBe(
+      '1 unchecked · 0/5 macOS · 0 queued',
+    )
+  })
+
+  it('leaves the unchecked count out of the reader’s own run, and out of a fully checked pool', () => {
+    expect(titleFor({ health: 'partial', unchecked: 1, mine: [my({})], headline: pool })).toBe(
+      '#214 waiting · actiondash',
+    )
+    expect(titleFor({ health: 'ok', unchecked: 1, mine: [], headline: pool })).toBe('0/5 macOS · 0 queued')
+  })
 })

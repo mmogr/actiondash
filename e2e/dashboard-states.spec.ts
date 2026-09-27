@@ -62,6 +62,7 @@ test('a repository that cannot be checked holds back the all-clear until it answ
   )
   await expect(page.getByText(/all clear/i)).toHaveCount(0)
   await expect(page.locator('.cant-check')).toHaveCount(0)
+  await expect(page).toHaveTitle(`1 unchecked · ${IDLE_TITLE}`)
 
   github.runs(SITE, [], [])
   await page.clock.fastForward(15_000)
@@ -69,6 +70,7 @@ test('a repository that cannot be checked holds back the all-clear until it answ
   await expect(page.locator('.section-title', { hasText: /^All clear$/ })).toBeVisible()
   await expect(strip).toHaveCount(0)
   await expect(quiet).toHaveCount(0)
+  await expect(page).toHaveTitle(IDLE_TITLE)
 })
 
 test('when no repository answers the page says it cannot check, and Try again asks again', async ({
