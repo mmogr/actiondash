@@ -127,6 +127,22 @@ test.describe('with one repository', () => {
     await expect(alerts).toHaveAttribute('aria-current', 'page')
     await expect(page.getByRole('heading', { name: 'Everyone' })).toBeVisible()
   })
+
+  test('an address that names nothing is put back to the section showing', async ({ page, github }) => {
+    github.runs(REPO, [], [])
+    await page.goto('./#settings')
+    const settings = page.getByRole('navigation', { name: 'Sections' }).getByRole('button', { name: 'Settings' })
+    await expect(settings).toHaveAttribute('aria-current', 'page')
+    await expect(page.getByRole('heading', { name: 'Account' })).toBeVisible()
+
+    await page.evaluate(() => {
+      location.hash = '#bogus'
+    })
+
+    await expect(page).toHaveURL(/#settings$/)
+    await expect(settings).toHaveAttribute('aria-current', 'page')
+    await expect(page.getByRole('heading', { name: 'Account' })).toBeVisible()
+  })
 })
 
 test.describe('with two repositories', () => {
