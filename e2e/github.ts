@@ -68,6 +68,11 @@ export class BrowserGitHub {
   readonly problems: string[] = []
   /** Every run id this fake has told the page about. */
   readonly served = new Set<number>()
+  /**
+   * Whether replies carry GitHub's rate-limit headers unless they set their
+   * own. Off, for the refusals that arrive without them.
+   */
+  defaultRateHeaders = true
 
   private readonly routes = new Map<string, { re: RegExp; reply: Reply }>()
   private remaining = 5000
@@ -187,7 +192,7 @@ export class BrowserGitHub {
     }
 
     const headers: Record<string, string> = { ...corsHeaders() }
-    Object.assign(headers, this.rateHeaders(response.status))
+    if (this.defaultRateHeaders) Object.assign(headers, this.rateHeaders(response.status))
     response.headers.forEach((value, name) => {
       headers[name] = value
     })

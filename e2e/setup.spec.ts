@@ -129,6 +129,30 @@ test('a rejected token is never stored', async ({ page, github }) => {
   await expect(page.getByRole('button', { name: 'Use stored token' })).toHaveCount(0)
 })
 
+test('a repository list that fails to load can be asked for again without pasting the token again', async ({
+  page,
+  github,
+}) => {
+  github.user()
+  github.on(/\/user\/repos\?/, json({ message: 'Server Error' }, { status: 502 }))
+
+  await page.goto('./')
+  const field = page.getByLabel('Personal access token')
+  await field.fill(TOKEN)
+  await page.getByRole('button', { name: 'Connect', exact: true }).click()
+
+  await expect(page.getByText('Server Error', { exact: true })).toBeVisible()
+  // GitHub accepted the token; only the list failed. It is still there to try again with.
+  await expect.poll(async () => credential(await field.inputValue())).toBe('TOKEN')
+
+  github.repos([repo('acme/app')])
+  await page.getByRole('button', { name: 'Connect', exact: true }).click()
+  await expect(page.getByText('Connected as octocat.', { exact: true })).toBeVisible()
+  await expect(repoBox(page, 'acme/app')).toBeVisible()
+  await expect(field).toHaveValue('')
+  expect(requests(github.calls)).toEqual(['GET /user', `GET ${REPOS_PATH}`, 'GET /user', `GET ${REPOS_PATH}`])
+})
+
 test('a repository the token cannot read is named, and deselecting it lets the dashboard open', async ({
   page,
   github,
