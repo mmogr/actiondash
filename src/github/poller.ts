@@ -106,6 +106,12 @@ const MAX_RUNS_PER_REPO = 60
  * dashboard itself must keep polling.
  */
 const LEARNING_MIN_REMAINING = 200
+/**
+ * How long to stand back after a refusal that says neither when the allowance
+ * renews nor when to try again, as a secondary limit can. GitHub asks for at
+ * least a minute.
+ */
+const UNTIMED_REFUSAL_MS = 60_000
 
 /**
  * Merges the two status listings into one run list, keeping each run once.
@@ -174,6 +180,8 @@ let generation = 0
 let lastBilled = 1
 /** When the most recent poll started, to space refreshes on demand. */
 let lastStartedAt: number | null = null
+/** The most recent poll was refused without a reset or a retry-after to go by. */
+let untimedRefusal = false
 /**
  * True between startPolling and stopPolling. A 401 stops polling from inside
  * a poll whose own finally would otherwise schedule the next one.
@@ -359,6 +367,7 @@ export async function pollOnce(): Promise<void> {
 
   polling.value = true
   resetRetryAfter()
+  untimedRefusal = false
   const billedBefore = getBilledCount()
   const problems = new Map<string, { problem: Problem; detail: string }>()
   const byRepo = new Map<string, RunWithRepo[]>()
@@ -607,9 +616,13 @@ export async function pollOnce(): Promise<void> {
       return
     }
     if (isRateLimitError(err)) {
+      // Always a time, even when the refusal gave none to read: with no time
+      // the page had nothing to pause for, and read the silence as all clear.
       const limit = getRateLimit()
+      untimedRefusal = limit === null && getRetryAfterMs() === 0
+      const waitMs = getRetryAfterMs() || UNTIMED_REFUSAL_MS
       batch(() => {
-        rateLimited.value = limit ? limit.reset : null
+        rateLimited.value = limit ? limit.reset : Math.ceil((Date.now() + waitMs) / 1000)
         firstLoadDone.value = true
       })
       return
@@ -690,7 +703,8 @@ function nextPacing(): Pacing {
     remaining: limit ? limit.remaining : null,
     resetEpochSec: limit ? limit.reset : 0,
     billedPerPoll: lastBilled,
-    retryAfterMs: getRetryAfterMs(),
+    // A refusal that gave no time is honoured as if it had asked for a minute.
+    retryAfterMs: untimedRefusal ? UNTIMED_REFUSAL_MS : getRetryAfterMs(),
     nowMs: Date.now(),
   })
 }
