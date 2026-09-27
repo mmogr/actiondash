@@ -78,8 +78,8 @@ function OutcomeText({ f }: { f: FinishedRun }) {
 }
 
 function FinishedRow({ f, nowMs }: { f: FinishedRun; nowMs: number }) {
-  const confirm = useConfirm()
   const [busy, setBusy] = useState(false)
+  const confirm = useConfirm<HTMLDivElement>(busy)
   const repo = { owner: f.run.repoOwner, name: f.run.repoName }
   const n = f.run.run_number
   // Re-running is offered where it helps: failed jobs, or a cancel made here.
@@ -87,7 +87,7 @@ function FinishedRow({ f, nowMs }: { f: FinishedRun; nowMs: number }) {
   const count = f.failedJobs.length
   const question =
     mode === 'failed'
-      ? `Re-run the ${count === 1 ? 'failed job' : `${count} failed jobs`} of ${repo.name} #${n}? They join the queue again.`
+      ? `Re-run the ${count === 1 ? 'failed job' : `${count} failed jobs`} of ${repo.name} #${n}? ${count === 1 ? 'It joins' : 'They join'} the queue again.`
       : `Re-run ${repo.name} #${n} from the start? It joins the queue again.`
 
   async function go() {
@@ -113,24 +113,25 @@ function FinishedRow({ f, nowMs }: { f: FinishedRun; nowMs: number }) {
         </span>
         {f.run.name && <span class="group-workflow">{f.run.name}</span>}
         <span class="group-age">{age(f.at, nowMs)} ago</span>
-        {mode && !f.rerunAsked && (
-          busy ? (
-            <span class="group-cancelling">re-running…</span>
-          ) : (
-            <button
-              ref={confirm.askRef}
-              onClick={confirm.confirming ? confirm.keep : confirm.ask}
-              aria-expanded={confirm.confirming}
-            >
-              {mode === 'failed' ? 'Re-run failed' : 'Re-run'}
-            </button>
-          )
+        {mode && !busy && !f.rerunAsked && (
+          <button
+            ref={confirm.askRef}
+            onClick={confirm.confirming ? confirm.keep : confirm.ask}
+            aria-expanded={confirm.confirming}
+          >
+            {mode === 'failed' ? 'Re-run failed' : 'Re-run'}
+          </button>
         )}
       </div>
       <div class={`finished-outcome ${f.outcome}`}>
         <OutcomeText f={f} />
       </div>
-      {f.rerunAsked && <div class="group-note">Re-run requested. It joins the queue on the next check.</div>}
+      {/* One node for both texts, so focus survives the text changing. */}
+      {(busy || f.rerunAsked) && (
+        <div ref={confirm.statusRef} class="group-note" role="status" tabIndex={-1}>
+          {busy ? 'Re-running…' : 'Re-run requested. It joins the queue on the next check.'}
+        </div>
+      )}
       {confirm.confirming && (
         <div class="group-confirm" role="group" aria-label="Confirm re-run" onKeyDown={confirm.onKeyDown}>
           <span>{question}</span>

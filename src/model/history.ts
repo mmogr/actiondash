@@ -158,6 +158,33 @@ export function atCapacityMs(samples: readonly Sample[], cls: RunnerClass, cap: 
   return total
 }
 
+/** The most slots in use and the most jobs queued, each at its own moment rather than summed. */
+export function peaks(samples: readonly Sample[], cls: RunnerClass): { inUse: number; queued: number } {
+  let inUse = 0
+  let queued = 0
+  for (const s of samples) {
+    inUse = Math.max(inUse, s.inUse[cls] ?? 0)
+    queued = Math.max(queued, s.queued[cls] ?? 0)
+  }
+  return { inUse, queued }
+}
+
+/**
+ * The occupancy chart in a sentence. The queue and the ceiling are stated
+ * apart from the slots in use, since neither is use: a quiet window is not
+ * "up to the ceiling", and a queue behind a full pool is not a pool over it.
+ */
+export function occupancySummary(samples: readonly Sample[], cls: RunnerClass, cap: number | null): string {
+  if (samples.length === 0) return 'No data in this window.'
+  const peak = peaks(samples, cls)
+  if (peak.inUse === 0) {
+    return peak.queued === 0 ? 'Nothing ran or waited in this window.' : `Nothing ran; up to ${peak.queued} queued.`
+  }
+  const ceiling = cap === null ? '' : `, against a ceiling of ${cap}`
+  const queue = peak.queued === 0 ? '' : `, and up to ${peak.queued} queued`
+  return `Up to ${peak.inUse} in use at once${ceiling}${queue}.`
+}
+
 /** Repositories by slot seconds on a day for one class, largest first. */
 export function repoShare(
   state: HistoryState,
