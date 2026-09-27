@@ -127,7 +127,19 @@ enforce that:
    `npm run check:guards` then feeds both checks input they must reject, the
    real build with its policy removed and each form of stray `fetch`, so a
    check that has stopped being able to fail is caught too.
-   Both run in CI on every pull request and again before every deploy.
+4. **Browser checks.** `npm run test:e2e` loads the production build in
+   headless Chromium, under its real policy, with GitHub scripted per test in
+   `e2e/github.ts`. Every test fails if the page throws or logs an error, if
+   the policy refuses anything the test did not cause on purpose, if any
+   request goes anywhere but the page's own files and the API, if the token
+   shows up anywhere but the API's `Authorization` header (an address, another
+   header, a body, the console, the page, the title, a cookie), if a request
+   carries a header GitHub's CORS preflight would refuse, or if a row appears
+   for a run GitHub never reported. `check:guards` trips each of those on
+   purpose, and runs the smoke tests against copies of the build broken the
+   way a user would notice, to prove they fail.
+
+All of these run in CI on every pull request and again before every deploy.
 
 The token is never written to the URL, never logged, and never rendered back
 into the page. "Forget token" clears it and everything else from local storage,
@@ -204,16 +216,18 @@ npm run dev
 ## Verifying
 
 ```sh
-npm run verify   # tests, typecheck, build, CSP and network-call checks, and proof both can fail
+npx playwright install chromium   # once per machine, for the browser tests
+npm run verify   # focus check, tests, typecheck, build, CSP and network-call checks,
+                 # browser tests, and proof that every one of them can fail
 ```
 
-To confirm the policy in a browser, run `npm run preview`, open the page, and
-check that the console reports no CSP violations. To confirm it is really
-enforcing, run this in the console; it must be blocked:
-
-```js
-fetch('https://example.com')
-```
+`npm run test:e2e` runs the browser tests on their own, against `dist/`, so
+build first. They cover what the unit tests cannot: that the page starts, in
+setup and on the dashboard, on a phone as well as a desktop, and that the
+policy holds in a real browser. The smoke tests confirm the policy refuses
+`fetch('https://example.com')` on every run, and `check:guards` proves they
+notice when it does not. To see it by hand, run `npm run preview` and try that
+line in the console; it must be blocked.
 
 The tests check the dashboard against what GitHub is believed to return.
 `npm run probe` checks the beliefs: it sends the app's own queries to a few
@@ -225,10 +239,13 @@ the token skews the readings.
 
 ## Deploying
 
-Merge to `main`. Every pull request runs `npm run verify` in
-`.github/workflows/ci.yml`, and `main` will not accept a merge until it
-passes. On `main`, `.github/workflows/deploy.yml` runs the same command again
-and publishes to GitHub Pages. Both run on `ubuntu-latest` only, so checking
+Merge to `main` through a pull request; nothing is pushed to it directly.
+Every pull request runs `npm run verify`, browser tests included, in
+`.github/workflows/ci.yml`, and `main` will not accept a merge until it passes
+on a branch that is up to date with `main`. A failing run keeps its Playwright
+report and traces as an artifact for a week. On `main`,
+`.github/workflows/deploy.yml` runs the same command again and publishes to
+GitHub Pages. Both run on `ubuntu-latest` only, so checking
 and deploying the dashboard never compete for the macOS slots it exists to
 protect.
 

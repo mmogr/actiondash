@@ -34,6 +34,10 @@ function cspPlugin(): Plugin {
 export default defineConfig({
   // Relative base so the build works under https://<user>.github.io/actiondash/
   base: './',
+  // No fallback to index.html for unknown paths. GitHub Pages has none, so a
+  // missing file must be a 404 here too, or the browser tests would be served
+  // the page in place of a script or stylesheet that did not build.
+  appType: 'mpa',
   plugins: [preact(), cspPlugin()],
   build: {
     target: 'es2022',

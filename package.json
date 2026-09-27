@@ -10,18 +10,22 @@
     "preview": "vite preview",
     "test": "vitest run",
     "test:watch": "vitest",
+    "test:e2e": "tsc -p e2e/tsconfig.json --noEmit && playwright test",
+    "check:focus": "node scripts/check-focus.mjs",
     "check:csp": "node scripts/check-csp.mjs",
     "check:fetch": "node scripts/check-fetch.mjs",
     "check:guards": "node scripts/check-guards.mjs",
     "probe": "node scripts/probe.mjs",
-    "verify": "npm run test && npm run build && npm run check:csp && npm run check:fetch && npm run check:guards"
+    "verify": "npm run check:focus && npm run test && npm run build && npm run check:csp && npm run check:fetch && npm run test:e2e && npm run check:guards"
   },
   "dependencies": {
     "@preact/signals": "^2.11.2",
     "preact": "^10.29.8"
   },
   "devDependencies": {
+    "@playwright/test": "1.63.0",
     "@preact/preset-vite": "^2.10.6",
+    "@types/node": "^22.20.4",
     "typescript": "^7.0.2",
     "vite": "^8.2.2",
     "vitest": "^5.0.0"

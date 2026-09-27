@@ -20,6 +20,7 @@ jobs:
   build:
     # Ubuntu only. Deploying the dashboard must never consume a macOS slot.
     runs-on: ubuntu-latest
+    timeout-minutes: 15
     steps:
       - uses: actions/checkout@v5
 
@@ -30,10 +31,25 @@ jobs:
 
       - run: npm ci
 
+      # Part of verify, so the deploy needs it too. See ci.yml.
+      - name: Install Chromium
+        run: npx playwright install --with-deps --only-shell chromium
+
       # The same command CI runs and the README gives contributors, so the three
       # cannot drift apart. Kept here as well as on pull requests because
       # workflow_dispatch reaches this job without going through one.
       - run: npm run verify
+
+      - name: Keep the browser test report
+        if: failure()
+        uses: actions/upload-artifact@v7
+        with:
+          name: playwright-report
+          path: |
+            playwright-report/
+            test-results/
+          retention-days: 7
+          if-no-files-found: ignore
 
       # enablement turns Pages on for a fresh repository rather than failing.
       - uses: actions/configure-pages@v5
