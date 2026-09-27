@@ -76,6 +76,38 @@ test.describe('with a recorded history', () => {
   })
 })
 
+test.describe('with learned durations', () => {
+  // A ten-minute job and a fifteen-second one, which no single scale in
+  // minutes could draw side by side.
+  const durations = {
+    'acme/app::build': { secs: [540, 600, 660], ids: [1, 2, 3], cls: 'macos', seenAt: NOW - MINUTE },
+    'acme/app::lint': { secs: [15], ids: [4], cls: 'macos', seenAt: NOW - 2 * MINUTE },
+  }
+  test.use({ seed: { ...dashboardSeed(), durations } })
+
+  test('each job is drawn against its own usual time, so the usual lines up down the list', async ({
+    page,
+    github,
+  }) => {
+    github.runs(REPO, [], [])
+    await page.goto('./#trends')
+    const section = page.locator('section', { has: page.locator('.section-title', { hasText: 'How long jobs take' }) })
+    const build = section.getByRole('img', { name: /^build / })
+    const lint = section.getByRole('img', { name: /^lint / })
+
+    // Nothing is running, so nothing is said to be marked.
+    await expect(section.locator('.section-stats')).toHaveText('up to 10 successful runs')
+    await expect(build).toHaveAttribute('aria-label', 'build usually takes 10m; the last 3 successful runs took 9m to 11m')
+    await expect(lint).toHaveAttribute('aria-label', 'lint usually takes 15s; the last 1 successful run took 15s')
+    await expect(section.locator('.strip-usual')).toHaveText(['usually 10m', 'usually 15s'])
+
+    // Ten minutes in one row and fifteen seconds in the other sit at the same place.
+    const usualX = await lint.locator('circle').getAttribute('cx')
+    await expect(build.locator('circle').nth(1)).toHaveAttribute('cx', usualX!)
+    await expect(build.locator('circle').first()).not.toHaveAttribute('cx', usualX!)
+  })
+})
+
 test.describe('with nothing recorded', () => {
   test.use({ seed: dashboardSeed() })
 

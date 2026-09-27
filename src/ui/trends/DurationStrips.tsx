@@ -1,4 +1,4 @@
-import { durationKey, KEEP, type DurationMap } from '../../model/durations'
+import { durationKey, KEEP, typicalSeconds, type DurationMap } from '../../model/durations'
 import type { BucketForecast } from '../../model/forecast'
 import type { ClassBucket } from '../../model/queue'
 import { seriesClass } from '../palette'
@@ -9,11 +9,20 @@ import { duration } from '../format'
  * successful durations as dots on one axis, with the current run marked. A run sitting past
  * every previous one is either hung or the runner is slow, and that is worth
  * a nudge before the forecast quietly slides.
+ *
+ * The jobs take anything from seconds to most of an hour, so no one scale in
+ * minutes suits them all. Each row is drawn against its own usual time
+ * instead, from nothing to twice the usual. The usual then sits at the same
+ * place in every row, and a run halfway across one row is as far along as a
+ * run halfway across any other. The minutes are in words above each row.
  */
 
 const WIDTH = 360
 const HEIGHT = 30
-const AXIS_END = 322
+const AXIS_START = 4
+const AXIS_END = 352
+/** Each row runs to this many times the job's usual length. */
+const SPAN = 2
 const MAX_STRIPS = 6
 
 interface Props {
@@ -66,12 +75,17 @@ export function DurationStrips({ durations, buckets, forecasts, nowMs }: Props) 
   }
   const shown = strips.slice(0, MAX_STRIPS)
 
+  const anyRunning = shown.some((s) => s.elapsed !== null)
+  const mid = AXIS_START + (AXIS_END - AXIS_START) / SPAN
+
   return (
     <section class="section">
       <div class="section-head">
         <div class="section-title">How long jobs take</div>
         <div class="section-stats">
-          <span>up to {KEEP} successful runs · current run marked</span>
+          <span>
+            up to {KEEP} successful runs{anyRunning ? ' · current run marked' : ''}
+          </span>
         </div>
       </div>
       {shown.length === 0 ? (
@@ -81,8 +95,13 @@ export function DurationStrips({ durations, buckets, forecasts, nowMs }: Props) 
           {shown.map((s) => {
             const lo = Math.min(...s.secs)
             const hi = Math.max(...s.secs)
-            const axisMax = Math.max(hi, s.elapsed ?? 0) * 1.15 || 60
-            const x = (sec: number) => 4 + (Math.min(sec, axisMax) / axisMax) * (AXIS_END - 8)
+            const usual = typicalSeconds(durations, s.key) ?? hi
+            // A job that takes no time at all still needs a scale.
+            const axisMax = Math.max(usual, 1) * SPAN
+            const beyond = (sec: number) => sec > axisMax
+            const x = (sec: number) => AXIS_START + (Math.min(sec, axisMax) / axisMax) * (AXIS_END - AXIS_START)
+            const range = lo === hi ? duration(lo) : `${duration(lo)} to ${duration(hi)}`
+            const runs = `${s.secs.length} successful run${s.secs.length === 1 ? '' : 's'}`
             const label =
               s.elapsed !== null
                 ? `${duration(s.elapsed)}, ${s.overdue ? 'past usual' : 'running'}`
@@ -95,19 +114,33 @@ export function DurationStrips({ durations, buckets, forecasts, nowMs }: Props) 
                   <span class="strip-name" title={s.name}>
                     {s.name} <span class="strip-repo">· {s.repo.name}</span>
                   </span>
-                  <span class={`strip-usual${s.overdue ? ' warn' : ''}`}>
-                    usually {lo === hi ? duration(lo) : `${duration(lo)} to ${duration(hi)}`}
+                  <span class={`strip-usual${s.overdue ? ' warn' : ''}`} title={`From ${runs}: ${range}.`}>
+                    usually {duration(usual)}
                   </span>
                 </div>
                 <svg
                   viewBox={`0 0 ${WIDTH} ${HEIGHT}`}
                   role="img"
-                  aria-label={`${s.name} usually takes ${duration(lo)} to ${duration(hi)}${label ? `, this run ${label}` : ''}`}
+                  aria-label={`${s.name} usually takes ${duration(usual)}; the last ${runs} took ${range}${label ? `, this run ${label}` : ''}`}
                 >
-                  <line class="strip-axis" x1="4" x2={AXIS_END} y1="19" y2="19" />
-                  {s.secs.map((sec, i) => (
-                    <circle key={i} class={`strip-dot ${seriesClass(s.repo)}`} cx={x(sec)} cy="19" r="4" />
-                  ))}
+                  <line class="strip-axis" x1={AXIS_START} x2={AXIS_END} y1="19" y2="19" />
+                  <line class="strip-guide" x1={mid} x2={mid} y1="12" y2="26" />
+                  {s.secs.map((sec, i) =>
+                    beyond(sec) ? (
+                      // Off the end of the scale: a pointer at the edge, not a dot pretending to be there.
+                      <path
+                        key={i}
+                        class={`strip-dot ${seriesClass(s.repo)}`}
+                        d={`M${AXIS_END - 4} 14.5 L${AXIS_END + 4} 19 L${AXIS_END - 4} 23.5 Z`}
+                      >
+                        <title>{duration(sec)}</title>
+                      </path>
+                    ) : (
+                      <circle key={i} class={`strip-dot ${seriesClass(s.repo)}`} cx={x(sec)} cy="19" r="4">
+                        <title>{duration(sec)}</title>
+                      </circle>
+                    ),
+                  )}
                   {s.elapsed !== null && (
                     <g>
                       <line class={`strip-today${s.overdue ? ' over' : ''}`} x1={x(s.elapsed)} x2={x(s.elapsed)} y1="10" y2="28" />
@@ -122,17 +155,27 @@ export function DurationStrips({ durations, buckets, forecasts, nowMs }: Props) 
                     </g>
                   )}
                   {s.elapsed === null && label && (
-                    <text class="strip-label" x={x(hi) + 10} y="8">
+                    <text class="strip-label" x={AXIS_START} y="8">
                       {label}
                     </text>
                   )}
-                  <text class="strip-end" x={AXIS_END + 4} y="22" text-anchor="start">
-                    {duration(axisMax)}
-                  </text>
                 </svg>
               </div>
             )
           })}
+          <div class="strip-scale" aria-hidden="true">
+            <svg viewBox={`0 0 ${WIDTH} 12`}>
+              <text x={AXIS_START} y="9">
+                0
+              </text>
+              <text x={mid} y="9" text-anchor="middle">
+                usual
+              </text>
+              <text x={AXIS_END + 4} y="9" text-anchor="end">
+                {SPAN}× usual
+              </text>
+            </svg>
+          </div>
         </div>
       )}
     </section>
