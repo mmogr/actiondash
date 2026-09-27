@@ -37,21 +37,33 @@ macOS                 5/5 in use    7 queued    oldest waiting 16m
     Queue position 5
 ```
 
-Above the list, the macOS pool is drawn as one row per slot: the job holding
-it from its start to its expected end, then the queued jobs expected to take
-it next as dashed outlines, in the order they will start. Each job is named
-on its bar, or whole beside it when the bar is too short; a run of queued jobs
-too short to draw apart is one outline saying how many; and on a phone the
-running job's name sits above its bar. Expected ends come
-from how long each job usually takes, learned from the jobs the dashboard has
-watched succeed and kept in local storage (job names and seconds, nothing
-else). Failed and cancelled jobs teach nothing: a test that fails in two
-minutes says nothing about how long it takes to pass. A job never seen before
-is guessed from the others of its class and marked as a guess, and the
-tooltip on any "usually" says how many runs it rests on. Two tiles say when
-the next slot frees and when the queue clears, and when a superseded run is
-holding up a real one, a note says which run to cancel first and what that
-buys.
+Each pool opens with a strip of one cell per slot, filled in the colour of
+the repository holding it, then an amber cell for every job waiting, and a
+sentence that answers the question the pool's state raises: "Nothing waiting.
+9 of 40 Linux slots in use, 31 free", or "7 waiting for 5 busy macOS slots".
+A pool with room to spare draws nothing more; a pool that is full, nearly
+full, or has a queue adds a timeline in two parts. In use has a row for each
+job holding a slot, named by its run, solid for the time it has run and pale
+up to where its usual time says it ends. A job past its usual time has no end
+drawn, only a fading edge and "4m over usual", because nobody knows when it
+will finish. Waiting is the queue in line order, a row for each run, numbered
+by place in line: an amber line for the wait, solid for the time already
+waited and dashed for the wait still expected, then a dashed box for when the
+run's jobs should run, with "starts ~10:06" beside it. Superseded runs are
+striped as well as named, your own run is drawn heavier and tagged, and a
+long queue folds into rows that say how many they hold, with your own run
+always shown where it stands. Expected ends come from how long each job
+usually takes, learned from the jobs the dashboard has watched succeed and
+kept in local storage (job names and seconds, nothing else). Failed and
+cancelled jobs teach nothing: a test that fails in two minutes says nothing
+about how long it takes to pass. A job never seen before is guessed from the
+others of its class; a guess never marks a job as slow, is dropped once the
+job outlives it, and any time resting on one says "(guess)". A time behind a
+job already past its usual length is only a floor, and says "or later". The
+tooltip on any "usually" says how many runs it rests on. Two tiles above the
+pool under most pressure say when the next slot frees and when the queue
+clears, and when a superseded run is holding up a real one, a note says which
+run to cancel first and what that buys.
 
 A running run says how far it has got and when the jobs it has now should be
 done; jobs that wait on others with `needs:` do not exist yet, so the estimate

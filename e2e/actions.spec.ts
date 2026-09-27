@@ -211,8 +211,8 @@ test.describe('cancelling from the insight', () => {
     await page.goto('./')
     const insight = page.locator('.insight')
     const tiles = page.locator('.tiles')
-    await expect(insight).toContainText('The next free slot goes to app #1, which is superseded by #3.')
-    await expect(tiles).toContainText('if you cancel #1')
+    await expect(insight).toContainText('app #1 is superseded by #3 but holds 3 slots.')
+    await expect(tiles).toContainText('cancel #1:')
 
     await insight.getByRole('button', { name: 'Cancel #1', exact: true }).click()
     const listingsBefore = github.callsTo(LISTINGS).length
@@ -227,10 +227,10 @@ test.describe('cancelling from the insight', () => {
     // the insight moves on to run 2, and stays there after the check the
     // cancel asks for.
     await github.waitForCalls(LISTINGS, listingsBefore + 2)
-    await expect(insight).toContainText('The next free slot goes to app #2, which is superseded by #3.')
+    await expect(insight).toContainText('app #2 is superseded by #3 but holds 2 slots.')
     await expect(insight.getByRole('button', { name: 'Cancel #2', exact: true })).toBeVisible()
     await expect(page.getByRole('button', { name: 'Cancel #1', exact: true })).toHaveCount(0)
-    await expect(tiles).toContainText('if you cancel #2')
+    await expect(tiles).toContainText('cancel #2:')
     await expect(tiles).not.toContainText('cancel #1')
   })
 
@@ -266,7 +266,7 @@ test.describe('cancelling from the insight', () => {
     github.jobs(4, runningJobs(4, [41, 42, 43], '2026-09-09T10:05:05Z'))
     await page.clock.fastForward(15_000)
 
-    await expect(insight).toContainText('The next free slot goes to app #2, which is superseded by #3.')
+    await expect(insight).toContainText('app #2 is superseded by #3 but holds 2 slots.')
     await expect(confirm).toBeHidden()
     await expect(insight.getByRole('button', { name: 'Cancel #2', exact: true })).toBeVisible()
     // Keep went with the question, so focus moves to the pool's heading.

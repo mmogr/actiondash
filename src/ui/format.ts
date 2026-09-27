@@ -1,3 +1,4 @@
+import type { Basis } from '../model/forecast'
 import type { DashJob } from '../model/queue'
 
 /** Compact relative age, e.g. "48s", "14m", "2h 5m", "3d". */
@@ -40,6 +41,30 @@ export function clockTime(ms: number): string {
 /** Clock time without seconds, for estimates: "22:31". */
 export function shortClock(ms: number): string {
   return new Date(ms).toLocaleTimeString(undefined, { hour: '2-digit', minute: '2-digit' })
+}
+
+const TICK_FORMAT = new Intl.DateTimeFormat(undefined, { hour: 'numeric', minute: '2-digit' })
+
+/**
+ * Clock time for an axis tick, "10:15", without the "am" or "pm" a 12-hour
+ * locale adds: the ticks sit five minutes apart beside a "now", so the half
+ * of the day is never in doubt, and the shorter label fits a phone.
+ */
+export function tickClock(ms: number): string {
+  return TICK_FORMAT.formatToParts(new Date(ms))
+    .filter((p) => p.type !== 'dayPeriod')
+    .map((p) => p.value)
+    .join('')
+    .trim()
+}
+
+/**
+ * The words after a forecast time that say what it rests on. A time behind a
+ * job already past its usual length is a floor, so "or later"; one built from
+ * other jobs' durations is a guess; a learned one needs nothing.
+ */
+export function hedge(basis: Basis): string {
+  return basis === 'floor' ? ' or later' : basis === 'guessed' ? ' (guess)' : ''
 }
 
 /** A duration in seconds as "45s", "12m" or "1h 5m". */

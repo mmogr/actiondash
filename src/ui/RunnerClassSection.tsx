@@ -6,14 +6,17 @@ import { filter, forecasts, now } from '../state/store'
 import { settings } from '../state/settings'
 import { PLANS } from '../model/plans'
 import { InsightCard } from './InsightCard'
+import { PoolGauge } from './PoolGauge'
+import { QueueTimeline } from './QueueTimeline'
 import { RunGroup } from './RunGroup'
-import { SlotLanes } from './SlotLanes'
 import { SummaryTiles } from './SummaryTiles'
-import { oldestWait } from './format'
+import { oldestWait, shortClock } from './format'
+import { poolMode, wantsTimeline } from './lanes'
+import { poolVerdict } from './verdict'
 
 interface Props {
   bucket: ClassBucket
-  /** The scarce pool gets the headline tiles above its card. */
+  /** The pool under most pressure gets the headline tiles above its card. */
   headline: boolean
 }
 
@@ -21,13 +24,34 @@ export function RunnerClassSection({ bucket, headline }: Props) {
   const nowMs = now.value
   const used = bucket.running.length
   const cap = bucket.cap
-  const pct = cap ? Math.min(100, (used / cap) * 100) : 0
   const atCapacity = cap !== null && used >= cap
   const wait = oldestWait(bucket.queued, nowMs)
   const outlook = forecasts.value.get(bucket.cls)
   const forecast = outlook?.forecast
   const insight = outlook?.insight ?? null
-  const showLanes = cap !== null && forecast !== undefined && used + bucket.queued.length > 0
+  // The pool's state picks the picture: a pool with room and nobody waiting
+  // needs only its gauge and a sentence; a full or queued one gets the timeline.
+  const mode = poolMode(used, cap, bucket.queued.length)
+  const showTiles = headline && forecast !== undefined
+  const showTimeline = cap !== null && forecast !== undefined && wantsTimeline(mode, used, cap)
+  const oldest = bucket.queued.reduce((m, j) => (j.since > 0 && j.since < m ? j.since : m), nowMs)
+  const verdict = poolVerdict(
+    {
+      pool: RUNNER_CLASS_LABEL[bucket.cls],
+      mode,
+      used,
+      cap,
+      queued: bucket.queued.length,
+      waitedMs: nowMs - oldest,
+      nextSlotAt: forecast?.nextSlotAt ?? null,
+      nextSlotBasis: forecast?.nextSlotBasis ?? 'learned',
+      queueClearsAt: forecast?.queueClearsAt ?? null,
+      queueClearsBasis: forecast?.queueClearsBasis ?? 'learned',
+      overdue: forecast ? [...forecast.jobs.values()].filter((f) => f.overdue).length : 0,
+      withTimes: !showTiles,
+    },
+    shortClock,
+  )
 
   // Grouped before filtering so a hidden run still counts towards the queue
   // positions of the runs behind it.
@@ -40,22 +64,12 @@ export function RunnerClassSection({ bucket, headline }: Props) {
 
   return (
     <>
-      {headline && forecast && (used > 0 || bucket.queued.length > 0) && (
-        <SummaryTiles bucket={bucket} forecast={forecast} insight={insight} nowMs={nowMs} />
-      )}
+      {showTiles && <SummaryTiles bucket={bucket} forecast={forecast} insight={insight} nowMs={nowMs} />}
     <section class="section">
       <div class="section-head">
         <div class="section-title">{RUNNER_CLASS_LABEL[bucket.cls]}</div>
 
-        {cap !== null && !showLanes && (
-          <div
-            class="meter"
-            role="img"
-            aria-label={`${used} of ${cap} concurrent jobs in use`}
-          >
-            <div class={`meter-fill${atCapacity ? ' full' : ''}`} style={{ width: `${pct}%` }} />
-          </div>
-        )}
+        {cap !== null && <PoolGauge bucket={bucket} cap={cap} />}
 
         <div class="section-stats">
           <span
@@ -75,7 +89,14 @@ export function RunnerClassSection({ bucket, headline }: Props) {
         </div>
       </div>
 
-      {showLanes && <SlotLanes bucket={bucket} forecast={forecast} nowMs={nowMs} />}
+      {verdict && (
+        <p class={`pool-verdict ${mode}`}>
+          <b>{verdict.lead}</b> {verdict.rest}
+        </p>
+      )}
+      {showTimeline && (
+        <QueueTimeline bucket={bucket} forecast={forecast} nowMs={nowMs} login={settings.value.login} />
+      )}
       {/* Keyed, so a question left open cannot pass to another run after a check. */}
       {insight && <InsightCard key={insight.run.id} insight={insight} nowMs={nowMs} />}
 

@@ -7,7 +7,7 @@ import { jobStep, runProgress, type RunGroup as Group } from '../model/queue'
 import { RUNNER_CLASS_LABEL } from '../model/runnerClass'
 import { cancelRequested, forecasts, frozenAt, jobsByRun, now, runsAsOf } from '../state/store'
 import { settings } from '../state/settings'
-import { age, duration, shortClock, shortSha } from './format'
+import { age, duration, hedge, shortClock, shortSha } from './format'
 import { seriesClass } from './palette'
 import { useCancelRun } from './useCancelRun'
 
@@ -93,8 +93,8 @@ export function RunGroup({ group, kind, defaultOpen, forecast }: Props) {
   const eta =
     kind === 'queued' && bucketOutlook && bucketOutlook.firstStart !== null
       ? single
-        ? `starts ~${shortClock(bucketOutlook.firstStart)}${doneBy === null ? '' : `, done ~${shortClock(doneBy)}`}`
-        : `first job starts ~${shortClock(bucketOutlook.firstStart)}${doneBy === null ? '' : `, all done ~${shortClock(doneBy)}`}`
+        ? `starts ~${shortClock(bucketOutlook.firstStart)}${hedge(bucketOutlook.basis)}${doneBy === null ? '' : `, done ~${shortClock(doneBy)}${hedge(outlook?.basis ?? 'learned')}`}`
+        : `first job starts ~${shortClock(bucketOutlook.firstStart)}${hedge(bucketOutlook.basis)}${doneBy === null ? '' : `, all done ~${shortClock(doneBy)}${hedge(outlook?.basis ?? 'learned')}`}`
       : null
   const progressNote =
     kind !== 'running'
@@ -102,12 +102,12 @@ export function RunGroup({ group, kind, defaultOpen, forecast }: Props) {
       : total <= 1
         ? doneBy === null
           ? null
-          : `done ~${shortClock(doneBy)}`
+          : `done ~${shortClock(doneBy)}${hedge(outlook?.basis ?? 'learned')}`
         : [
             progress.done > 0 ? `${progress.done} done` : null,
             `${progress.running} running`,
             progress.queued > 0 ? `${progress.queued} waiting` : null,
-            doneBy === null ? null : `current jobs done ~${shortClock(doneBy)}`,
+            doneBy === null ? null : `current jobs done ~${shortClock(doneBy)}${hedge(outlook?.basis ?? 'learned')}`,
           ]
             .filter(Boolean)
             .join(' · ')
@@ -255,7 +255,7 @@ export function RunGroup({ group, kind, defaultOpen, forecast }: Props) {
                         ? `${age(entry.since, nowMs)} · usually ${f.guessed ? '~' : ''}${duration(f.typical)}`
                         : age(entry.since, nowMs)
                       : f && f.start > 0
-                        ? `~${shortClock(f.start)}${f.typical ? ` · ${f.guessed ? '~' : ''}${duration(f.typical)}` : ''}`
+                        ? `~${shortClock(f.start)}${hedge(f.basis)}${f.typical ? ` · ${f.guessed ? '~' : ''}${duration(f.typical)}` : ''}`
                         : ''}
                   </span>
                   {kind === 'running' && <LogLink job={entry.job} />}
@@ -267,6 +267,7 @@ export function RunGroup({ group, kind, defaultOpen, forecast }: Props) {
                 )}
                 {kind === 'running' && pct !== null && (
                   <div class="progress" aria-hidden="true">
+                    {/* Marked on the same rule as the "past usual" tag, so the two never disagree. */}
                     <div class={`progress-fill${f?.overdue ? ' over' : ''}`} style={{ width: `${pct}%` }} />
                   </div>
                 )}

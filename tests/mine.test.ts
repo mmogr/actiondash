@@ -27,10 +27,12 @@ function forecasts(runs: Record<number, { firstStart: number | null; allDone: nu
   const forecast: BucketForecast = {
     lanes: 5,
     jobs: new Map(),
-    runs: new Map(Object.entries(runs).map(([id, f]) => [Number(id), f])),
+    runs: new Map(Object.entries(runs).map(([id, f]) => [Number(id), { ...f, basis: 'learned' as const }])),
     nextSlotAt: null,
+    nextSlotBasis: 'learned',
     nextToFinish: null,
     queueClearsAt: null,
+    queueClearsBasis: 'learned',
   }
   return new Map([['macos', { forecast }]])
 }

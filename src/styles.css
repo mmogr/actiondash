@@ -430,10 +430,6 @@ code,
   height: 100%;
 }
 
-.meter-fill.full {
-  background: var(--stale);
-}
-
 .section-stats {
   display: flex;
   gap: 16px;
@@ -810,161 +806,261 @@ code,
   }
 }
 
-.lanes {
+/* ---------- a pool's answer, gauge and timeline ---------- */
+
+/* The sentence that answers the pool's question before anything is drawn. */
+.pool-verdict {
   margin: 0;
-  padding: 6px 14px 8px;
+  padding: 10px 14px 4px;
+  font-size: 13.5px;
+  color: var(--text-dim);
+}
+
+.pool-verdict b {
+  color: var(--text);
+  font-weight: 600;
+}
+
+/* Waiting is amber everywhere on the page: the badge, Trends, and here. */
+.pool-verdict.queue b {
+  color: var(--queued);
+}
+
+.pool-verdict.room,
+.pool-verdict.full {
+  padding-bottom: 10px;
+}
+
+/* One cell per slot, then one per waiting job after a gap. */
+.gauge {
+  flex: 1 1 180px;
+  max-width: 360px;
+  display: flex;
+  align-items: center;
+  gap: 2px;
+  min-width: 0;
+}
+
+.gauge-cell {
+  flex: 1 1 0;
+  min-width: 2px;
+  height: 10px;
+  border-radius: 2px;
+  background: var(--border);
+}
+
+.gauge-cell.used { background: var(--series-0); }
+.gauge-cell.used.series-1 { background: var(--series-1); }
+.gauge-cell.used.series-2 { background: var(--series-2); }
+.gauge-cell.used.series-3 { background: var(--series-3); }
+.gauge-cell.used.series-4 { background: var(--series-4); }
+.gauge-cell.used.series-5 { background: var(--series-5); }
+.gauge-cell.used.series-6 { background: var(--series-6); }
+.gauge-cell.used.series-7 { background: var(--series-7); }
+.gauge-cell.used.series-8 { background: var(--series-8); }
+
+.gauge-cell.queued {
+  background: color-mix(in srgb, var(--queued) 22%, transparent);
+  border: 1.5px solid var(--queued);
+}
+
+.gauge-gap {
+  flex: 0 0 6px;
+}
+
+.gauge-more {
+  flex: none;
+  margin-left: 4px;
+  font-family: var(--mono);
+  font-size: 11px;
+  color: var(--queued);
+}
+
+.timeline {
+  margin: 0;
+  padding: 4px 14px 10px;
 }
 
 /* The drawing is sized to this box in pixels, so its text is never scaled. */
-.lanes-plot {
+.timeline-plot {
   width: 100%;
   max-width: 1200px;
 }
 
-.lanes svg {
+.timeline svg {
   display: block;
   font-family: var(--mono);
   overflow: visible;
 }
 
-.lane-rule {
+/* The two headings inside the drawing, in the page's small-caps voice, written
+   in capitals rather than transformed: text-transform on SVG text is not
+   something every phone browser honours. */
+.tl-head {
+  fill: var(--text-dim);
+  font-family: var(--sans);
+  font-size: 11px;
+  font-weight: 600;
+  letter-spacing: 0.07em;
+}
+
+.tl-head.waiting {
+  fill: var(--queued);
+}
+
+.tl-grid {
   stroke: var(--border);
   stroke-width: 1;
+  stroke-dasharray: 1 3;
 }
 
-.lane-label,
-.lane-tick {
-  fill: var(--text-faint);
-  font-size: 11px;
-}
-
-.lane-label {
-  text-anchor: end;
-}
-
-.lane-tick.now {
-  fill: var(--text);
-  font-weight: 600;
-}
-
-.lane-now {
+.tl-now {
   stroke: var(--text);
   stroke-width: 1.5;
 }
 
-.lane-bar {
+.tl-tick {
+  fill: var(--text-dim);
+  font-size: 11px;
+}
+
+.tl-tick.now {
+  fill: var(--text);
+  font-weight: 600;
+}
+
+/* Bars. Solid is what has run; pale is what the usual time says is left. */
+.tl-run,
+.tl-expect,
+.tl-tail,
+.tl-queued {
   fill: var(--series-0);
+  stroke: var(--series-0);
+  stroke-width: 0;
 }
 
-.lane-bar.series-0 { fill: var(--series-0); stroke: var(--series-0); }
-.lane-bar.series-1 { fill: var(--series-1); stroke: var(--series-1); }
-.lane-bar.series-2 { fill: var(--series-2); stroke: var(--series-2); }
-.lane-bar.series-3 { fill: var(--series-3); stroke: var(--series-3); }
-.lane-bar.series-4 { fill: var(--series-4); stroke: var(--series-4); }
-.lane-bar.series-5 { fill: var(--series-5); stroke: var(--series-5); }
-.lane-bar.series-6 { fill: var(--series-6); stroke: var(--series-6); }
-.lane-bar.series-7 { fill: var(--series-7); stroke: var(--series-7); }
-.lane-bar.series-8 { fill: var(--series-8); stroke: var(--series-8); }
+.tl-run.series-1, .tl-expect.series-1, .tl-tail.series-1, .tl-queued.series-1 { fill: var(--series-1); stroke: var(--series-1); }
+.tl-run.series-2, .tl-expect.series-2, .tl-tail.series-2, .tl-queued.series-2 { fill: var(--series-2); stroke: var(--series-2); }
+.tl-run.series-3, .tl-expect.series-3, .tl-tail.series-3, .tl-queued.series-3 { fill: var(--series-3); stroke: var(--series-3); }
+.tl-run.series-4, .tl-expect.series-4, .tl-tail.series-4, .tl-queued.series-4 { fill: var(--series-4); stroke: var(--series-4); }
+.tl-run.series-5, .tl-expect.series-5, .tl-tail.series-5, .tl-queued.series-5 { fill: var(--series-5); stroke: var(--series-5); }
+.tl-run.series-6, .tl-expect.series-6, .tl-tail.series-6, .tl-queued.series-6 { fill: var(--series-6); stroke: var(--series-6); }
+.tl-run.series-7, .tl-expect.series-7, .tl-tail.series-7, .tl-queued.series-7 { fill: var(--series-7); stroke: var(--series-7); }
+.tl-run.series-8, .tl-expect.series-8, .tl-tail.series-8, .tl-queued.series-8 { fill: var(--series-8); stroke: var(--series-8); }
 
-.lane-bar.running {
-  stroke: none;
+.tl-expect {
+  fill-opacity: 0.45;
 }
 
-.lane-bar.running.unknown {
-  fill-opacity: 0.55;
-}
-
-.lane-bar.ghost {
+/* A guess borrowed from other jobs: fainter, with a dotted edge. */
+.tl-expect.guess {
   fill-opacity: 0.16;
+  stroke-width: 1;
+  stroke-dasharray: 2 2;
+}
+
+/* No end is drawn where none is known, only an edge fading out. */
+.tl-tail.t1 { fill-opacity: 0.5; }
+.tl-tail.t2 { fill-opacity: 0.28; }
+.tl-tail.t3 { fill-opacity: 0.12; }
+
+/* Where a job's usual time ran out, cut into its bar. */
+.tl-usual {
+  stroke: var(--surface);
+  stroke-width: 2;
+}
+
+/* The bar started before the window: a chevron in its left end. */
+.tl-clip {
+  fill: none;
+  stroke: var(--surface);
+  stroke-width: 1.5;
+}
+
+.tl-queued {
+  fill-opacity: 0.14;
   stroke-width: 1.5;
   stroke-dasharray: 4 3;
 }
 
-.lane-bar.ghost.stale {
-  stroke: var(--stale);
-  fill: var(--stale);
+/* The reader's own run: the same dashed box, drawn heavier. */
+.tl-queued.mine {
+  stroke-width: 2.5;
 }
 
-.lane-bar.overdue {
+/* Superseded: stripes, so it never rests on red alone. */
+.tl-hatch-line {
+  stroke: var(--stale);
+  stroke-width: 2.2;
+}
+
+/* The wait: solid for time waited, dashed for the wait still ahead. */
+.tl-wait {
   stroke: var(--queued);
   stroke-width: 2;
+  fill: none;
 }
 
-.lane-text {
-  fill: var(--text-dim);
-  font-size: 12px;
-  pointer-events: none;
+.tl-wait.ahead {
+  stroke-dasharray: 3 3;
 }
 
-/* White text on a bar keeps an edge in the bar's own colour, so a line that
-   passes behind it breaks around the words instead of running through them. */
-.lane-text.on-bar {
-  fill: #fff;
-  font-weight: 600;
-  paint-order: stroke;
-  stroke: var(--series-0);
-  stroke-width: 3px;
-  stroke-linejoin: round;
+.tl-wait.unknown {
+  opacity: 0.55;
 }
 
-.lane-text.on-bar.series-1 { stroke: var(--series-1); }
-.lane-text.on-bar.series-2 { stroke: var(--series-2); }
-.lane-text.on-bar.series-3 { stroke: var(--series-3); }
-.lane-text.on-bar.series-4 { stroke: var(--series-4); }
-.lane-text.on-bar.series-5 { stroke: var(--series-5); }
-.lane-text.on-bar.series-6 { stroke: var(--series-6); }
-.lane-text.on-bar.series-7 { stroke: var(--series-7); }
-.lane-text.on-bar.series-8 { stroke: var(--series-8); }
+.tl-wait-dot {
+  fill: var(--queued);
+}
 
-/* On a narrow screen, the running job's name above its bar, with an edge in
-   the card's colour so the now line breaks around it too. */
-.lane-caption {
-  fill: var(--text-dim);
+/* Captions keep an edge in the card's colour, so lines behind break around them. */
+.tl-caption {
   font-size: 11px;
+  fill: var(--text);
   paint-order: stroke;
   stroke: var(--surface);
   stroke-width: 4px;
   stroke-linejoin: round;
 }
 
-.lane-caption.stale {
-  fill: var(--stale);
+.tl-pos {
+  fill: var(--queued);
+  font-weight: 700;
 }
 
-.lane-text.stale {
-  fill: var(--stale);
+.tl-note {
+  fill: var(--text-dim);
+}
+
+.tl-tag {
   font-weight: 600;
 }
 
-.lane-legend {
+.tl-tag.stale {
+  fill: var(--stale);
+}
+
+.tl-tag.you {
+  fill: var(--accent);
+}
+
+.tl-legend {
   display: flex;
   flex-wrap: wrap;
   gap: 4px 14px;
-  margin-top: 4px;
+  margin-top: 6px;
   font-size: 11.5px;
   color: var(--text-dim);
 }
 
-.lane-legend .swatch {
-  width: 10px;
-  height: 10px;
-  vertical-align: -1px;
+.tl-legend > span {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
 }
 
-.swatch.ghost {
-  background: transparent;
-  border: 1.5px dashed var(--text-faint);
-  box-sizing: border-box;
-}
-
-.swatch.ghost.stale {
-  border-color: var(--stale);
-}
-
-.swatch.overdue {
-  background: transparent;
-  border: 2px solid var(--queued);
-  box-sizing: border-box;
+.tl-swatch {
+  flex: none;
 }
 
 .insight {
@@ -1018,14 +1114,20 @@ code,
   gap: 3px;
 }
 
+/* Past its usual time: said in words and weight, not in amber, which on this
+   page means waiting for a slot. */
 .overdue-tag {
   margin-left: 6px;
+  padding: 0 5px;
   font-size: 11px;
-  color: var(--queued);
+  color: var(--text);
+  border: 1px solid var(--border-strong);
+  border-radius: 4px;
 }
 
 .group-age.warn {
-  color: var(--queued);
+  color: var(--text);
+  font-weight: 600;
 }
 
 .progress {
@@ -1040,8 +1142,10 @@ code,
   background: var(--running);
 }
 
+/* A job well past its usual time: the bar has nothing left to fill, so it
+   goes grey rather than amber, which on this page means waiting for a slot. */
 .progress-fill.over {
-  background: var(--queued);
+  background: var(--text-dim);
 }
 
 /* ---------- trends ---------- */
@@ -1800,7 +1904,8 @@ code,
     flex: 1 0 auto;
   }
 
-  .meter {
+  .meter,
+  .gauge {
     order: 1;
     flex: 1 0 100%;
     max-width: none;

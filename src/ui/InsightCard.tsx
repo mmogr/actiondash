@@ -26,14 +26,29 @@ export function InsightCard({ insight, nowMs }: Props) {
         <path d="M12 16h.01" />
       </svg>
       <div class="insight-text">
-        The next free slot goes to{' '}
-        <b>
-          {insight.repo.name} #{insight.run.run_number}
-        </b>
-        , which is superseded by #{insight.supersededBy.run_number}. Cancelling it starts{' '}
+        {/* Said from where the run stands: holding slots, or first in line for one. */}
+        {insight.holding > 0 ? (
+          <>
+            <b>
+              {insight.repo.name} #{insight.run.run_number}
+            </b>{' '}
+            is superseded by #{insight.supersededBy.run_number} but holds {insight.holding}{' '}
+            {insight.holding === 1 ? 'slot' : 'slots'}.
+          </>
+        ) : (
+          <>
+            The next free slot goes to{' '}
+            <b>
+              {insight.repo.name} #{insight.run.run_number}
+            </b>
+            , which is superseded by #{insight.supersededBy.run_number}.
+          </>
+        )}{' '}
+        Cancelling it starts{' '}
         {who.job.name} (#{who.run.run_number}){' '}
-        {startsNow ? 'now' : relative(insight.startsAtIfCancelled, nowMs)}, about{' '}
-        {duration(saving / 1000)} sooner.
+        {startsNow ? 'now' : relative(insight.startsAtIfCancelled, nowMs)}
+        {/* Behind a job past its usual time the start is a floor, so the saving is at least the figure. */}
+        , {insight.basis === 'floor' ? 'at least' : 'about'} {duration(saving / 1000)} sooner.
       </div>
       {cancel.confirming ? (
         <div class="insight-actions" role="group" aria-label="Confirm cancel" onKeyDown={cancel.onKeyDown}>

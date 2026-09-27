@@ -1,5 +1,5 @@
 import type { RunnerClass, RunWithRepo, WorkflowJob } from '../github/types'
-import { runOutlook, type BucketForecast } from './forecast'
+import { runOutlook, type Basis, type BucketForecast } from './forecast'
 import { runProgress, type ClassBucket, type DashJob } from './queue'
 
 /**
@@ -22,6 +22,8 @@ export interface MyRun {
   startsAt: number | null
   /** When the jobs it has now should be done. */
   doneAt: number | null
+  /** What startsAt and doneAt rest on: a floor behind an overrunning job, a guess, or learned times. */
+  basis: Basis
   /** How long it has been waiting, or running. */
   since: number
   /** For a run still waiting: its place in the pool it waits for. */
@@ -83,6 +85,7 @@ export function myRuns(
       stale: stale.has(id),
       startsAt: isRunning ? null : (outlook?.firstStart ?? null),
       doneAt: outlook?.allDone ?? null,
+      basis: outlook?.basis ?? 'learned',
       since: earliest((isRunning ? running.get(id) : queued.get(id)) ?? []),
       position: isRunning ? null : positionOf(id, buckets),
       failed: runProgress(jobsByRun.get(id)).failed,

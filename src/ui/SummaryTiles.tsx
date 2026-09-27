@@ -1,7 +1,8 @@
 import type { BucketForecast, Insight } from '../model/forecast'
 import type { ClassBucket } from '../model/queue'
 import { RUNNER_CLASS_LABEL } from '../model/runnerClass'
-import { relative, shortClock } from './format'
+import { duration, relative, shortClock } from './format'
+import { endNote, isDue } from './verdict'
 
 interface Props {
   bucket: ClassBucket
@@ -10,9 +11,15 @@ interface Props {
   nowMs: number
 }
 
+/** A cancel is worth offering in the tile only when it moves the queue by this much. */
+const MIN_SAVING_MS = 60_000
+
 /**
  * The two numbers a reader opens the page for: when the next slot frees and
- * when the queue clears. Shown for the scarce pool only.
+ * when the queue clears. Shown for the pool under most pressure only. Every
+ * figure is an estimate and says so with "~"; one resting on a job already
+ * past its usual time is a bound, said as "or later", and one resting on a
+ * guessed duration says that too. The notes are short enough for a phone.
  */
 export function SummaryTiles({ bucket, forecast, insight, nowMs }: Props) {
   const used = bucket.running.length
@@ -28,24 +35,40 @@ export function SummaryTiles({ bucket, forecast, insight, nowMs }: Props) {
   } else if (forecast.nextSlotAt === null) {
     // Not a question mark: say what is missing and what will fill it in.
     next = 'learning'
-    nextNote = 'estimates appear as jobs finish'
+    nextNote = 'appears as jobs finish'
   } else {
-    next = relative(forecast.nextSlotAt, nowMs)
     const job = forecast.nextToFinish
-    nextNote = job ? `${job.job.name} finishing` : `${pool} slot`
+    const f = job ? forecast.jobs.get(job.job.id) : undefined
+    // The same words the timeline puts on the job's row, so the two agree.
+    const note = f ? endNote(f.usualEnd, f.guessed, nowMs, shortClock, duration) : null
+    if (job && note !== null && isDue(note)) {
+      next = 'any time'
+      nextNote = `${job.job.name} ${note}`
+    } else {
+      next = relative(forecast.nextSlotAt, nowMs)
+      nextNote = job ? `${job.job.name} finishing${forecast.nextSlotBasis === 'guessed' ? ' (guess)' : ''}` : `${pool} slot`
+    }
   }
 
   const clears = forecast.queueClearsAt
-  const clearsText =
-    bucket.queued.length === 0 ? 'nothing waiting' : clears === null ? 'learning' : shortClock(clears)
+  const queued = bucket.queued.length
+  const saving =
+    clears !== null && insight && insight.queueClearsAtIfCancelled !== null && insight.basis !== 'floor'
+      ? clears - insight.queueClearsAtIfCancelled
+      : 0
+  const clearsText = queued === 0 ? 'no queue' : clears === null ? 'learning' : `~${shortClock(clears)}`
   const clearsNote =
-    bucket.queued.length === 0
+    queued === 0
       ? `${pool} queue is empty`
       : clears === null
-        ? 'some jobs not yet seen to finish'
-        : insight && insight.queueClearsAtIfCancelled !== null
-          ? `${shortClock(insight.queueClearsAtIfCancelled)} if you cancel #${insight.run.run_number}`
-          : `${bucket.queued.length} queued ${pool} job${bucket.queued.length === 1 ? '' : 's'}`
+        ? 'not every job seen yet'
+        : insight && saving >= MIN_SAVING_MS
+          ? `cancel #${insight.run.run_number}: ${duration(saving / 1000)} sooner`
+          : forecast.queueClearsBasis === 'floor'
+            ? `or later · ${queued} queued`
+            : forecast.queueClearsBasis === 'guessed'
+              ? `${queued} queued · a guess`
+              : `${queued} queued ${pool} job${queued === 1 ? '' : 's'}`
 
   return (
     <div class="tiles">
