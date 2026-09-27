@@ -1,6 +1,6 @@
 import type { Page } from '@playwright/test'
 import type { RepoRef } from '../src/github/types'
-import { json } from '../tests/replies'
+import { deferred, json } from '../tests/replies'
 import { expect, test } from './fixtures'
 import { bearer, credential, ref, repo, REPOS_PATH, requests } from './scenarios'
 import { KEYS, TOKEN } from './seed'
@@ -46,6 +46,24 @@ test('connecting checks the token, lists its repositories and clears the field',
   await github.expectNoNewCalls(async () => {})
   expect(requests(github.calls)).toEqual(['GET /user', `GET ${REPOS_PATH}`])
   expect(github.calls.map(bearer)).toEqual(['TOKEN', 'TOKEN'])
+})
+
+test('a token is checked once, however often Enter is pressed', async ({ page, github }) => {
+  const user = deferred()
+  github.on(/\/user$/, user.reply)
+  github.repos([repo('acme/app')])
+
+  await page.goto('./')
+  const field = page.getByLabel('Personal access token')
+  await field.fill(TOKEN)
+  await field.press('Enter')
+  await github.waitForCalls(/\/user$/)
+  await github.expectNoNewCalls(() => field.press('Enter'))
+
+  user.resolve(json({ login: 'octocat', name: null }))
+  await expect(page.getByText('Connected as octocat.', { exact: true })).toBeVisible()
+  await github.expectNoNewCalls(async () => {})
+  expect(requests(github.calls)).toEqual(['GET /user', `GET ${REPOS_PATH}`])
 })
 
 test('choosing repositories and a plan opens the dashboard, and a reload goes straight back to it', async ({

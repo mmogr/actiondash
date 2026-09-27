@@ -211,7 +211,7 @@ export function Setup() {
         value={tokenInput}
         onInput={(e) => setTokenInput((e.target as HTMLInputElement).value)}
         onKeyDown={(e) => {
-          if (e.key === 'Enter' && tokenInput.trim()) onSubmit(tokenInput.trim())
+          if (e.key === 'Enter' && !busy && tokenInput.trim()) onSubmit(tokenInput.trim())
         }}
       />
       <button
