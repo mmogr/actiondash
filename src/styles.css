@@ -815,11 +815,14 @@ code,
   padding: 6px 14px 8px;
 }
 
+/* The drawing is sized to this box in pixels, so its text is never scaled. */
+.lanes-plot {
+  width: 100%;
+  max-width: 1200px;
+}
+
 .lanes svg {
   display: block;
-  width: 100%;
-  max-width: 560px;
-  height: auto;
   font-family: var(--mono);
   overflow: visible;
 }
@@ -832,7 +835,7 @@ code,
 .lane-label,
 .lane-tick {
   fill: var(--text-faint);
-  font-size: 10.5px;
+  font-size: 11px;
 }
 
 .lane-label {
@@ -853,6 +856,7 @@ code,
   fill: var(--series-0);
 }
 
+.lane-bar.series-0 { fill: var(--series-0); stroke: var(--series-0); }
 .lane-bar.series-1 { fill: var(--series-1); stroke: var(--series-1); }
 .lane-bar.series-2 { fill: var(--series-2); stroke: var(--series-2); }
 .lane-bar.series-3 { fill: var(--series-3); stroke: var(--series-3); }
@@ -888,13 +892,43 @@ code,
 
 .lane-text {
   fill: var(--text-dim);
-  font-size: 10.5px;
+  font-size: 12px;
   pointer-events: none;
 }
 
+/* White text on a bar keeps an edge in the bar's own colour, so a line that
+   passes behind it breaks around the words instead of running through them. */
 .lane-text.on-bar {
   fill: #fff;
   font-weight: 600;
+  paint-order: stroke;
+  stroke: var(--series-0);
+  stroke-width: 3px;
+  stroke-linejoin: round;
+}
+
+.lane-text.on-bar.series-1 { stroke: var(--series-1); }
+.lane-text.on-bar.series-2 { stroke: var(--series-2); }
+.lane-text.on-bar.series-3 { stroke: var(--series-3); }
+.lane-text.on-bar.series-4 { stroke: var(--series-4); }
+.lane-text.on-bar.series-5 { stroke: var(--series-5); }
+.lane-text.on-bar.series-6 { stroke: var(--series-6); }
+.lane-text.on-bar.series-7 { stroke: var(--series-7); }
+.lane-text.on-bar.series-8 { stroke: var(--series-8); }
+
+/* On a narrow screen, the running job's name above its bar, with an edge in
+   the card's colour so the now line breaks around it too. */
+.lane-caption {
+  fill: var(--text-dim);
+  font-size: 11px;
+  paint-order: stroke;
+  stroke: var(--surface);
+  stroke-width: 4px;
+  stroke-linejoin: round;
+}
+
+.lane-caption.stale {
+  fill: var(--stale);
 }
 
 .lane-text.stale {
