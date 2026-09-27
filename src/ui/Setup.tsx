@@ -133,6 +133,7 @@ export function Setup() {
       if (list.length === 0) setNotice(NO_REPOS)
     } catch (err) {
       pendingToken.value = null
+      setConnectedAs(null)
       setTokenError(
         err instanceof GitHubError && err.status === 401
           ? 'GitHub rejected that token too. Check it was copied whole.'
