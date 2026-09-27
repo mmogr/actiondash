@@ -268,6 +268,7 @@ test('cancelling every superseded run sends one cancel, then the next only after
   // the wait before the second.
   const progress = page.locator('.bulk-progress')
   await expect(progress).toHaveText('Cancelling 1 of 2…')
+  await expect(progress).toBeFocused()
   expect(github.callsTo(ANY_CANCEL).map((c) => c.path)).toEqual(['/repos/acme/app/actions/runs/1/cancel'])
 
   await github.expectNoNewCalls(() => page.clock.runFor(999))
@@ -282,9 +283,11 @@ test('cancelling every superseded run sends one cancel, then the next only after
   await expect(page.locator('[data-run="1"]').getByText('cancel requested')).toBeVisible()
   await expect(page.locator('[data-run="2"]').getByText('cancel requested')).toBeVisible()
   await expect(page.locator('[data-run="3"]').getByRole('button', { name: 'Cancel app run #3' })).toBeVisible()
-  // Nothing superseded is left to cancel, so the offer goes.
+  // Nothing superseded is left to cancel, so the offer goes, and what took its
+  // place says what became of them and keeps focus.
   await expect(bulk).toBeHidden()
-  await expect(progress).toBeHidden()
+  await expect(progress).toHaveText('Cancel requested for 2 superseded runs.')
+  await expect(progress).toBeFocused()
 })
 
 test('re-running a failed run asks first, sends one re-run of the failed jobs, and says it was requested', async ({

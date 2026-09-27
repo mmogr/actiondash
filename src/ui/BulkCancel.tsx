@@ -20,17 +20,25 @@ function slotsText(holding: Partial<Record<RunnerClass, number>>): string | null
  * already been replaced by a newer commit on the same branch.
  */
 export function BulkCancel() {
-  const confirm = useConfirm()
   const [progress, setProgress] = useState<{ done: number; of: number } | null>(null)
+  const confirm = useConfirm(progress !== null)
   const nowMs = now.value
   const requested = cancelRequested.value
   const jobs = stale.value.filter((j) => !isCancelRequested(requested, j.run.id, nowMs))
   const targets = distinctRuns(jobs)
+  const asked = distinctRuns(stale.value).length - targets.length
 
-  if (progress !== null) {
+  const status =
+    progress !== null
+      ? `Cancelling ${progress.done} of ${progress.of}…`
+      : targets.length === 0 && asked > 0
+        ? `Cancel requested for ${asked} superseded run${asked === 1 ? '' : 's'}.`
+        : null
+  // One node for every status, so focus survives the text changing.
+  if (status !== null) {
     return (
-      <span class="bulk-progress" role="status">
-        Cancelling {progress.done} of {progress.of}…
+      <span ref={confirm.statusRef} class="bulk-progress" role="status" tabIndex={-1}>
+        {status}
       </span>
     )
   }
