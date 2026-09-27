@@ -66,3 +66,24 @@ export function deferred(options: { honourAbort?: boolean } = {}): Deferred {
     resolve: (reply) => settle?.(reply),
   }
 }
+
+/**
+ * No answer at all, as when the network is down: fetch rejects with a
+ * TypeError. The browser tests' fake turns it into an aborted request.
+ */
+export function networkError(): Reply {
+  return () => {
+    throw new TypeError('Failed to fetch')
+  }
+}
+
+/**
+ * GitHub's conditional request: 304 with no body when If-None-Match carries
+ * the current ETag, otherwise the body and the ETag to send next time.
+ */
+export function conditional(etag: string, body: unknown): Reply {
+  return (call) =>
+    call.headers.get('if-none-match') === etag
+      ? new Response(null, { status: 304, headers: { etag } })
+      : new Response(JSON.stringify(body), { status: 200, headers: { 'content-type': 'application/json', etag } })
+}
