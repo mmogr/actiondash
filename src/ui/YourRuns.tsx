@@ -5,6 +5,7 @@ import { filter, myRunsNow, now } from '../state/store'
 import { settings } from '../state/settings'
 import { age, relative, shortClock } from './format'
 import { seriesClass } from './palette'
+import { showRun } from './route'
 
 const SHOWN = 3
 /** Within this of now, an estimate reads as "now", as relative() also has it. */
@@ -82,7 +83,18 @@ function YourRun({ m, nowMs }: { m: MyRun; nowMs: number }) {
       ) : (
         where && <div class="group-note">{where}</div>
       )}
-      <a class="yours-show" href={`#run=${run.id}`}>
+      <a
+        class="yours-show"
+        href={`#run=${run.id}`}
+        onClick={(e) => {
+          // The address would be put back to #now once the run is shown, so
+          // following the link would leave a step that Back does nothing with.
+          // The href stays for opening in a new tab and copying.
+          if (e.button !== 0 || e.metaKey || e.ctrlKey || e.shiftKey || e.altKey) return
+          e.preventDefault()
+          showRun(run.id)
+        }}
+      >
         Show in list
       </a>
     </div>
