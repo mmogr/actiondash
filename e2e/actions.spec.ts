@@ -1,10 +1,11 @@
 import type { Page } from '@playwright/test'
+import type { DurationMap } from '../src/model/durations'
 import { makeJob, makeRun } from '../tests/helpers'
 import { deferred, empty, json } from '../tests/replies'
 import { expect, test } from './fixtures'
 import { LISTINGS } from './scenarios'
 import type { BrowserGitHub } from './github'
-import { dashboardSeed, REPO } from './seed'
+import { dashboardSeed, FIXED_NOW, REPO } from './seed'
 
 /**
  * The writes the reader can make from the dashboard: cancelling a run,
@@ -128,6 +129,107 @@ test.describe('cancelling one run', () => {
 
     await alert.getByRole('button', { name: 'dismiss' }).click()
     await expect(alert).toBeHidden()
+  })
+})
+
+/** Every build of acme/app takes ten minutes, so the insight has figures to work from. */
+const TEN_MINUTE_BUILDS: DurationMap = {
+  'acme/app::build': { secs: [600], ids: [901], cls: 'macos', seenAt: FIXED_NOW.getTime() - 3_600_000 },
+}
+
+const RUN_1 = makeRun({ id: 1, run_number: 1, status: 'in_progress', head_sha: 'b'.repeat(40) })
+const RUN_2 = makeRun({ id: 2, run_number: 2, status: 'in_progress', head_sha: 'c'.repeat(40) })
+const RUN_3 = makeRun({ id: 3, run_number: 3, status: 'queued', head_sha: 'd'.repeat(40) })
+
+function runningJobs(runId: number, ids: number[], started: string) {
+  return ids.map((id) => makeJob({ id, run_id: runId, status: 'in_progress', started_at: started }))
+}
+
+/**
+ * Pro's five macOS slots, all held by runs 1 and 2, which run 3 on a newer
+ * commit of the same branch has superseded. Run 3 waits for a slot. Cancelling
+ * either would start it at once; the insight names the first, run 1.
+ */
+function scriptFullPool(github: BrowserGitHub): void {
+  github.runs(REPO, [RUN_3], [RUN_1, RUN_2])
+  github.jobs(1, runningJobs(1, [11, 12, 13], '2026-09-09T10:01:00Z'))
+  github.jobs(2, runningJobs(2, [21, 22], '2026-09-09T10:02:00Z'))
+  github.jobs(3, [makeJob({ id: 31, run_id: 3, created_at: '2026-09-09T10:03:00Z' })])
+}
+
+test.describe('cancelling from the insight', () => {
+  test.use({ seed: { ...dashboardSeed(), durations: TEN_MINUTE_BUILDS } })
+
+  test('a cancel already asked for is offered again neither in the insight nor in the tiles', async ({
+    page,
+    github,
+  }) => {
+    scriptFullPool(github)
+    const reply = deferred()
+    github.write(CANCEL_1, reply.reply)
+
+    await page.goto('./')
+    const insight = page.locator('.insight')
+    const tiles = page.locator('.tiles')
+    await expect(insight).toContainText('The next free slot goes to app #1, which is superseded by #3.')
+    await expect(tiles).toContainText('if you cancel #1')
+
+    await insight.getByRole('button', { name: 'Cancel #1', exact: true }).click()
+    const listingsBefore = github.callsTo(LISTINGS).length
+    await insight.getByRole('group', { name: 'Confirm cancel' }).getByRole('button', { name: 'Yes, cancel #1' }).click()
+    await github.waitForCalls(CANCEL_1, 1, 'POST')
+    const status = insight.getByRole('status')
+    await expect(status).toHaveText('cancelling…')
+    await expect(status).toBeFocused()
+    reply.resolve(empty(202))
+
+    // Run 1 holds its slots until GitHub catches up, but it has been asked, so
+    // the insight moves on to run 2, and stays there after the check the
+    // cancel asks for.
+    await github.waitForCalls(LISTINGS, listingsBefore + 2)
+    await expect(insight).toContainText('The next free slot goes to app #2, which is superseded by #3.')
+    await expect(insight.getByRole('button', { name: 'Cancel #2', exact: true })).toBeVisible()
+    await expect(page.getByRole('button', { name: 'Cancel #1', exact: true })).toHaveCount(0)
+    await expect(tiles).toContainText('if you cancel #2')
+    await expect(tiles).not.toContainText('cancel #1')
+  })
+
+  test('a question left open when a check changes the insight is taken back, never turned on another run', async ({
+    page,
+    github,
+  }) => {
+    scriptFullPool(github)
+
+    await page.goto('./')
+    const insight = page.locator('.insight')
+    await insight.getByRole('button', { name: 'Cancel #1', exact: true }).click()
+    const confirm = insight.getByRole('group', { name: 'Confirm cancel' })
+    await expect(confirm.getByRole('button', { name: 'Yes, cancel #1' })).toBeVisible()
+
+    // Before the next check, run 1 ends and a run on another branch takes its
+    // slots, so the insight names run 2 instead.
+    const other = makeRun({ id: 4, run_number: 4, status: 'in_progress', head_branch: 'main', head_sha: 'e'.repeat(40) })
+    github.runs(REPO, [RUN_3], [RUN_2, other])
+    github.jobs(
+      1,
+      [11, 12, 13].map((id) =>
+        makeJob({
+          id,
+          run_id: 1,
+          status: 'completed',
+          conclusion: 'cancelled',
+          started_at: '2026-09-09T10:01:00Z',
+          completed_at: '2026-09-09T10:05:05Z',
+        }),
+      ),
+    )
+    github.jobs(4, runningJobs(4, [41, 42, 43], '2026-09-09T10:05:05Z'))
+    await page.clock.fastForward(15_000)
+
+    await expect(insight).toContainText('The next free slot goes to app #2, which is superseded by #3.')
+    await expect(confirm).toBeHidden()
+    await expect(insight.getByRole('button', { name: 'Cancel #2', exact: true })).toBeVisible()
+    expect(github.callsTo(ANY_CANCEL)).toEqual([])
   })
 })
 

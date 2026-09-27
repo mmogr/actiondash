@@ -6,6 +6,7 @@ import {
   typicalSeconds,
   type DurationMap,
 } from './durations'
+import { isCancelRequested } from './finished'
 import type { ClassBucket, DashJob } from './queue'
 
 /**
@@ -235,15 +236,19 @@ const MIN_SAVING_MS = 60_000
  * The one superseded run whose cancellation would most help the first
  * legitimate queued job, or null when none would. Every superseded run is
  * worth cancelling; this names the one that is worth cancelling first.
+ *
+ * A run whose cancel has been asked for is not named again: GitHub has yet to
+ * act on it, and offering it a second time would invite a second request.
  */
 export function insightFor(
   bucket: ClassBucket,
   durations: DurationMap,
   nowMs: number,
+  requested: ReadonlyMap<number, number> = new Map(),
 ): Insight | null {
   const stale = new Map<number, DashJob>()
   for (const j of [...bucket.running, ...bucket.queued]) {
-    if (j.supersededBy !== null) stale.set(j.run.id, j)
+    if (j.supersededBy !== null && !isCancelRequested(requested, j.run.id, nowMs)) stale.set(j.run.id, j)
   }
   if (stale.size === 0) return null
   const beneficiary = bucket.queued.find((j) => j.supersededBy === null)
