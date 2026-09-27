@@ -333,7 +333,10 @@ test('re-running a failed run asks first, sends one re-run of the failed jobs, a
   const listingsBefore = github.callsTo(LISTINGS).length
   await confirm.getByRole('button', { name: 'Yes, re-run' }).click()
 
-  await expect(finished).toContainText('Re-run requested. It joins the queue on the next check.')
+  // The button that had focus is gone, so the note in its place takes focus.
+  const note = finished.getByText('Re-run requested. It joins the queue on the next check.')
+  await expect(note).toBeFocused()
+  await expect(note).toHaveRole('status')
   await expect(rerun).toBeHidden()
   await github.waitForCalls(LISTINGS, listingsBefore + 1)
   expect(github.callsTo(/\/rerun/).map((c) => `${c.method} ${c.path}`)).toEqual([

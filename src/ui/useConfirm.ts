@@ -20,11 +20,11 @@ function focusIsLost(): boolean {
  * Layout effects rather than passive ones, so focus has landed before anything
  * that runs after the render, such as a MutationObserver, can see it lost.
  */
-export function useConfirm(busy = false) {
+export function useConfirm<Status extends HTMLElement = HTMLElement>(busy = false) {
   const [confirming, setConfirming] = useState(false)
   const askRef = useRef<HTMLButtonElement>(null)
   const keepRef = useRef<HTMLButtonElement>(null)
-  const statusRef = useRef<HTMLElement>(null)
+  const statusRef = useRef<Status>(null)
   const restore = useRef(false)
   const wasBusy = useRef(busy)
 
