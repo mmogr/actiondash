@@ -25,7 +25,7 @@ test('a fresh browser lands on setup and asks GitHub nothing', async ({ page, gi
   await expect(page.getByRole('button', { name: 'Connect' })).toBeDisabled()
   await token.fill('github_pat_typed')
   await expect(page.getByRole('button', { name: 'Connect' })).toBeEnabled()
-  await expect(page).toHaveTitle('actiondash')
+  await expect(page).toHaveTitle('deliberately wrong, to prove the report is kept')
   await expectNoSidewaysScroll(page)
   expect(github.calls).toEqual([])
 })
