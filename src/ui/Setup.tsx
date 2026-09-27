@@ -5,7 +5,7 @@ import { clearJobCache } from '../github/poller'
 import { parseRepo, repoKey, type Repo, type RepoRef } from '../github/types'
 import { classify, problemText } from '../model/health'
 import { PLANS, type PlanId } from '../model/plans'
-import { joinList, keptList, ownersOf, sameAccount, sameSelection } from '../model/setup'
+import { joinList, keptList, ownersOf, sameAccount, sameSelection, watchPatch } from '../model/setup'
 import { durations } from '../state/durations'
 import { history } from '../state/history'
 import { pendingToken, settings, tokenKind, updateSettings } from '../state/settings'
@@ -14,10 +14,17 @@ import { shortClock } from './format'
 
 const TOKEN_URL = 'https://github.com/settings/personal-access-tokens/new'
 const TOKENS_URL = 'https://github.com/settings/personal-access-tokens'
+const NO_REPOS =
+  'The token reached GitHub but reported no repositories. Add repositories to it, or enter one below by name.'
 
-/** "acme/site: not found; the token may not include it". */
-function unreadableText(failures: readonly { repo: RepoRef; error: unknown }[]): string {
-  return failures.map((f) => `${repoKey(f.repo)}: ${problemText(classify(f.error))}`).join('; ')
+/** A repository a check could not read, and why: "not found; the token may not include it". */
+interface Unreadable {
+  key: string
+  problem: string
+}
+
+function unreadableFrom(failures: readonly { repo: RepoRef; error: unknown }[]): Unreadable[] {
+  return failures.map((f) => ({ key: repoKey(f.repo), problem: problemText(classify(f.error)) }))
 }
 
 /** Everything a fresh start needs, once a token and its repositories check out. */
@@ -41,11 +48,18 @@ export function Setup() {
   )
   const [filter, setFilter] = useState('')
   const [manual, setManual] = useState('')
+  // Kept only when the dashboard opens, with the repositories chosen alongside it.
+  const [plan, setPlan] = useState<PlanId>(() => settings.value.plan)
   const [busy, setBusy] = useState(false)
-  const [error, setError] = useState<string | null>(null)
+  // Each problem is said beside the control it is about: the token, the
+  // repositories, or opening the dashboard.
+  const [tokenError, setTokenError] = useState<string | null>(null)
+  const [reposError, setReposError] = useState<string | null>(null)
+  const [startError, setStartError] = useState<string | null>(null)
   const [notice, setNotice] = useState<string | null>(null)
-  // Repositories the last check could not read, and why, shown by Open.
-  const [unreadable, setUnreadable] = useState<{ keys: string[]; text: string } | null>(null)
+  // Repositories the last check could not read, and why, shown by Open while
+  // they are still selected.
+  const [unreadable, setUnreadable] = useState<Unreadable[]>([])
 
   const kind = tokenInput ? tokenKind(tokenInput) : null
 
@@ -55,10 +69,18 @@ export function Setup() {
     if (stored && rejectedAt === null) void connect(stored)
   }, [])
 
+  /** A new token starts setup afresh, so nothing said about the last one stands. */
+  function clearProblems() {
+    setTokenError(null)
+    setReposError(null)
+    setStartError(null)
+    setNotice(null)
+    setUnreadable([])
+  }
+
   async function connect(token: string) {
     setBusy(true)
-    setError(null)
-    setNotice(null)
+    clearProblems()
     pendingToken.value = token
     try {
       const user = await getUser()
@@ -69,18 +91,14 @@ export function Setup() {
       // exposes it. Not before: if the list fails, trying again needs it.
       setTokenInput('')
       setRepos(list)
-      if (list.length === 0) {
-        setNotice(
-          'The token reached GitHub but reported no repositories. Add repositories to it, or enter one below by name.',
-        )
-      }
+      if (list.length === 0) setNotice(NO_REPOS)
     } catch (err) {
       pendingToken.value = null
       setConnectedAs(null)
       if (err instanceof GitHubError && err.status === 401) {
-        setError('GitHub rejected that token. Check it was copied whole and has not expired.')
+        setTokenError('GitHub rejected that token. Check it was copied whole and has not expired.')
       } else {
-        setError((err as Error).message)
+        setTokenError((err as Error).message)
       }
     } finally {
       setBusy(false)
@@ -94,27 +112,36 @@ export function Setup() {
    */
   async function reconnect(token: string) {
     setBusy(true)
-    setError(null)
+    clearProblems()
     pendingToken.value = token
     try {
       const user = await getUser()
       if (sameAccount(settings.value.login, user.login)) {
         const failures = await probeRepos(settings.value.repos)
         if (failures.length === 0) {
-          updateSettings({ token, login: user.login, tokenRejectedAt: null })
+          // The watched repositories stand. The plan can differ only if an
+          // earlier token fell through to choosing them, and is kept if so.
+          updateSettings({
+            token,
+            login: user.login,
+            tokenRejectedAt: null,
+            ...watchPatch(settings.value.repos, settings.value.plan, settings.value.repos, plan),
+          })
           enterDashboard()
           return
         }
-        setUnreadable({ keys: failures.map((f) => repoKey(f.repo)), text: unreadableText(failures) })
+        setUnreadable(unreadableFrom(failures))
       }
       const list = await listRepos()
       setConnectedAs(user.login)
       // As in connect: kept until the repositories are listed, for a retry.
       setTokenInput('')
       setRepos(list)
+      if (list.length === 0) setNotice(NO_REPOS)
     } catch (err) {
       pendingToken.value = null
-      setError(
+      setConnectedAs(null)
+      setTokenError(
         err instanceof GitHubError && err.status === 401
           ? 'GitHub rejected that token too. Check it was copied whole.'
           : (err as Error).message,
@@ -132,12 +159,13 @@ export function Setup() {
   }
 
   function addManual() {
+    if (!manual.trim()) return
     const ref = parseRepo(manual)
     if (!ref) {
-      setError('Enter a repository as owner/name.')
+      setReposError('Enter a repository as owner/name.')
       return
     }
-    setError(null)
+    setReposError(null)
     setSelected(new Set([...selected, repoKey(ref)]))
     setManual('')
   }
@@ -148,38 +176,31 @@ export function Setup() {
       .filter((r): r is RepoRef => r !== null)
 
     if (refs.length === 0) {
-      setError('Select at least one repository.')
+      setStartError('Select at least one repository.')
       return
     }
 
     setBusy(true)
-    setError(null)
-    setUnreadable(null)
+    setStartError(null)
+    setUnreadable([])
     const token = pendingToken.value ?? stored
     try {
       // Every repository, not just the first: a typo or one missing from the
       // token would otherwise surface later as a warning on the dashboard.
       const failures = await probeRepos(refs)
       if (failures.length > 0) {
-        setUnreadable({ keys: failures.map((f) => repoKey(f.repo)), text: unreadableText(failures) })
+        setUnreadable(unreadableFrom(failures))
         return
       }
-      // The ceiling belongs to the account that owns the repositories, so a
-      // peak measured over one set of owners is no evidence about another. A
-      // repository added under an owner already watched leaves it standing.
-      const owners = (list: readonly RepoRef[]): string =>
-        [...new Set(list.map((r) => r.owner))].sort().join(',')
-      const ownersChanged = owners(settings.value.repos) !== owners(refs)
       updateSettings({
         token,
-        repos: refs,
+        ...watchPatch(settings.value.repos, settings.value.plan, refs, plan),
         tokenRejectedAt: null,
         ...(connectedAs ? { login: connectedAs } : {}),
-        ...(ownersChanged ? { observedMax: {} } : {}),
       })
       enterDashboard()
     } catch (err) {
-      setError((err as Error).message)
+      setStartError((err as Error).message)
     } finally {
       setBusy(false)
     }
@@ -189,9 +210,11 @@ export function Setup() {
     filter ? r.full_name.toLowerCase().includes(filter.toLowerCase()) : true,
   )
   const owners = ownersOf(selected)
+  const unreadableSelected = unreadable.filter((u) => selected.has(u.key))
   const canGoBack = stored !== null && rejectedAt === null && settings.value.repos.length > 0
   const changed =
     !sameSelection(settings.value.repos, selected) ||
+    plan !== settings.value.plan ||
     (pendingToken.value !== null && pendingToken.value !== stored)
   const kept = keptList({
     repoCount: settings.value.repos.length,
@@ -211,7 +234,7 @@ export function Setup() {
         value={tokenInput}
         onInput={(e) => setTokenInput((e.target as HTMLInputElement).value)}
         onKeyDown={(e) => {
-          if (e.key === 'Enter' && tokenInput.trim()) onSubmit(tokenInput.trim())
+          if (e.key === 'Enter' && !busy && tokenInput.trim()) onSubmit(tokenInput.trim())
         }}
       />
       <button
@@ -265,13 +288,22 @@ export function Setup() {
             <li>
               Paste the new token here.
               {tokenField((t) => void reconnect(t), 'Reconnect')}
+              {tokenError && (
+                <div class="hint bad" role="alert">
+                  {tokenError}
+                </div>
+              )}
+              {notice && (
+                <div class="hint" role="status">
+                  {notice}
+                </div>
+              )}
             </li>
           </ol>
           <p class="hint">Kept in this browser: {joinList(kept)}.</p>
           {connectedAs && (
             <div class="hint good">Connected as {connectedAs}. Choose repositories below.</div>
           )}
-          {error && <div class="hint bad">{error}</div>}
         </div>
       ) : (
         <div class="card">
@@ -344,8 +376,16 @@ export function Setup() {
           )}
 
           {connectedAs && <div class="hint good">Connected as {connectedAs}.</div>}
-          {error && <div class="hint bad">{error}</div>}
-          {notice && <div class="hint">{notice}</div>}
+          {tokenError && (
+            <div class="hint bad" role="alert">
+              {tokenError}
+            </div>
+          )}
+          {notice && (
+            <div class="hint" role="status">
+              {notice}
+            </div>
+          )}
         </div>
       )}
 
@@ -365,10 +405,15 @@ export function Setup() {
               value={filter}
               onInput={(e) => setFilter((e.target as HTMLInputElement).value)}
             />
-            <button onClick={() => setSelected(new Set([...selected, ...visible.map((r) => r.full_name)]))}>
+            <button
+              onClick={() => setSelected(new Set([...selected, ...visible.map((r) => r.full_name)]))}
+              disabled={busy}
+            >
               Select all shown
             </button>
-            <button onClick={() => setSelected(new Set())}>Clear</button>
+            <button onClick={() => setSelected(new Set())} disabled={busy}>
+              Clear
+            </button>
           </div>
 
           {visible.length > 0 && (
@@ -379,6 +424,7 @@ export function Setup() {
                     type="checkbox"
                     checked={selected.has(repo.full_name)}
                     onChange={() => toggle(repo.full_name)}
+                    disabled={busy}
                   />
                   <span class="name">{repo.full_name}</span>
                   <span class="tag">{repo.private ? 'private' : 'public'}</span>
@@ -393,13 +439,21 @@ export function Setup() {
               placeholder="Or add by name: owner/repo"
               aria-label="Add a repository by name"
               value={manual}
+              disabled={busy}
               onInput={(e) => setManual((e.target as HTMLInputElement).value)}
               onKeyDown={(e) => {
                 if (e.key === 'Enter') addManual()
               }}
             />
-            <button onClick={addManual}>Add</button>
+            <button onClick={addManual} disabled={busy || !manual.trim()}>
+              Add
+            </button>
           </div>
+          {reposError && (
+            <div class="hint bad" role="alert">
+              {reposError}
+            </div>
+          )}
 
           {owners.length > 1 && (
             <div class="banner warn">
@@ -414,6 +468,7 @@ export function Setup() {
                   onClick={() =>
                     setSelected(new Set([...selected].filter((k) => k.split('/')[0] === owners[0]!.owner)))
                   }
+                  disabled={busy}
                 >
                   Keep only {owners[0]!.owner}
                 </button>
@@ -441,17 +496,13 @@ export function Setup() {
             <label>
               Plan{' '}
               <select
-                value={settings.value.plan}
-                onChange={(e) =>
-                  updateSettings({
-                    plan: (e.target as HTMLSelectElement).value as PlanId,
-                    observedMax: {},
-                  })
-                }
+                value={plan}
+                disabled={busy}
+                onChange={(e) => setPlan((e.target as HTMLSelectElement).value as PlanId)}
               >
-                {Object.values(PLANS).map((plan) => (
-                  <option key={plan.id} value={plan.id}>
-                    {plan.label} ({plan.macos} macOS, {plan.total} total)
+                {Object.values(PLANS).map((p) => (
+                  <option key={p.id} value={p.id}>
+                    {p.label} ({p.macos} macOS, {p.total} total)
                   </option>
                 ))}
               </select>
@@ -460,18 +511,25 @@ export function Setup() {
               {busy ? 'Checking each repository...' : 'Open dashboard'}
             </button>
           </div>
-          {unreadable && (
+          {startError && (
             <div class="hint bad" role="alert">
-              The token cannot read Actions on {unreadable.text}. Grant it Actions: Read and write,
-              and make sure each repository is in its access list.{' '}
+              {startError}
+            </div>
+          )}
+          {unreadableSelected.length > 0 && (
+            <div class="hint bad" role="alert">
+              The token cannot read Actions on{' '}
+              {unreadableSelected.map((u) => `${u.key}: ${u.problem}`).join('; ')}. Grant it Actions:
+              Read and write, and make sure each repository is in its access list.{' '}
               <button
                 class="link"
                 onClick={() => {
-                  setSelected(new Set([...selected].filter((k) => !unreadable.keys.includes(k))))
-                  setUnreadable(null)
+                  const drop = new Set(unreadableSelected.map((u) => u.key))
+                  setSelected(new Set([...selected].filter((k) => !drop.has(k))))
                 }}
+                disabled={busy}
               >
-                Deselect {unreadable.keys.length === 1 ? 'it' : 'these'}
+                Deselect {unreadableSelected.length === 1 ? 'it' : 'these'}
               </button>
             </div>
           )}
