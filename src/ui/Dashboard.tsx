@@ -33,6 +33,7 @@ import { AlertsView } from './AlertsView'
 import { InstallBanner } from './InstallBanner'
 import { YourRuns } from './YourRuns'
 import { RecentlyFinished } from './RecentlyFinished'
+import { headlineIndex } from './lanes'
 
 export function Dashboard() {
   useEffect(() => {
@@ -73,6 +74,9 @@ export function Dashboard() {
   const loading = health === 'none'
   const progress = pollProgress.value
   const list = buckets.value
+  // The tiles go above the pool under most pressure, not always the first:
+  // a queued Linux pool is the story when macOS is quiet.
+  const headline = headlineIndex(list.map((b) => ({ used: b.running.length, cap: b.cap, queued: b.queued.length })))
   const nothingActive = totalRunning.value === 0 && totalQueued.value === 0
   const cantCheck = health === 'offline' || health === 'limited' || health === 'unreachable'
   const answered = settings.value.repos.length - repoProblems.value.size
@@ -200,7 +204,7 @@ export function Dashboard() {
                 // Mid-check, an empty pool has only not heard from every
                 // repository yet, so it is left out rather than called quiet.
                 loading && bucket.running.length === 0 && bucket.queued.length === 0 ? null : (
-                  <RunnerClassSection key={bucket.cls} bucket={bucket} headline={i === 0} />
+                  <RunnerClassSection key={bucket.cls} bucket={bucket} headline={i === headline} />
                 ),
               )}
             </>

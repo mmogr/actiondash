@@ -3,13 +3,15 @@ import { RUNNER_CLASS_LABEL } from '../model/runnerClass'
 import { NO_FILTER } from '../model/filter'
 import { filter, myRunsNow, now } from '../state/store'
 import { settings } from '../state/settings'
-import { age, relative, shortClock } from './format'
+import { age, hedge, relative, shortClock } from './format'
 import { seriesClass } from './palette'
 import { showRun } from './route'
 
 const SHOWN = 3
 /** Within this of now, an estimate reads as "now", as relative() also has it. */
 const NOW_WINDOW_MS = 45_000
+/** A run still waiting this long after it was due to start is not just between polls. */
+const OVERDUE_START_MS = 2 * 60_000
 
 /**
  * The reader's own runs, above everything else: when each starts or should be
@@ -44,18 +46,28 @@ function YourRun({ m, nowMs }: { m: MyRun; nowMs: number }) {
   const state = m.stale ? 'stale' : m.state
   // An estimate that has arrived, or passed, is said as "now" rather than as a clock time.
   const due = (at: number) => at - nowMs < NOW_WINDOW_MS
+  // A time behind a job already past its usual length is a bound, "or later",
+  // and is not counted down; one resting on a guessed duration says so.
+  const at = (ms: number) =>
+    m.basis === 'floor'
+      ? `~${shortClock(ms)} or later`
+      : `~${shortClock(ms)} · ${relative(ms, nowMs)}${hedge(m.basis)}`
   const when =
     m.state === 'running'
       ? m.doneAt === null
         ? `running ${age(m.since, nowMs)} so far`
         : due(m.doneAt)
           ? 'current jobs finishing now'
-          : `current jobs done ~${shortClock(m.doneAt)} · ${relative(m.doneAt, nowMs)}`
+          : `current jobs done ${at(m.doneAt)}`
       : m.startsAt === null
         ? `waiting ${age(m.since, nowMs)} so far`
         : due(m.startsAt)
-          ? 'starting now'
-          : `starts ~${shortClock(m.startsAt)} · ${relative(m.startsAt, nowMs)}`
+          ? // Due for a while beside a slot that looks free: GitHub is not
+            // handing it over, so say how long rather than "now" for ever.
+            nowMs - m.since > OVERDUE_START_MS && m.position !== null && !m.position.behind
+            ? `should start any moment · waiting ${age(m.since, nowMs)}`
+            : 'starting now'
+          : `starts ${at(m.startsAt)}`
   const where = m.position
     ? m.position.behind
       ? `position ${m.position.at} of ${m.position.of} in ${RUNNER_CLASS_LABEL[m.position.cls]} · behind ${m.position.behind.repoName} #${m.position.behind.run_number}`

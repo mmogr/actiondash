@@ -85,6 +85,65 @@ describe('forecastBucket', () => {
     expect(f.jobs.get(10)?.overdue).toBe(true)
   })
 
+  it('keeps the usual end where it fell, and calls the floored end what it is', () => {
+    // Twenty minutes into a twelve-minute job: the end used for the queue is
+    // a floor a minute ahead, which is not an estimate, so its basis is 'floor'
+    // and the usual end stays eight minutes back for the drawing to show.
+    const run = makeRun({ id: 1 })
+    const jobs = [10, 11, 12, 13, 14].map((id) => runningJob(id, 1, 'build', 20))
+    jobs.push(queuedJob(20, 1, 'build', 3))
+    const f = forecastBucket(macos([run], jobs), learned({ build: 12 }), NOW)
+
+    expect(f.jobs.get(10)?.usualEnd).toBe(NOW - 8 * MIN)
+    expect(f.jobs.get(10)?.basis).toBe('floor')
+    expect(f.nextSlotBasis).toBe('floor')
+    // Whoever takes that slot inherits the doubt.
+    expect(f.jobs.get(20)?.basis).toBe('floor')
+    expect(f.queueClearsBasis).toBe('floor')
+    expect(f.runs.get(1)?.basis).toBe('floor')
+  })
+
+  it('flags a job past its usual time by a margin, not past its slowest run', () => {
+    // Usually two minutes, once seven: at six minutes it is three times its
+    // usual, which is worth saying even though one run was slower.
+    const run = makeRun({ id: 1 })
+    let map = learned({ doc: 2 })
+    for (const [i, minutes] of [2, 2, 2, 7].entries()) {
+      map = recordCompleted(
+        map,
+        REPO,
+        [
+          makeJob({
+            id: 2000 + i,
+            name: 'doc',
+            status: 'completed',
+            conclusion: 'success',
+            started_at: '2026-09-09T09:00:00Z',
+            completed_at: new Date(Date.parse('2026-09-09T09:00:00Z') + minutes * MIN).toISOString(),
+          }),
+        ],
+        NOW,
+      )
+    }
+    const late = forecastBucket(macos([run], [runningJob(10, 1, 'doc', 6)]), map, NOW)
+    const jitter = forecastBucket(macos([run], [runningJob(10, 1, 'doc', 2.5)]), map, NOW)
+
+    expect(late.jobs.get(10)?.overdue).toBe(true)
+    // Half a minute over a two-minute job is ordinary jitter.
+    expect(jitter.jobs.get(10)?.overdue).toBe(false)
+  })
+
+  it('never raises the flag from a guess, and drops a guess the job has outlived', () => {
+    const run = makeRun({ id: 1 })
+    const bucket = macos([run], [runningJob(11, 1, 'mystery', 20)])
+
+    const f = forecastBucket(bucket, learned({ a: 2 }), NOW)
+
+    expect(f.jobs.get(11)?.overdue).toBe(false)
+    expect(f.jobs.get(11)?.typical).toBeNull()
+    expect(f.jobs.get(11)?.end).toBeNull()
+  })
+
   it('gives queued jobs the slot that frees first, in queue order', () => {
     // Five slots, all held. Two queued jobs: the older takes the slot that
     // frees first, the newer the next one.
@@ -158,7 +217,7 @@ describe('forecastBucket', () => {
 
     const f = forecastBucket(bucket, learned({ long: 10, a: 2, b: 30 }), NOW)
 
-    expect(f.runs.get(2)).toEqual({ firstStart: NOW + 9 * MIN, allDone: NOW + 39 * MIN })
+    expect(f.runs.get(2)).toEqual({ firstStart: NOW + 9 * MIN, allDone: NOW + 39 * MIN, basis: 'learned' })
   })
 
   it('leaves out excluded runs, which is how a cancellation is simulated', () => {
@@ -244,17 +303,19 @@ describe('runOutlook', () => {
     return {
       lanes: 0,
       jobs: new Map(),
-      runs: new Map([[runId, { firstStart, allDone }]]),
+      runs: new Map([[runId, { firstStart, allDone, basis: 'learned' }]]),
       nextSlotAt: null,
+      nextSlotBasis: 'learned',
       nextToFinish: null,
       queueClearsAt: null,
+      queueClearsBasis: 'learned',
     }
   }
 
   it('is done when every pool is, and starts when the first pool does', () => {
     const outlook = runOutlook(1, [part(1, NOW + 5 * MIN, NOW + 20 * MIN), part(1, NOW + MIN, NOW + 30 * MIN)])
 
-    expect(outlook).toEqual({ firstStart: NOW + MIN, allDone: NOW + 30 * MIN })
+    expect(outlook).toEqual({ firstStart: NOW + MIN, allDone: NOW + 30 * MIN, basis: 'learned' })
   })
 
   it('is unknown when any pool is', () => {
