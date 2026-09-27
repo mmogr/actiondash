@@ -17,9 +17,14 @@ const TOKENS_URL = 'https://github.com/settings/personal-access-tokens'
 const NO_REPOS =
   'The token reached GitHub but reported no repositories. Add repositories to it, or enter one below by name.'
 
-/** "acme/site: not found; the token may not include it". */
-function unreadableText(failures: readonly { repo: RepoRef; error: unknown }[]): string {
-  return failures.map((f) => `${repoKey(f.repo)}: ${problemText(classify(f.error))}`).join('; ')
+/** A repository a check could not read, and why: "not found; the token may not include it". */
+interface Unreadable {
+  key: string
+  problem: string
+}
+
+function unreadableFrom(failures: readonly { repo: RepoRef; error: unknown }[]): Unreadable[] {
+  return failures.map((f) => ({ key: repoKey(f.repo), problem: problemText(classify(f.error)) }))
 }
 
 /** Everything a fresh start needs, once a token and its repositories check out. */
@@ -52,8 +57,9 @@ export function Setup() {
   const [reposError, setReposError] = useState<string | null>(null)
   const [startError, setStartError] = useState<string | null>(null)
   const [notice, setNotice] = useState<string | null>(null)
-  // Repositories the last check could not read, and why, shown by Open.
-  const [unreadable, setUnreadable] = useState<{ keys: string[]; text: string } | null>(null)
+  // Repositories the last check could not read, and why, shown by Open while
+  // they are still selected.
+  const [unreadable, setUnreadable] = useState<Unreadable[]>([])
 
   const kind = tokenInput ? tokenKind(tokenInput) : null
 
@@ -69,6 +75,7 @@ export function Setup() {
     setReposError(null)
     setStartError(null)
     setNotice(null)
+    setUnreadable([])
   }
 
   async function connect(token: string) {
@@ -123,7 +130,7 @@ export function Setup() {
           enterDashboard()
           return
         }
-        setUnreadable({ keys: failures.map((f) => repoKey(f.repo)), text: unreadableText(failures) })
+        setUnreadable(unreadableFrom(failures))
       }
       const list = await listRepos()
       setConnectedAs(user.login)
@@ -175,14 +182,14 @@ export function Setup() {
 
     setBusy(true)
     setStartError(null)
-    setUnreadable(null)
+    setUnreadable([])
     const token = pendingToken.value ?? stored
     try {
       // Every repository, not just the first: a typo or one missing from the
       // token would otherwise surface later as a warning on the dashboard.
       const failures = await probeRepos(refs)
       if (failures.length > 0) {
-        setUnreadable({ keys: failures.map((f) => repoKey(f.repo)), text: unreadableText(failures) })
+        setUnreadable(unreadableFrom(failures))
         return
       }
       updateSettings({
@@ -203,6 +210,7 @@ export function Setup() {
     filter ? r.full_name.toLowerCase().includes(filter.toLowerCase()) : true,
   )
   const owners = ownersOf(selected)
+  const unreadableSelected = unreadable.filter((u) => selected.has(u.key))
   const canGoBack = stored !== null && rejectedAt === null && settings.value.repos.length > 0
   const changed =
     !sameSelection(settings.value.repos, selected) ||
@@ -508,19 +516,20 @@ export function Setup() {
               {startError}
             </div>
           )}
-          {unreadable && (
+          {unreadableSelected.length > 0 && (
             <div class="hint bad" role="alert">
-              The token cannot read Actions on {unreadable.text}. Grant it Actions: Read and write,
-              and make sure each repository is in its access list.{' '}
+              The token cannot read Actions on{' '}
+              {unreadableSelected.map((u) => `${u.key}: ${u.problem}`).join('; ')}. Grant it Actions:
+              Read and write, and make sure each repository is in its access list.{' '}
               <button
                 class="link"
                 onClick={() => {
-                  setSelected(new Set([...selected].filter((k) => !unreadable.keys.includes(k))))
-                  setUnreadable(null)
+                  const drop = new Set(unreadableSelected.map((u) => u.key))
+                  setSelected(new Set([...selected].filter((k) => !drop.has(k))))
                 }}
                 disabled={busy}
               >
-                Deselect {unreadable.keys.length === 1 ? 'it' : 'these'}
+                Deselect {unreadableSelected.length === 1 ? 'it' : 'these'}
               </button>
             </div>
           )}

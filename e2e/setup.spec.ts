@@ -268,6 +268,44 @@ test('a repository the token cannot read is named, and deselecting it lets the d
   expect((await storedSettings(page))?.repos).toEqual([ref('acme/app')])
 })
 
+test('the warning about repositories the token cannot read names only those still selected', async ({
+  page,
+  github,
+}) => {
+  github.user()
+  github.repos([repo('acme/app'), repo('acme/site'), repo('acme/docs')])
+  github.probe(ref('acme/app'))
+  github.probe(ref('acme/site'), json({ message: 'Not Found' }, { status: 404 }))
+  github.probe(ref('acme/docs'), json({ message: 'Not Found' }, { status: 404 }))
+
+  await connect(page)
+  await page.getByRole('button', { name: 'Select all shown' }).click()
+  await page.getByRole('button', { name: 'Open dashboard' }).click()
+
+  const alert = card(page, '3. Start').getByRole('alert')
+  await expect(alert).toContainText('acme/site: not found')
+  await expect(alert).toContainText('acme/docs: not found')
+  await expect(alert.getByRole('button', { name: 'Deselect these' })).toBeVisible()
+
+  await repoBox(page, 'acme/docs').uncheck()
+  await expect(alert).toContainText(
+    'The token cannot read Actions on acme/site: not found; the token may not include it.',
+  )
+  await expect(alert).not.toContainText('acme/docs')
+  await expect(alert.getByRole('button', { name: 'Deselect it' })).toBeVisible()
+
+  await repoBox(page, 'acme/site').uncheck()
+  await expect(alert).toHaveCount(0)
+
+  await repoBox(page, 'acme/site').check()
+  await expect(alert).toContainText('acme/site: not found')
+  await expect(alert).not.toContainText('acme/docs')
+
+  await page.getByRole('button', { name: 'Clear', exact: true }).click()
+  await expect(alert).toHaveCount(0)
+  expect(github.callsTo(PROBES)).toHaveLength(3)
+})
+
 test('a repository added by name or address is watched, and a malformed one is refused', async ({
   page,
   github,
