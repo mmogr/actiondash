@@ -70,6 +70,7 @@ export function Dashboard() {
   }, [])
 
   const health = dataHealth.value
+  const loading = health === 'none'
   const progress = pollProgress.value
   const list = buckets.value
   const nothingActive = totalRunning.value === 0 && totalQueued.value === 0
@@ -82,6 +83,30 @@ export function Dashboard() {
   // Counted as runs, so the figure matches the footer's cancel button.
   const staleRunCount = distinctRuns(stale.value).length
   const repoCount = settings.value.repos.length
+
+  // The first check publishes each repository as it answers, so once any run
+  // has arrived this stands above the runs rather than in place of them.
+  const loadingSection = (
+    <section class="section">
+      <div class="section-head">
+        <div class="section-title">Loading</div>
+        <div class="meter" role="img" aria-label="Loading progress">
+          <div
+            class="meter-fill"
+            style={{ width: `${progress.total ? (progress.done / progress.total) * 100 : 0}%` }}
+          />
+        </div>
+        <div class="section-stats">
+          <span>
+            <b>{progress.done}</b> of {progress.total} repositories
+          </span>
+        </div>
+      </div>
+      <div class="empty">
+        Checking each repository for running and queued jobs. Rows appear as they arrive.
+      </div>
+    </section>
+  )
 
   return (
     <div class="shell">
@@ -159,28 +184,11 @@ export function Dashboard() {
         <Trends />
       ) : tab.value === 'alerts' ? (
         <AlertsView />
-      ) : health === 'none' ? (
-        <section class="section">
-          <div class="section-head">
-            <div class="section-title">Loading</div>
-            <div class="meter" role="img" aria-label="Loading progress">
-              <div
-                class="meter-fill"
-                style={{ width: `${progress.total ? (progress.done / progress.total) * 100 : 0}%` }}
-              />
-            </div>
-            <div class="section-stats">
-              <span>
-                <b>{progress.done}</b> of {progress.total} repositories
-              </span>
-            </div>
-          </div>
-          <div class="empty">
-            Checking each repository for running and queued jobs. Rows appear as they arrive.
-          </div>
-        </section>
+      ) : loading && nothingActive ? (
+        loadingSection
       ) : (
         <>
+          {loading && loadingSection}
           {cantCheck && <CantCheck />}
           {health === 'partial' && <HealthStrip />}
           {!nothingActive ? (
@@ -188,9 +196,13 @@ export function Dashboard() {
               <InstallBanner />
               <YourRuns />
               <FilterChips />
-              {list.map((bucket, i) => (
-                <RunnerClassSection key={bucket.cls} bucket={bucket} headline={i === 0} />
-              ))}
+              {list.map((bucket, i) =>
+                // Mid-check, an empty pool has only not heard from every
+                // repository yet, so it is left out rather than called quiet.
+                loading && bucket.running.length === 0 && bucket.queued.length === 0 ? null : (
+                  <RunnerClassSection key={bucket.cls} bucket={bucket} headline={i === 0} />
+                ),
+              )}
             </>
           ) : health === 'ok' ? (
             // The only place the page says the pools are clear, and only when

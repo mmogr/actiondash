@@ -3,7 +3,7 @@ import type { DataHealth } from '../model/health'
 import type { MyRun } from '../model/mine'
 import type { ClassBucket } from '../model/queue'
 import { RUNNER_CLASS_LABEL } from '../model/runnerClass'
-import { buckets, dataHealth, myRunsNow, view } from '../state/store'
+import { buckets, dataHealth, myRunsNow, repoProblems, view } from '../state/store'
 import { shortClock } from './format'
 
 const NAME = 'actiondash'
@@ -14,6 +14,8 @@ const NAME = 'actiondash'
  */
 export function titleFor(input: {
   health: DataHealth
+  /** Repositories the last check could not read. */
+  unchecked?: number
   mine: readonly MyRun[]
   headline: ClassBucket | undefined
 }): string {
@@ -38,7 +40,11 @@ export function titleFor(input: {
 
   const pool = input.headline
   if (pool && pool.cap !== null) {
-    return `${pool.running.length}/${pool.cap} ${RUNNER_CLASS_LABEL[pool.cls]} · ${pool.queued.length} queued`
+    const count = `${pool.running.length}/${pool.cap} ${RUNNER_CLASS_LABEL[pool.cls]} · ${pool.queued.length} queued`
+    // First, so a partly checked pool cannot be read as a fully checked one
+    // even when the tab is too narrow for the whole title.
+    const unchecked = input.unchecked ?? 0
+    return input.health === 'partial' && unchecked > 0 ? `${unchecked} unchecked · ${count}` : count
   }
   return NAME
 }
@@ -48,7 +54,12 @@ export function watchTitle(): void {
   effect(() => {
     const next =
       view.value === 'dashboard'
-        ? titleFor({ health: dataHealth.value, mine: myRunsNow.value, headline: buckets.value[0] })
+        ? titleFor({
+            health: dataHealth.value,
+            unchecked: repoProblems.value.size,
+            mine: myRunsNow.value,
+            headline: buckets.value[0],
+          })
         : NAME
     if (document.title !== next) document.title = next
   })

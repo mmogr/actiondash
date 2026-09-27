@@ -62,6 +62,7 @@ test('a repository that cannot be checked holds back the all-clear until it answ
   )
   await expect(page.getByText(/all clear/i)).toHaveCount(0)
   await expect(page.locator('.cant-check')).toHaveCount(0)
+  await expect(page).toHaveTitle(`1 unchecked · ${IDLE_TITLE}`)
 
   github.runs(SITE, [], [])
   await page.clock.fastForward(15_000)
@@ -69,6 +70,7 @@ test('a repository that cannot be checked holds back the all-clear until it answ
   await expect(page.locator('.section-title', { hasText: /^All clear$/ })).toBeVisible()
   await expect(strip).toHaveCount(0)
   await expect(quiet).toHaveCount(0)
+  await expect(page).toHaveTitle(IDLE_TITLE)
 })
 
 test('when no repository answers the page says it cannot check, and Try again asks again', async ({
@@ -101,6 +103,33 @@ test('when no repository answers the page says it cannot check, and Try again as
   const before = github.callsTo(LISTINGS).length
   await tryAgain.click()
   await github.waitForCalls(LISTINGS, before + ONE_POLL)
+})
+
+test('Try again is greyed out the moment the check it asked for starts', async ({ page, github }) => {
+  github.failRuns(REPO, networkError()).failRuns(SITE, networkError())
+  await page.goto('./')
+
+  const alert = page.locator('section.cant-check[role="alert"]')
+  const tryAgain = alert.getByRole('button', { name: 'Try again' })
+  await expect(tryAgain).toBeVisible()
+  await page.clock.fastForward(10_000)
+  await expect(tryAgain).toHaveAttribute('aria-disabled', 'false')
+
+  const held = deferred()
+  github.failRuns(REPO, held.reply).failRuns(SITE, held.reply)
+  // With the clock stopped, the page's once-a-second tick cannot redraw the
+  // button, so only the check starting can grey it out.
+  await page.clock.pauseAt(new Date((await page.evaluate(() => Date.now())) + 1_000))
+  const before = github.callsTo(LISTINGS).length
+  await tryAgain.click()
+
+  await expect(tryAgain).toHaveAttribute('aria-disabled', 'true')
+  await expect(tryAgain).toHaveAttribute('title', 'Already checking.')
+  await github.waitForCalls(LISTINGS, before + ONE_POLL)
+
+  held.resolve(json(EMPTY_LISTING))
+  await expect(page.locator('.section-title', { hasText: /^All clear$/ })).toBeVisible()
+  await expect(alert).toHaveCount(0)
 })
 
 test('a spent allowance pauses checking until it refills, then checking resumes', async ({ page, github }) => {
@@ -221,4 +250,36 @@ test('the first check shows its progress repository by repository, then the runs
   await expect(page.locator('.topbar-meta').getByText('1 running', { exact: true })).toBeVisible()
   await expect(loading).toHaveCount(0)
   await expect(page).toHaveTitle(`1/${PLANS.pro.macos} macOS · 0 queued`)
+})
+
+test('a run that arrives during the first check is shown at once, and the rest is not called quiet', async ({
+  page,
+  github,
+}) => {
+  const run = makeRun({ id: 1, run_number: 1, status: 'in_progress', repoName: 'site' })
+  github.runs(REPO, [], []).runs(SITE, [], [run])
+  github.jobs(1, [
+    makeJob({
+      id: 11,
+      run_id: 1,
+      status: 'in_progress',
+      started_at: '2026-09-09T10:01:00Z',
+      labels: ['ubuntu-latest'],
+    }),
+  ])
+  const app = deferred()
+  github.listing(REPO, 'queued', app.reply)
+  await page.goto('./')
+
+  const loading = page.locator('.section', { has: page.locator('.section-title', { hasText: /^Loading$/ }) })
+  await expect(page.locator('[data-run="1"]')).toBeVisible()
+  await expect(loading.locator('.section-stats')).toHaveText('1 of 2 repositories')
+  // The run is on Linux, so macOS has nothing in it, but only as far as one
+  // repository has said. The other may yet fill it.
+  await expect(page.getByText(/Nothing running or queued/)).toHaveCount(0)
+  await expect(page.getByText(/all clear/i)).toHaveCount(0)
+
+  app.resolve(json(EMPTY_LISTING))
+  await expect(loading).toHaveCount(0)
+  await expect(page.locator('[data-run="1"]')).toBeVisible()
 })
