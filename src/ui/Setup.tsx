@@ -132,6 +132,7 @@ export function Setup() {
   }
 
   function addManual() {
+    if (!manual.trim()) return
     const ref = parseRepo(manual)
     if (!ref) {
       setError('Enter a repository as owner/name.')
@@ -405,7 +406,7 @@ export function Setup() {
                 if (e.key === 'Enter') addManual()
               }}
             />
-            <button onClick={addManual} disabled={busy}>
+            <button onClick={addManual} disabled={busy || !manual.trim()}>
               Add
             </button>
           </div>

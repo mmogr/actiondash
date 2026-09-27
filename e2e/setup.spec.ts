@@ -267,6 +267,26 @@ test('a repository added by name or address is watched, and a malformed one is r
   expect(byName((await storedSettings(page))?.repos)).toEqual([ref('acme/infra'), ref('acme/tools')])
 })
 
+test('an empty add-by-name field is left alone', async ({ page, github }) => {
+  github.user()
+  github.repos([repo('acme/app')])
+
+  await connect(page)
+
+  const byNameField = page.getByLabel('Add a repository by name')
+  const add = page.getByRole('button', { name: 'Add', exact: true })
+  const refusal = page.getByText('Enter a repository as owner/name.', { exact: true })
+  await byNameField.press('Enter')
+  await byNameField.fill('   ')
+  await byNameField.press('Enter')
+  await expect(refusal).toHaveCount(0)
+  await expect(add).toBeDisabled()
+  await expect(page.getByText('0 selected', { exact: true })).toBeVisible()
+
+  await byNameField.fill('acme/tools')
+  await expect(add).toBeEnabled()
+})
+
 test('repositories from two accounts are flagged, and keeping one account drops the other', async ({
   page,
   github,
