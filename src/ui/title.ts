@@ -20,6 +20,8 @@ export function titleFor(input: {
   if (input.health === 'offline') return `Offline · ${NAME}`
   if (input.health === 'limited') return `Paused · ${NAME}`
   if (input.health === 'unreachable') return `Can't check · ${NAME}`
+  // Before the first check finishes, an empty pool is only an unanswered one.
+  if (input.health === 'none') return NAME
 
   // "job failed", not "failed": the run is still going and may yet pass.
   const failing = input.mine.find((m) => m.failed.length > 0)
