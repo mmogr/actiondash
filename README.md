@@ -224,10 +224,14 @@ npm run verify   # focus check, tests, typecheck, build, CSP and network-call ch
 `npm run test:e2e` runs the browser tests on their own, against `dist/`, so
 build first. They cover what the unit tests cannot: that the page starts, in
 setup and on the dashboard, on a phone as well as a desktop, and that the
-policy holds in a real browser. The smoke tests confirm the policy refuses
-`fetch('https://example.com')` on every run, and `check:guards` proves they
-notice when it does not. To see it by hand, run `npm run preview` and try that
-line in the console; it must be blocked.
+policy holds in a real browser. Beyond that they walk through what a reader
+does and sees: setting up and recovering from a rejected token, every state
+the Now tab can be in (never an all-clear while a repository is unchecked),
+checks that follow changes and reuse ETags, cancelling and re-running, links
+to a run, settings and forgetting, alerts, and trends. The smoke tests confirm
+the policy refuses `fetch('https://example.com')` on every run, and
+`check:guards` proves they notice when it does not. To see it by hand, run
+`npm run preview` and try that line in the console; it must be blocked.
 
 The tests check the dashboard against what GitHub is believed to return.
 `npm run probe` checks the beliefs: it sends the app's own queries to a few
