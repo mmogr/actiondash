@@ -87,7 +87,7 @@ function FinishedRow({ f, nowMs }: { f: FinishedRun; nowMs: number }) {
   const count = f.failedJobs.length
   const question =
     mode === 'failed'
-      ? `Re-run the ${count === 1 ? 'failed job' : `${count} failed jobs`} of ${repo.name} #${n}? They join the queue again.`
+      ? `Re-run the ${count === 1 ? 'failed job' : `${count} failed jobs`} of ${repo.name} #${n}? ${count === 1 ? 'It joins' : 'They join'} the queue again.`
       : `Re-run ${repo.name} #${n} from the start? It joins the queue again.`
 
   async function go() {

@@ -1,4 +1,5 @@
 import type { Page } from '@playwright/test'
+import type { WorkflowJob } from '../src/github/types'
 import type { DurationMap } from '../src/model/durations'
 import { makeJob, makeRun } from '../tests/helpers'
 import { deferred, empty, json } from '../tests/replies'
@@ -327,7 +328,7 @@ test('re-running a failed run asks first, sends one re-run of the failed jobs, a
     await expect(rerun).toHaveAttribute('aria-expanded', 'true')
   })
   const confirm = finished.getByRole('group', { name: 'Confirm re-run' })
-  await expect(confirm).toContainText('Re-run the failed job of app #12? They join the queue again.')
+  await expect(confirm).toContainText('Re-run the failed job of app #12? It joins the queue again.')
   await expect(confirm.getByRole('button', { name: 'Keep' })).toBeFocused()
 
   const listingsBefore = github.callsTo(LISTINGS).length
@@ -342,4 +343,28 @@ test('re-running a failed run asks first, sends one re-run of the failed jobs, a
   expect(github.callsTo(/\/rerun/).map((c) => `${c.method} ${c.path}`)).toEqual([
     'POST /repos/acme/app/actions/runs/1/rerun-failed-jobs',
   ])
+})
+
+test('re-running two failed jobs says they both join the queue again', async ({ page, github }) => {
+  const job = (id: number, name: string, over: Partial<WorkflowJob> = {}) =>
+    makeJob({ id, run_id: 1, name, status: 'in_progress', started_at: '2026-09-09T10:01:00Z', ...over })
+  github.runs(REPO, [], [makeRun({ id: 1, run_number: 12, status: 'in_progress' })])
+  github.jobs(1, [job(11, 'test'), job(12, 'lint')])
+
+  await page.goto('./')
+  await expect(page.locator('[data-run="1"]')).toBeVisible()
+
+  github.runs(REPO, [], [])
+  const failed = { status: 'completed', conclusion: 'failure', completed_at: '2026-09-09T10:05:05Z' }
+  github.jobs(1, [job(11, 'test', failed), job(12, 'lint', failed)])
+  await page.clock.fastForward(15_000)
+
+  const finished = page.locator('.finished-row', { hasText: '#12' })
+  await expect(finished).toContainText('test failed · lint failed')
+  await github.expectNoNewCalls(async () => {
+    await finished.getByRole('button', { name: 'Re-run failed' }).click()
+    await expect(finished.getByRole('group', { name: 'Confirm re-run' })).toContainText(
+      'Re-run the 2 failed jobs of app #12? They join the queue again.',
+    )
+  })
 })
