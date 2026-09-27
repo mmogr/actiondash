@@ -209,12 +209,16 @@ test('the first check shows its progress repository by repository, then the runs
   const loading = page.locator('.section', { has: page.locator('.section-title', { hasText: /^Loading$/ }) })
   await expect(loading.locator('.section-stats')).toHaveText('0 of 2 repositories')
   await expect(page.getByText(/all clear/i)).toHaveCount(0)
+  // The tab makes no claim about the pool until every repository has answered.
+  await expect(page).toHaveTitle('actiondash')
 
   app.resolve(json(EMPTY_LISTING))
   await expect(loading.locator('.section-stats')).toHaveText('1 of 2 repositories')
+  await expect(page).toHaveTitle('actiondash')
 
   site.resolve(json(EMPTY_LISTING))
   await expect(page.locator('[data-run="1"]')).toBeVisible()
   await expect(page.locator('.topbar-meta').getByText('1 running', { exact: true })).toBeVisible()
   await expect(loading).toHaveCount(0)
+  await expect(page).toHaveTitle(`1/${PLANS.pro.macos} macOS · 0 queued`)
 })
