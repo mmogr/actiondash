@@ -39,7 +39,10 @@ macOS                 5/5 in use    7 queued    oldest waiting 16m
 
 Above the list, the macOS pool is drawn as one row per slot: the job holding
 it from its start to its expected end, then the queued jobs expected to take
-it next as dashed outlines, in the order they will start. Expected ends come
+it next as dashed outlines, in the order they will start. Each job is named
+on its bar, or whole beside it when the bar is too short; a run of queued jobs
+too short to draw apart is one outline saying how many; and on a phone the
+running job's name sits above its bar. Expected ends come
 from how long each job usually takes, learned from the jobs the dashboard has
 watched succeed and kept in local storage (job names and seconds, nothing
 else). Failed and cancelled jobs teach nothing: a test that fails in two
