@@ -55,20 +55,23 @@ test.describe('with a recorded history', () => {
     const chart = occupancy(page)
     await expect(page.locator('.section-title', { hasText: 'macOS slots in use' })).toBeVisible()
     await expect(range.getByRole('button', { name: '6h' })).toHaveAttribute('aria-pressed', 'true')
-    await expect(chart).toHaveAttribute('aria-label', 'Slots in use over time. Up to 7 at once against a ceiling of 5.')
+    await expect(chart).toHaveAttribute(
+      'aria-label',
+      'Slots in use and jobs queued over time. Up to 7 in use at once, against a ceiling of 5.',
+    )
     await expect(chart.locator('.occ-inuse').first()).toBeVisible()
     await expect(chart.getByText('nothing recorded in this window')).toHaveCount(0)
 
     const expected = {
-      '1h': 'Up to 6 at once against a ceiling of 5.',
-      '24h': 'Up to 9 at once against a ceiling of 5.',
-      '6h': 'Up to 7 at once against a ceiling of 5.',
+      '1h': 'Up to 6 in use at once, against a ceiling of 5.',
+      '24h': 'Up to 9 in use at once, against a ceiling of 5.',
+      '6h': 'Up to 7 in use at once, against a ceiling of 5.',
     }
     for (const [label, summary] of Object.entries(expected)) {
       await range.getByRole('button', { name: label }).click()
       await expect(range.getByRole('button', { name: label })).toHaveAttribute('aria-pressed', 'true')
       await expect(range.locator('[aria-pressed="true"]')).toHaveCount(1)
-      await expect(chart).toHaveAttribute('aria-label', `Slots in use over time. ${summary}`)
+      await expect(chart).toHaveAttribute('aria-label', `Slots in use and jobs queued over time. ${summary}`)
     }
   })
 })
@@ -89,7 +92,7 @@ test.describe('with nothing recorded', () => {
     await github.waitForCalls(RUNNING)
 
     const chart = occupancy(page)
-    await expect(chart).toHaveAttribute('aria-label', 'Slots in use over time. No data in this window.')
+    await expect(chart).toHaveAttribute('aria-label', 'Slots in use and jobs queued over time. No data in this window.')
     await expect(chart.getByText('nothing recorded in this window')).toBeVisible()
     await expect(chart.locator('.occ-inuse')).toHaveCount(0)
     await expect(page.getByText('The chart fills in while the dashboard is open')).toBeVisible()
@@ -103,6 +106,11 @@ test.describe('with nothing recorded', () => {
     running.resolve(empty)
     await expect(page.getByText('Known after the first poll.')).toBeHidden()
     await expect(budget(page).locator('.section-stats')).toContainText('of 5,000 left')
+    // A quiet first reading is a quiet window, not use up to the ceiling.
+    await expect(chart).toHaveAttribute(
+      'aria-label',
+      'Slots in use and jobs queued over time. Nothing ran or waited in this window.',
+    )
   })
 })
 

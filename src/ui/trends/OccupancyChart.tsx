@@ -1,5 +1,5 @@
 import { useState } from 'preact/hooks'
-import { gaps, type Sample } from '../../model/history'
+import { gaps, occupancySummary, type Sample } from '../../model/history'
 import type { RunnerClass } from '../../github/types'
 import { duration, shortClock } from '../format'
 
@@ -47,8 +47,10 @@ export function OccupancyChart({ samples, cls, cap, fromMs, toMs }: Props) {
   const plotH = HEIGHT - TOP - BOTTOM
   const inUseOf = (s: Sample) => s.inUse[cls] ?? 0
   const queuedOf = (s: Sample) => s.queued[cls] ?? 0
-  const peak = Math.max(cap ?? 0, ...samples.map((s) => inUseOf(s) + queuedOf(s)), 1)
-  const yMax = Math.max(2, Math.ceil(peak / 2) * 2)
+  // The axis has to hold the ceiling line and the queue stacked on the slots
+  // in use. That is a drawing concern only; the summary reports each apart.
+  const axisMax = Math.max(cap ?? 0, ...samples.map((s) => inUseOf(s) + queuedOf(s)))
+  const yMax = Math.max(2, Math.ceil(axisMax / 2) * 2)
   const yTicks = [...new Set([0, ...(cap !== null && cap < yMax ? [cap] : []), yMax])]
   const x = (t: number) => LEFT + ((t - fromMs) / (toMs - fromMs)) * plotW
   const y = (v: number) => TOP + plotH - (v / yMax) * plotH
@@ -95,17 +97,14 @@ export function OccupancyChart({ samples, cls, cap, fromMs, toMs }: Props) {
     setScrub(fromMs + ((px - LEFT) / plotW) * span)
   }
 
-  const summary =
-    samples.length === 0
-      ? 'No data in this window.'
-      : `Up to ${peak} at once${cap === null ? '' : ` against a ceiling of ${cap}`}.`
+  const summary = occupancySummary(samples, cls, cap)
 
   return (
     <svg
       class="occ"
       viewBox={`0 0 ${WIDTH} ${HEIGHT}`}
       role="img"
-      aria-label={`Slots in use over time. ${summary}`}
+      aria-label={`Slots in use and jobs queued over time. ${summary}`}
       onPointerMove={readPointer}
       onPointerDown={readPointer}
       onPointerLeave={() => setScrub(null)}
