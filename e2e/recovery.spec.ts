@@ -151,6 +151,29 @@ test.describe('a browser that was left on recovery', () => {
     expect(github.calls.map(bearer)).toEqual(github.calls.map(() => 'NEW_TOKEN'))
   })
 
+  test('a replacement token whose repository list fails to load can be tried again without pasting it again', async ({
+    page,
+    github,
+  }) => {
+    github.user('someone-else')
+    github.on(/\/user\/repos\?/, json({ message: 'Server Error' }, { status: 502 }))
+
+    await page.goto('./')
+    await expect(recoveryCard(page)).toBeVisible()
+    const field = page.getByLabel('Personal access token')
+    await field.fill(NEW_TOKEN)
+    await field.press('Enter')
+
+    await expect(page.getByText('Server Error', { exact: true })).toBeVisible()
+    await expect.poll(async () => credential(await field.inputValue())).toBe('NEW_TOKEN')
+
+    github.repos([repo('other/lib')])
+    await page.getByRole('button', { name: 'Reconnect', exact: true }).click()
+    await expect(page.getByRole('checkbox', { name: 'other/lib public', exact: true })).toBeVisible()
+    await expect(field).toHaveValue('')
+    expect(requests(github.calls)).toEqual(['GET /user', `GET ${REPOS_PATH}`, 'GET /user', `GET ${REPOS_PATH}`])
+  })
+
   test('a replacement token GitHub also rejects leaves the page on recovery', async ({ page, github }) => {
     github.on(/\/user$/, REJECTED)
 

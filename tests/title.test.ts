@@ -29,6 +29,12 @@ describe('titleFor', () => {
     expect(titleFor({ health: 'unreachable', mine: [], headline: pool })).toMatch(/^Can't check/)
   })
 
+  it('claims nothing about the pool before the first check has finished', () => {
+    // An empty pool before any answer reads exactly like an idle one.
+    expect(titleFor({ health: 'none', mine: [], headline: pool })).toBe('actiondash')
+    expect(titleFor({ health: 'none', mine: [my({ state: 'running' })], headline: pool })).toBe('actiondash')
+  })
+
   it('names a failed job without calling the run failed', () => {
     const failing = my({ state: 'running', failed: [makeJob({ name: 'test-ui' })] })
 

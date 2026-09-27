@@ -6,12 +6,15 @@ import {
   gaps,
   KEEP_DAYS,
   MAX_SAMPLES,
+  occupancySummary,
+  peaks,
   record,
   recordedPools,
   repoShare,
   sanitiseHistory,
   slice,
   type HistoryState,
+  type Sample,
 } from '../src/model/history'
 import { projectedRemaining } from '../src/model/budget'
 import type { ClassBucket, DashJob } from '../src/model/queue'
@@ -138,6 +141,42 @@ describe('selectors', () => {
     s = poll(s, macos(five.slice(0, 2)), T0 + 9 * INTERVAL)
 
     expect(atCapacityMs(s.samples, 'macos', 5)).toBe(4 * INTERVAL)
+  })
+
+  it('finds the most in use and the most queued, each at its own moment', () => {
+    const samples: Sample[] = [
+      { t: 1, until: 2, inUse: { macos: 5 }, queued: { macos: 1 } },
+      { t: 2, until: 3, inUse: { macos: 2 }, queued: { macos: 3, linux: 9 } },
+    ]
+
+    expect(peaks(samples, 'macos')).toEqual({ inUse: 5, queued: 3 })
+    expect(peaks(samples, 'windows')).toEqual({ inUse: 0, queued: 0 })
+  })
+
+  it('says a quiet window was quiet, rather than reading the ceiling as use', () => {
+    const quiet: Sample[] = [{ t: 1, until: 2, inUse: {}, queued: {} }]
+
+    expect(occupancySummary(quiet, 'macos', 5)).toBe('Nothing ran or waited in this window.')
+    expect(occupancySummary(quiet, 'self-hosted', null)).toBe('Nothing ran or waited in this window.')
+    expect(occupancySummary([], 'macos', 5)).toBe('No data in this window.')
+  })
+
+  it('states the queue apart from the slots in use, so a full pool is not read as over its ceiling', () => {
+    const busy: Sample[] = [{ t: 1, until: 2, inUse: { macos: 5 }, queued: { macos: 3 } }]
+
+    expect(occupancySummary(busy, 'macos', 5)).toBe(
+      'Up to 5 in use at once, against a ceiling of 5, and up to 3 queued.',
+    )
+    expect(occupancySummary(busy, 'macos', null)).toBe('Up to 5 in use at once, and up to 3 queued.')
+  })
+
+  it('names only what happened when jobs only waited or only ran', () => {
+    const waiting: Sample[] = [{ t: 1, until: 2, inUse: {}, queued: { macos: 2 } }]
+    const running: Sample[] = [{ t: 1, until: 2, inUse: { linux: 3 }, queued: {} }]
+
+    expect(occupancySummary(waiting, 'macos', 5)).toBe('Nothing ran; up to 2 queued.')
+    expect(occupancySummary(running, 'linux', 5)).toBe('Up to 3 in use at once, against a ceiling of 5.')
+    expect(occupancySummary(running, 'linux', null)).toBe('Up to 3 in use at once.')
   })
 
   it('lists the pools anything was recorded in, in the usual order', () => {

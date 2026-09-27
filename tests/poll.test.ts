@@ -517,6 +517,29 @@ describe('when GitHub cannot be reached', () => {
     expect(store.rateLimited.value).toBe(reset)
   })
 
+  it('still says the allowance is used up when the refusal does not say until when', async () => {
+    // A secondary limit can arrive without the x-ratelimit headers, and a
+    // refusal is a refusal either way. It waits as long as GitHub asked.
+    gh.on(
+      /\/actions\/runs\?status=/,
+      json({ message: 'You have exceeded a secondary rate limit.' }, { status: 403, headers: { 'retry-after': '120' } }),
+    )
+
+    await pollOnce()
+
+    expect(store.dataHealth.value).toBe('limited')
+    expect(store.rateLimited.value).toBe(Math.ceil((T0 + 120_000) / 1000))
+  })
+
+  it('waits a minute after a refusal that gives no time at all', async () => {
+    gh.on(/\/actions\/runs\?status=/, json({ message: 'API rate limit exceeded' }, { status: 429 }))
+
+    await pollOnce()
+
+    expect(store.dataHealth.value).toBe('limited')
+    expect(store.rateLimited.value).toBe(Math.ceil((T0 + 60_000) / 1000))
+  })
+
   it('records no history for a poll that missed a repository', async () => {
     await bothAnswer()
     const recorded = () => history.value.samples.at(-1)?.until
