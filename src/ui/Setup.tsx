@@ -14,6 +14,8 @@ import { shortClock } from './format'
 
 const TOKEN_URL = 'https://github.com/settings/personal-access-tokens/new'
 const TOKENS_URL = 'https://github.com/settings/personal-access-tokens'
+const NO_REPOS =
+  'The token reached GitHub but reported no repositories. Add repositories to it, or enter one below by name.'
 
 /** "acme/site: not found; the token may not include it". */
 function unreadableText(failures: readonly { repo: RepoRef; error: unknown }[]): string {
@@ -44,7 +46,11 @@ export function Setup() {
   // Kept only when the dashboard opens, with the repositories chosen alongside it.
   const [plan, setPlan] = useState<PlanId>(() => settings.value.plan)
   const [busy, setBusy] = useState(false)
-  const [error, setError] = useState<string | null>(null)
+  // Each problem is said beside the control it is about: the token, the
+  // repositories, or opening the dashboard.
+  const [tokenError, setTokenError] = useState<string | null>(null)
+  const [reposError, setReposError] = useState<string | null>(null)
+  const [startError, setStartError] = useState<string | null>(null)
   const [notice, setNotice] = useState<string | null>(null)
   // Repositories the last check could not read, and why, shown by Open.
   const [unreadable, setUnreadable] = useState<{ keys: string[]; text: string } | null>(null)
@@ -57,10 +63,17 @@ export function Setup() {
     if (stored && rejectedAt === null) void connect(stored)
   }, [])
 
+  /** A new token starts setup afresh, so nothing said about the last one stands. */
+  function clearProblems() {
+    setTokenError(null)
+    setReposError(null)
+    setStartError(null)
+    setNotice(null)
+  }
+
   async function connect(token: string) {
     setBusy(true)
-    setError(null)
-    setNotice(null)
+    clearProblems()
     pendingToken.value = token
     try {
       const user = await getUser()
@@ -71,18 +84,14 @@ export function Setup() {
       // exposes it. Not before: if the list fails, trying again needs it.
       setTokenInput('')
       setRepos(list)
-      if (list.length === 0) {
-        setNotice(
-          'The token reached GitHub but reported no repositories. Add repositories to it, or enter one below by name.',
-        )
-      }
+      if (list.length === 0) setNotice(NO_REPOS)
     } catch (err) {
       pendingToken.value = null
       setConnectedAs(null)
       if (err instanceof GitHubError && err.status === 401) {
-        setError('GitHub rejected that token. Check it was copied whole and has not expired.')
+        setTokenError('GitHub rejected that token. Check it was copied whole and has not expired.')
       } else {
-        setError((err as Error).message)
+        setTokenError((err as Error).message)
       }
     } finally {
       setBusy(false)
@@ -96,7 +105,7 @@ export function Setup() {
    */
   async function reconnect(token: string) {
     setBusy(true)
-    setError(null)
+    clearProblems()
     pendingToken.value = token
     try {
       const user = await getUser()
@@ -121,9 +130,10 @@ export function Setup() {
       // As in connect: kept until the repositories are listed, for a retry.
       setTokenInput('')
       setRepos(list)
+      if (list.length === 0) setNotice(NO_REPOS)
     } catch (err) {
       pendingToken.value = null
-      setError(
+      setTokenError(
         err instanceof GitHubError && err.status === 401
           ? 'GitHub rejected that token too. Check it was copied whole.'
           : (err as Error).message,
@@ -144,10 +154,10 @@ export function Setup() {
     if (!manual.trim()) return
     const ref = parseRepo(manual)
     if (!ref) {
-      setError('Enter a repository as owner/name.')
+      setReposError('Enter a repository as owner/name.')
       return
     }
-    setError(null)
+    setReposError(null)
     setSelected(new Set([...selected, repoKey(ref)]))
     setManual('')
   }
@@ -158,12 +168,12 @@ export function Setup() {
       .filter((r): r is RepoRef => r !== null)
 
     if (refs.length === 0) {
-      setError('Select at least one repository.')
+      setStartError('Select at least one repository.')
       return
     }
 
     setBusy(true)
-    setError(null)
+    setStartError(null)
     setUnreadable(null)
     const token = pendingToken.value ?? stored
     try {
@@ -182,7 +192,7 @@ export function Setup() {
       })
       enterDashboard()
     } catch (err) {
-      setError((err as Error).message)
+      setStartError((err as Error).message)
     } finally {
       setBusy(false)
     }
@@ -269,13 +279,22 @@ export function Setup() {
             <li>
               Paste the new token here.
               {tokenField((t) => void reconnect(t), 'Reconnect')}
+              {tokenError && (
+                <div class="hint bad" role="alert">
+                  {tokenError}
+                </div>
+              )}
+              {notice && (
+                <div class="hint" role="status">
+                  {notice}
+                </div>
+              )}
             </li>
           </ol>
           <p class="hint">Kept in this browser: {joinList(kept)}.</p>
           {connectedAs && (
             <div class="hint good">Connected as {connectedAs}. Choose repositories below.</div>
           )}
-          {error && <div class="hint bad">{error}</div>}
         </div>
       ) : (
         <div class="card">
@@ -348,8 +367,16 @@ export function Setup() {
           )}
 
           {connectedAs && <div class="hint good">Connected as {connectedAs}.</div>}
-          {error && <div class="hint bad">{error}</div>}
-          {notice && <div class="hint">{notice}</div>}
+          {tokenError && (
+            <div class="hint bad" role="alert">
+              {tokenError}
+            </div>
+          )}
+          {notice && (
+            <div class="hint" role="status">
+              {notice}
+            </div>
+          )}
         </div>
       )}
 
@@ -413,6 +440,11 @@ export function Setup() {
               Add
             </button>
           </div>
+          {reposError && (
+            <div class="hint bad" role="alert">
+              {reposError}
+            </div>
+          )}
 
           {owners.length > 1 && (
             <div class="banner warn">
@@ -470,6 +502,11 @@ export function Setup() {
               {busy ? 'Checking each repository...' : 'Open dashboard'}
             </button>
           </div>
+          {startError && (
+            <div class="hint bad" role="alert">
+              {startError}
+            </div>
+          )}
           {unreadable && (
             <div class="hint bad" role="alert">
               The token cannot read Actions on {unreadable.text}. Grant it Actions: Read and write,

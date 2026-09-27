@@ -203,6 +203,22 @@ test.describe('a browser that was left on recovery', () => {
     expect(requests(github.calls)).toEqual(['GET /user', `GET ${REPOS_PATH}`, 'GET /user', `GET ${REPOS_PATH}`])
   })
 
+  test('a replacement token that reaches no repositories says so on recovery', async ({ page, github }) => {
+    github.user('someone-else')
+    github.repos([])
+
+    await page.goto('./')
+    await expect(recoveryCard(page)).toBeVisible()
+    await page.getByLabel('Personal access token').fill(NEW_TOKEN)
+    await page.getByRole('button', { name: 'Reconnect' }).click()
+
+    await expect(page.getByText('Connected as someone-else. Choose repositories below.', { exact: true })).toBeVisible()
+    await expect(page.locator('.card', { has: recoveryCard(page) }).getByRole('status')).toHaveText(
+      'The token reached GitHub but reported no repositories. Add repositories to it, or enter one below by name.',
+    )
+    await expect(page.getByLabel('Add a repository by name')).toBeVisible()
+  })
+
   test('a replacement token GitHub also rejects leaves the page on recovery', async ({ page, github }) => {
     github.on(/\/user$/, REJECTED)
 

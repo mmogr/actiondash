@@ -19,6 +19,11 @@ function byName(list: unknown): RepoRef[] {
   return [...(list as RepoRef[])].sort((a, b) => `${a.owner}/${a.name}`.localeCompare(`${b.owner}/${b.name}`))
 }
 
+/** One of setup's cards, by its heading. */
+function card(page: Page, heading: string) {
+  return page.locator('.card', { has: page.getByRole('heading', { name: heading, exact: true }) })
+}
+
 function repoBox(page: Page, fullName: string, visibility: 'public' | 'private' = 'public') {
   return page.getByRole('checkbox', { name: `${fullName} ${visibility}`, exact: true })
 }
@@ -198,6 +203,37 @@ test('a repository list that fails to load can be asked for again without pastin
   expect(requests(github.calls)).toEqual(['GET /user', `GET ${REPOS_PATH}`, 'GET /user', `GET ${REPOS_PATH}`])
 })
 
+test('each problem is announced beside the control it is about', async ({ page, github }) => {
+  github.on(/\/user$/, json({ message: 'Bad credentials' }, { status: 401 }))
+
+  await page.goto('./')
+  const tokenCard = card(page, '1. Personal access token')
+  const reposCard = card(page, '2. Repositories to watch')
+  const startCard = card(page, '3. Start')
+  await page.getByLabel('Personal access token').fill(TOKEN)
+  await page.getByRole('button', { name: 'Connect', exact: true }).click()
+  await expect(tokenCard.getByRole('alert')).toHaveText(
+    'GitHub rejected that token. Check it was copied whole and has not expired.',
+  )
+
+  github.user()
+  github.repos([repo('acme/app')])
+  await page.getByRole('button', { name: 'Connect', exact: true }).click()
+  await expect(page.getByText('Connected as octocat.', { exact: true })).toBeVisible()
+  await expect(page.getByRole('alert')).toHaveCount(0)
+
+  const byNameField = page.getByLabel('Add a repository by name')
+  await byNameField.fill('nonsense')
+  await byNameField.press('Enter')
+  await expect(reposCard.getByRole('alert')).toHaveText('Enter a repository as owner/name.')
+
+  await page.getByRole('button', { name: 'Open dashboard' }).click()
+  await expect(startCard.getByRole('alert')).toHaveText('Select at least one repository.')
+  // Refusing to open does not take back why the name was refused.
+  await expect(reposCard.getByRole('alert')).toHaveText('Enter a repository as owner/name.')
+  await expect(page.getByRole('alert')).toHaveCount(2)
+})
+
 test('a repository the token cannot read is named, and deselecting it lets the dashboard open', async ({
   page,
   github,
@@ -212,7 +248,7 @@ test('a repository the token cannot read is named, and deselecting it lets the d
   await page.getByRole('button', { name: 'Select all shown' }).click()
   await page.getByRole('button', { name: 'Open dashboard' }).click()
 
-  const alert = page.getByRole('alert')
+  const alert = card(page, '3. Start').getByRole('alert')
   await expect(alert).toContainText(
     'The token cannot read Actions on acme/site: not found; the token may not include it.',
   )
