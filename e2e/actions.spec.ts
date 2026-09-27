@@ -64,13 +64,17 @@ test.describe('cancelling one run', () => {
     await confirm.getByRole('button', { name: 'Yes, cancel' }).click()
 
     // While GitHub has not answered, the row says so instead of offering the
-    // button again.
+    // button again. The button that had focus is gone, so what took its place
+    // holds focus, rather than leaving the reader at the top of the page.
     await github.waitForCalls(CANCEL_1, 1, 'POST')
-    await expect(row.getByText('cancelling…')).toBeVisible()
+    const status = row.getByRole('status')
+    await expect(row.getByText('cancelling…')).toBeFocused()
+    await expect(status).toHaveText('cancelling…')
     await expect(cancel).toBeHidden()
 
     reply.resolve(empty(202))
-    await expect(row.getByText('cancel requested')).toBeVisible()
+    await expect(status).toHaveText('cancel requested')
+    await expect(status).toBeFocused()
     // A successful cancel asks for a poll at once, so its effect shows.
     await github.waitForCalls(LISTINGS, listingsBefore + 1)
 
@@ -117,6 +121,7 @@ test.describe('cancelling one run', () => {
       'Could not cancel app #12 (Resource not accessible by personal access token).',
     )
     await expect(cancel).toBeVisible()
+    await expect(cancel).toBeFocused()
     await expect(row.getByText('cancel requested')).toBeHidden()
     // Only a 409 means "try force-cancel"; a refusal is final.
     expect(github.callsTo(FORCE_CANCEL_1)).toEqual([])
@@ -159,7 +164,8 @@ test('cancelling every superseded run sends one cancel, then the next only after
   await github.waitForCalls(ANY_CANCEL, 1, 'POST')
   // Shown once the first cancel is answered, in the same step that starts
   // the wait before the second.
-  await expect(page.getByRole('status')).toHaveText('Cancelling 1 of 2…')
+  const progress = page.locator('.bulk-progress')
+  await expect(progress).toHaveText('Cancelling 1 of 2…')
   expect(github.callsTo(ANY_CANCEL).map((c) => c.path)).toEqual(['/repos/acme/app/actions/runs/1/cancel'])
 
   await github.expectNoNewCalls(() => page.clock.runFor(999))
@@ -176,7 +182,7 @@ test('cancelling every superseded run sends one cancel, then the next only after
   await expect(page.locator('[data-run="3"]').getByRole('button', { name: 'Cancel app run #3' })).toBeVisible()
   // Nothing superseded is left to cancel, so the offer goes.
   await expect(bulk).toBeHidden()
-  await expect(page.getByRole('status')).toBeHidden()
+  await expect(progress).toBeHidden()
 })
 
 test('re-running a failed run asks first, sends one re-run of the failed jobs, and says it was requested', async ({

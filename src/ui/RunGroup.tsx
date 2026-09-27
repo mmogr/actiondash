@@ -63,6 +63,7 @@ export function RunGroup({ group, kind, defaultOpen, forecast }: Props) {
   // Shown from an older answer: its repository did not answer this time.
   const asOf = runsAsOf.value.get(run.id) ?? null
   const behind = asOf !== null || frozenAt.value !== null
+  const requested = isCancelRequested(cancelRequested.value, run.id, nowMs)
 
   // The whole run, across every pool its jobs use, not only this group's slice.
   const progress = runProgress(jobsByRun.value.get(run.id))
@@ -167,10 +168,11 @@ export function RunGroup({ group, kind, defaultOpen, forecast }: Props) {
           {positions && supersededBy && eta && <div class="group-note">{eta}</div>}
         </div>
 
-        {cancel.cancelling ? (
-          <span class="group-cancelling">cancelling…</span>
-        ) : isCancelRequested(cancelRequested.value, run.id, nowMs) ? (
-          <span class="group-cancelling">cancel requested</span>
+        {/* One node for both texts, so focus survives the text changing. */}
+        {cancel.cancelling || requested ? (
+          <span ref={cancel.statusRef} role="status" tabIndex={-1} class="group-cancelling">
+            {cancel.cancelling ? 'cancelling…' : 'cancel requested'}
+          </span>
         ) : (
           <button
             ref={cancel.askRef}
