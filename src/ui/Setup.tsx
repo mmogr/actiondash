@@ -62,11 +62,12 @@ export function Setup() {
     pendingToken.value = token
     try {
       const user = await getUser()
-      setConnectedAs(user.login)
-      // Drop the secret from the input as soon as it is validated, so it stops
-      // living in the DOM where a screenshot or accessibility tree exposes it.
-      setTokenInput('')
       const list = await listRepos()
+      setConnectedAs(user.login)
+      // Drop the secret from the input once setup can go on without it, so it
+      // stops living in the DOM where a screenshot or accessibility tree
+      // exposes it. Not before: if the list fails, trying again needs it.
+      setTokenInput('')
       setRepos(list)
       if (list.length === 0) {
         setNotice(
@@ -97,7 +98,6 @@ export function Setup() {
     pendingToken.value = token
     try {
       const user = await getUser()
-      setTokenInput('')
       if (sameAccount(settings.value.login, user.login)) {
         const failures = await probeRepos(settings.value.repos)
         if (failures.length === 0) {
@@ -107,8 +107,11 @@ export function Setup() {
         }
         setUnreadable({ keys: failures.map((f) => repoKey(f.repo)), text: unreadableText(failures) })
       }
+      const list = await listRepos()
       setConnectedAs(user.login)
-      setRepos(await listRepos())
+      // As in connect: kept until the repositories are listed, for a retry.
+      setTokenInput('')
+      setRepos(list)
     } catch (err) {
       pendingToken.value = null
       setError(
