@@ -1,10 +1,12 @@
 import type { Page } from '@playwright/test'
+import type { WorkflowJob } from '../src/github/types'
+import type { DurationMap } from '../src/model/durations'
 import { makeJob, makeRun } from '../tests/helpers'
 import { deferred, empty, json } from '../tests/replies'
 import { expect, test } from './fixtures'
 import { LISTINGS } from './scenarios'
 import type { BrowserGitHub } from './github'
-import { dashboardSeed, REPO } from './seed'
+import { dashboardSeed, FIXED_NOW, REPO } from './seed'
 
 /**
  * The writes the reader can make from the dashboard: cancelling a run,
@@ -64,13 +66,17 @@ test.describe('cancelling one run', () => {
     await confirm.getByRole('button', { name: 'Yes, cancel' }).click()
 
     // While GitHub has not answered, the row says so instead of offering the
-    // button again.
+    // button again. The button that had focus is gone, so what took its place
+    // holds focus, rather than leaving the reader at the top of the page.
     await github.waitForCalls(CANCEL_1, 1, 'POST')
-    await expect(row.getByText('cancelling…')).toBeVisible()
+    const status = row.getByRole('status')
+    await expect(row.getByText('cancelling…')).toBeFocused()
+    await expect(status).toHaveText('cancelling…')
     await expect(cancel).toBeHidden()
 
     reply.resolve(empty(202))
-    await expect(row.getByText('cancel requested')).toBeVisible()
+    await expect(status).toHaveText('cancel requested')
+    await expect(status).toBeFocused()
     // A successful cancel asks for a poll at once, so its effect shows.
     await github.waitForCalls(LISTINGS, listingsBefore + 1)
 
@@ -117,12 +123,189 @@ test.describe('cancelling one run', () => {
       'Could not cancel app #12 (Resource not accessible by personal access token).',
     )
     await expect(cancel).toBeVisible()
+    await expect(cancel).toBeFocused()
     await expect(row.getByText('cancel requested')).toBeHidden()
     // Only a 409 means "try force-cancel"; a refusal is final.
     expect(github.callsTo(FORCE_CANCEL_1)).toEqual([])
 
     await alert.getByRole('button', { name: 'dismiss' }).click()
     await expect(alert).toBeHidden()
+  })
+
+  test('when the next check takes away the row that held focus, focus moves to the nearest heading', async ({
+    page,
+    github,
+  }) => {
+    scriptOneRunningRun(github)
+    github.write(CANCEL_1)
+
+    await page.goto('./')
+    const row = page.locator('[data-run="1"]')
+    const cancel = row.getByRole('button', { name: 'Cancel app run #12' })
+    await expect(cancel).toBeVisible()
+
+    // By the check the cancel asks for, GitHub has cancelled the run and it
+    // has left the listings. That check is held until the row has focus.
+    const gone = deferred()
+    github.listing(REPO, 'queued', json({ total_count: 0, workflow_runs: [] }))
+    github.listing(REPO, 'in_progress', gone.reply)
+    github.jobs(1, [
+      makeJob({
+        id: 11,
+        run_id: 1,
+        status: 'completed',
+        conclusion: 'cancelled',
+        started_at: '2026-09-09T10:01:00Z',
+        completed_at: '2026-09-09T10:05:05Z',
+      }),
+    ])
+
+    await cancel.click()
+    await row.getByRole('group', { name: 'Confirm cancel' }).getByRole('button', { name: 'Yes, cancel' }).click()
+    const status = row.getByRole('status')
+    await expect(status).toHaveText('cancel requested')
+    await expect(status).toBeFocused()
+
+    gone.resolve(json({ total_count: 0, workflow_runs: [] }))
+    await expect(row).toHaveCount(0)
+    await expect(page.locator('.section-title', { hasText: /^All clear$/ })).toBeFocused()
+  })
+})
+
+/** Every build of acme/app takes ten minutes, so the insight has figures to work from. */
+const TEN_MINUTE_BUILDS: DurationMap = {
+  'acme/app::build': { secs: [600], ids: [901], cls: 'macos', seenAt: FIXED_NOW.getTime() - 3_600_000 },
+}
+
+const RUN_1 = makeRun({ id: 1, run_number: 1, status: 'in_progress', head_sha: 'b'.repeat(40) })
+const RUN_2 = makeRun({ id: 2, run_number: 2, status: 'in_progress', head_sha: 'c'.repeat(40) })
+const RUN_3 = makeRun({ id: 3, run_number: 3, status: 'queued', head_sha: 'd'.repeat(40) })
+
+function runningJobs(runId: number, ids: number[], started: string) {
+  return ids.map((id) => makeJob({ id, run_id: runId, status: 'in_progress', started_at: started }))
+}
+
+/**
+ * Pro's five macOS slots, all held by runs 1 and 2, which run 3 on a newer
+ * commit of the same branch has superseded. Run 3 waits for a slot. Cancelling
+ * either would start it at once; the insight names the first, run 1.
+ */
+function scriptFullPool(github: BrowserGitHub): void {
+  github.runs(REPO, [RUN_3], [RUN_1, RUN_2])
+  github.jobs(1, runningJobs(1, [11, 12, 13], '2026-09-09T10:01:00Z'))
+  github.jobs(2, runningJobs(2, [21, 22], '2026-09-09T10:02:00Z'))
+  github.jobs(3, [makeJob({ id: 31, run_id: 3, created_at: '2026-09-09T10:03:00Z' })])
+}
+
+test.describe('cancelling from the insight', () => {
+  test.use({ seed: { ...dashboardSeed(), durations: TEN_MINUTE_BUILDS } })
+
+  test('a cancel already asked for is offered again neither in the insight nor in the tiles', async ({
+    page,
+    github,
+  }) => {
+    scriptFullPool(github)
+    const reply = deferred()
+    github.write(CANCEL_1, reply.reply)
+
+    await page.goto('./')
+    const insight = page.locator('.insight')
+    const tiles = page.locator('.tiles')
+    await expect(insight).toContainText('The next free slot goes to app #1, which is superseded by #3.')
+    await expect(tiles).toContainText('if you cancel #1')
+
+    await insight.getByRole('button', { name: 'Cancel #1', exact: true }).click()
+    const listingsBefore = github.callsTo(LISTINGS).length
+    await insight.getByRole('group', { name: 'Confirm cancel' }).getByRole('button', { name: 'Yes, cancel #1' }).click()
+    await github.waitForCalls(CANCEL_1, 1, 'POST')
+    const status = insight.getByRole('status')
+    await expect(status).toHaveText('cancelling…')
+    await expect(status).toBeFocused()
+    reply.resolve(empty(202))
+
+    // Run 1 holds its slots until GitHub catches up, but it has been asked, so
+    // the insight moves on to run 2, and stays there after the check the
+    // cancel asks for.
+    await github.waitForCalls(LISTINGS, listingsBefore + 2)
+    await expect(insight).toContainText('The next free slot goes to app #2, which is superseded by #3.')
+    await expect(insight.getByRole('button', { name: 'Cancel #2', exact: true })).toBeVisible()
+    await expect(page.getByRole('button', { name: 'Cancel #1', exact: true })).toHaveCount(0)
+    await expect(tiles).toContainText('if you cancel #2')
+    await expect(tiles).not.toContainText('cancel #1')
+  })
+
+  test('a question left open when a check changes the insight is taken back, never turned on another run', async ({
+    page,
+    github,
+  }) => {
+    scriptFullPool(github)
+
+    await page.goto('./')
+    const insight = page.locator('.insight')
+    await insight.getByRole('button', { name: 'Cancel #1', exact: true }).click()
+    const confirm = insight.getByRole('group', { name: 'Confirm cancel' })
+    await expect(confirm.getByRole('button', { name: 'Yes, cancel #1' })).toBeVisible()
+
+    // Before the next check, run 1 ends and a run on another branch takes its
+    // slots, so the insight names run 2 instead.
+    const other = makeRun({ id: 4, run_number: 4, status: 'in_progress', head_branch: 'main', head_sha: 'e'.repeat(40) })
+    github.runs(REPO, [RUN_3], [RUN_2, other])
+    github.jobs(
+      1,
+      [11, 12, 13].map((id) =>
+        makeJob({
+          id,
+          run_id: 1,
+          status: 'completed',
+          conclusion: 'cancelled',
+          started_at: '2026-09-09T10:01:00Z',
+          completed_at: '2026-09-09T10:05:05Z',
+        }),
+      ),
+    )
+    github.jobs(4, runningJobs(4, [41, 42, 43], '2026-09-09T10:05:05Z'))
+    await page.clock.fastForward(15_000)
+
+    await expect(insight).toContainText('The next free slot goes to app #2, which is superseded by #3.')
+    await expect(confirm).toBeHidden()
+    await expect(insight.getByRole('button', { name: 'Cancel #2', exact: true })).toBeVisible()
+    // Keep went with the question, so focus moves to the pool's heading.
+    await expect(page.locator('.section-title', { hasText: /^macOS$/ })).toBeFocused()
+    expect(github.callsTo(ANY_CANCEL)).toEqual([])
+  })
+})
+
+test('a run with jobs in two pools asks to cancel all its unfinished jobs, from either row', async ({
+  page,
+  github,
+}) => {
+  // Run 12 builds on two macOS slots and waits for a Linux one: one row in
+  // each pool, and one cancel that stops all three jobs.
+  github.runs(REPO, [], [makeRun({ id: 1, run_number: 12, status: 'in_progress' })])
+  github.jobs(1, [
+    makeJob({ id: 11, run_id: 1, name: 'build', status: 'in_progress', started_at: '2026-09-09T10:01:00Z' }),
+    makeJob({ id: 12, run_id: 1, name: 'build-arm', status: 'in_progress', started_at: '2026-09-09T10:01:00Z' }),
+    makeJob({ id: 13, run_id: 1, name: 'lint', labels: ['ubuntu-latest'] }),
+  ])
+
+  await page.goto('./')
+  const pool = (name: string) =>
+    page.locator('.section', { has: page.locator('.section-title', { hasText: new RegExp(`^${name}$`) }) })
+  const macosRow = pool('macOS').locator('[data-run="1"]')
+  const linuxRow = pool('Linux').locator('[data-run="1"]')
+  const macosCancel = macosRow.getByRole('button', { name: /^Cancel app run #12/ })
+  await expect(macosCancel).toHaveAccessibleName('Cancel app run #12 (3 unfinished jobs)')
+  await expect(linuxRow.getByRole('button', { name: /^Cancel app run #12/ })).toHaveAccessibleName(
+    'Cancel app run #12 (3 unfinished jobs)',
+  )
+
+  await github.expectNoNewCalls(async () => {
+    await macosCancel.click()
+    await expect(macosRow.getByRole('group', { name: 'Confirm cancel' })).toContainText(
+      'Cancel run #12 and its 3 unfinished jobs?',
+    )
+    await page.keyboard.press('Escape')
+    await expect(macosCancel).toBeFocused()
   })
 })
 
@@ -159,7 +342,9 @@ test('cancelling every superseded run sends one cancel, then the next only after
   await github.waitForCalls(ANY_CANCEL, 1, 'POST')
   // Shown once the first cancel is answered, in the same step that starts
   // the wait before the second.
-  await expect(page.getByRole('status')).toHaveText('Cancelling 1 of 2…')
+  const progress = page.locator('.bulk-progress')
+  await expect(progress).toHaveText('Cancelling 1 of 2…')
+  await expect(progress).toBeFocused()
   expect(github.callsTo(ANY_CANCEL).map((c) => c.path)).toEqual(['/repos/acme/app/actions/runs/1/cancel'])
 
   await github.expectNoNewCalls(() => page.clock.runFor(999))
@@ -174,9 +359,32 @@ test('cancelling every superseded run sends one cancel, then the next only after
   await expect(page.locator('[data-run="1"]').getByText('cancel requested')).toBeVisible()
   await expect(page.locator('[data-run="2"]').getByText('cancel requested')).toBeVisible()
   await expect(page.locator('[data-run="3"]').getByRole('button', { name: 'Cancel app run #3' })).toBeVisible()
-  // Nothing superseded is left to cancel, so the offer goes.
+  // Nothing superseded is left to cancel, so the offer goes, and what took its
+  // place says what became of them and keeps focus.
   await expect(bulk).toBeHidden()
-  await expect(page.getByRole('status')).toBeHidden()
+  await expect(progress).toHaveText('Cancel requested for 2 superseded runs.')
+  await expect(progress).toBeFocused()
+})
+
+test('the question for a single superseded run speaks of it in the singular', async ({ page, github }) => {
+  // Run 2, on a newer commit, supersedes run 1, which holds a slot and has
+  // a second job waiting for one.
+  github.runs(REPO, [], [
+    makeRun({ id: 1, run_number: 1, status: 'in_progress', head_sha: 'b'.repeat(40) }),
+    makeRun({ id: 2, run_number: 2, status: 'in_progress', head_sha: 'c'.repeat(40) }),
+  ])
+  github.jobs(1, [
+    makeJob({ id: 11, run_id: 1, status: 'in_progress', started_at: '2026-09-09T10:01:00Z' }),
+    makeJob({ id: 12, run_id: 1, name: 'test' }),
+  ])
+  github.jobs(2, [makeJob({ id: 21, run_id: 2, status: 'in_progress', started_at: '2026-09-09T10:02:00Z' })])
+
+  await page.goto('./')
+  await page.getByRole('button', { name: 'Cancel 1 superseded' }).click()
+
+  const confirm = page.locator('.bulk-confirm')
+  await expect(confirm).toContainText('Cancel 1 superseded run? It holds 1 macOS slot and has 1 job waiting.')
+  await expect(confirm.getByRole('button', { name: 'Yes, cancel 1' })).toBeVisible()
 })
 
 test('re-running a failed run asks first, sends one re-run of the failed jobs, and says it was requested', async ({
@@ -216,16 +424,43 @@ test('re-running a failed run asks first, sends one re-run of the failed jobs, a
     await expect(rerun).toHaveAttribute('aria-expanded', 'true')
   })
   const confirm = finished.getByRole('group', { name: 'Confirm re-run' })
-  await expect(confirm).toContainText('Re-run the failed job of app #12? They join the queue again.')
+  await expect(confirm).toContainText('Re-run the failed job of app #12? It joins the queue again.')
   await expect(confirm.getByRole('button', { name: 'Keep' })).toBeFocused()
 
   const listingsBefore = github.callsTo(LISTINGS).length
   await confirm.getByRole('button', { name: 'Yes, re-run' }).click()
 
-  await expect(finished).toContainText('Re-run requested. It joins the queue on the next check.')
+  // The button that had focus is gone, so the note in its place takes focus.
+  const note = finished.getByText('Re-run requested. It joins the queue on the next check.')
+  await expect(note).toBeFocused()
+  await expect(note).toHaveRole('status')
   await expect(rerun).toBeHidden()
   await github.waitForCalls(LISTINGS, listingsBefore + 1)
   expect(github.callsTo(/\/rerun/).map((c) => `${c.method} ${c.path}`)).toEqual([
     'POST /repos/acme/app/actions/runs/1/rerun-failed-jobs',
   ])
+})
+
+test('re-running two failed jobs says they both join the queue again', async ({ page, github }) => {
+  const job = (id: number, name: string, over: Partial<WorkflowJob> = {}) =>
+    makeJob({ id, run_id: 1, name, status: 'in_progress', started_at: '2026-09-09T10:01:00Z', ...over })
+  github.runs(REPO, [], [makeRun({ id: 1, run_number: 12, status: 'in_progress' })])
+  github.jobs(1, [job(11, 'test'), job(12, 'lint')])
+
+  await page.goto('./')
+  await expect(page.locator('[data-run="1"]')).toBeVisible()
+
+  github.runs(REPO, [], [])
+  const failed = { status: 'completed', conclusion: 'failure', completed_at: '2026-09-09T10:05:05Z' }
+  github.jobs(1, [job(11, 'test', failed), job(12, 'lint', failed)])
+  await page.clock.fastForward(15_000)
+
+  const finished = page.locator('.finished-row', { hasText: '#12' })
+  await expect(finished).toContainText('test failed · lint failed')
+  await github.expectNoNewCalls(async () => {
+    await finished.getByRole('button', { name: 'Re-run failed' }).click()
+    await expect(finished.getByRole('group', { name: 'Confirm re-run' })).toContainText(
+      'Re-run the 2 failed jobs of app #12? They join the queue again.',
+    )
+  })
 })

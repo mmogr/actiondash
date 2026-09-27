@@ -1,4 +1,5 @@
 import { repoKey, type RepoRef } from '../github/types'
+import type { ObservedMax, PlanId } from './plans'
 
 /** Decisions behind the setup screen, kept pure so they can be tested. */
 
@@ -19,6 +20,26 @@ export function sameSelection(stored: readonly RepoRef[], selected: ReadonlySet<
   const a = new Set(stored.map((r) => repoKey(r).toLowerCase()))
   const b = new Set([...selected].map((k) => k.toLowerCase()))
   return a.size === b.size && [...a].every((k) => b.has(k))
+}
+
+/**
+ * What opening the dashboard stores about what it watches. The ceiling belongs
+ * to the account that owns the repositories, on the plan chosen for it, so a
+ * peak measured over other owners or under another plan is no evidence about
+ * this one, and is dropped. A repository added under an owner already watched
+ * leaves it standing.
+ */
+export function watchPatch(
+  storedRepos: readonly RepoRef[],
+  storedPlan: PlanId,
+  repos: RepoRef[],
+  plan: PlanId,
+): { repos: RepoRef[]; plan: PlanId; observedMax?: ObservedMax } {
+  const owners = (list: readonly RepoRef[]): string =>
+    [...new Set(list.map((r) => r.owner))].sort().join(',')
+  const ownersChanged = owners(storedRepos) !== owners(repos)
+  const planChanged = plan !== storedPlan
+  return { repos, plan, ...(ownersChanged || planChanged ? { observedMax: {} } : {}) }
 }
 
 /**

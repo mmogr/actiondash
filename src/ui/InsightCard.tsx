@@ -45,7 +45,9 @@ export function InsightCard({ insight, nowMs }: Props) {
           </button>
         </div>
       ) : cancel.cancelling ? (
-        <span class="group-cancelling">cancelling…</span>
+        <span ref={cancel.statusRef} role="status" tabIndex={-1} class="group-cancelling">
+          cancelling…
+        </span>
       ) : (
         <button ref={cancel.askRef} class="danger" onClick={cancel.ask}>
           Cancel #{insight.run.run_number}

@@ -169,6 +169,33 @@ test('a spent allowance pauses checking until it refills, then checking resumes'
   await expect(alert).toHaveCount(0)
 })
 
+test('a refusal that gives no time still pauses checking, for the minute GitHub asks', async ({ page, github }) => {
+  // A secondary limit can refuse without any x-ratelimit header, and before
+  // any reply has carried one there is no reset to fall back on either.
+  github.defaultRateHeaders = false
+  const refused = json({ message: 'You have exceeded a secondary rate limit.' }, { status: 403 })
+  github.failRuns(REPO, refused).failRuns(SITE, refused)
+  await page.goto('./')
+
+  const pill = page.locator('button.pill')
+  await expect(page).toHaveTitle('Paused · actiondash')
+  await expect(pill).toHaveText('Paused until 10:06')
+  const alert = page.locator('section.cant-check[role="alert"]')
+  await expect(alert).toContainText('This is not an all-clear.')
+  await expect(page.getByText(/all clear/i)).toHaveCount(0)
+
+  await github.expectNoNewCalls(() => page.clock.fastForward(50_000))
+
+  const before = github.callsTo(LISTINGS).length
+  github.defaultRateHeaders = true
+  github.runs(REPO, [], []).runs(SITE, [], [])
+  await page.clock.fastForward(15_000)
+
+  await github.waitForCalls(LISTINGS, before + ONE_POLL)
+  await expect(page.locator('.section-title', { hasText: /^All clear$/ })).toBeVisible()
+  await expect(alert).toHaveCount(0)
+})
+
 test('offline, the page says so and asks nothing until the network is back', async ({ page, github, context }) => {
   github.runs(REPO, [], []).runs(SITE, [], [])
   await page.goto('./')

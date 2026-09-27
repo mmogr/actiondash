@@ -1,9 +1,9 @@
 import type { Page } from '@playwright/test'
 import type { RepoRef } from '../src/github/types'
-import { json } from '../tests/replies'
+import { deferred, json } from '../tests/replies'
 import { expect, test } from './fixtures'
 import { bearer, credential, ref, repo, REPOS_PATH, requests } from './scenarios'
-import { KEYS, TOKEN } from './seed'
+import { dashboardSeed, KEYS, REPO, TOKEN } from './seed'
 
 /**
  * A new visitor's way in: checking a token, choosing repositories and a plan,
@@ -17,6 +17,11 @@ async function storedSettings(page: Page): Promise<Record<string, unknown> | nul
 
 function byName(list: unknown): RepoRef[] {
   return [...(list as RepoRef[])].sort((a, b) => `${a.owner}/${a.name}`.localeCompare(`${b.owner}/${b.name}`))
+}
+
+/** One of setup's cards, by its heading. */
+function card(page: Page, heading: string) {
+  return page.locator('.card', { has: page.getByRole('heading', { name: heading, exact: true }) })
 }
 
 function repoBox(page: Page, fullName: string, visibility: 'public' | 'private' = 'public') {
@@ -46,6 +51,24 @@ test('connecting checks the token, lists its repositories and clears the field',
   await github.expectNoNewCalls(async () => {})
   expect(requests(github.calls)).toEqual(['GET /user', `GET ${REPOS_PATH}`])
   expect(github.calls.map(bearer)).toEqual(['TOKEN', 'TOKEN'])
+})
+
+test('a token is checked once, however often Enter is pressed', async ({ page, github }) => {
+  const user = deferred()
+  github.on(/\/user$/, user.reply)
+  github.repos([repo('acme/app')])
+
+  await page.goto('./')
+  const field = page.getByLabel('Personal access token')
+  await field.fill(TOKEN)
+  await field.press('Enter')
+  await github.waitForCalls(/\/user$/)
+  await github.expectNoNewCalls(() => field.press('Enter'))
+
+  user.resolve(json({ login: 'octocat', name: null }))
+  await expect(page.getByText('Connected as octocat.', { exact: true })).toBeVisible()
+  await github.expectNoNewCalls(async () => {})
+  expect(requests(github.calls)).toEqual(['GET /user', `GET ${REPOS_PATH}`])
 })
 
 test('choosing repositories and a plan opens the dashboard, and a reload goes straight back to it', async ({
@@ -99,6 +122,33 @@ test('choosing repositories and a plan opens the dashboard, and a reload goes st
   expect(afterReload.filter((r) => !/\/actions\/runs\?status=/.test(r))).toEqual([])
 })
 
+test('the selection and the plan hold still while each repository is checked', async ({ page, github }) => {
+  github.user()
+  github.repos([repo('acme/app'), repo('acme/site')])
+  const probe = deferred()
+  github.probe(ref('acme/app'), probe.reply)
+  github.runs(ref('acme/app'), [], [])
+
+  await connect(page)
+  await repoBox(page, 'acme/app').check()
+  await page.getByRole('button', { name: 'Open dashboard' }).click()
+  await github.waitForCalls(PROBES)
+
+  await expect(repoBox(page, 'acme/app')).toBeDisabled()
+  await expect(repoBox(page, 'acme/site')).toBeDisabled()
+  await expect(page.getByRole('button', { name: 'Select all shown' })).toBeDisabled()
+  await expect(page.getByRole('button', { name: 'Clear', exact: true })).toBeDisabled()
+  await expect(page.getByLabel('Add a repository by name')).toBeDisabled()
+  await expect(page.getByRole('button', { name: 'Add', exact: true })).toBeDisabled()
+  await expect(page.getByLabel('Plan')).toBeDisabled()
+  // Narrowing the list changes nothing that is being checked.
+  await expect(page.getByLabel('Filter repositories')).toBeEnabled()
+
+  probe.resolve(json({ total_count: 0, workflow_runs: [] }))
+  await expect(page.locator('.section-title', { hasText: 'All clear' })).toBeVisible()
+  expect(github.callsTo(PROBES).map((c) => c.path)).toEqual(['/repos/acme/app/actions/runs?per_page=1'])
+})
+
 test('a rejected token is never stored', async ({ page, github }) => {
   github.on(/\/user$/, json({ message: 'Bad credentials' }, { status: 401 }))
 
@@ -129,6 +179,61 @@ test('a rejected token is never stored', async ({ page, github }) => {
   await expect(page.getByRole('button', { name: 'Use stored token' })).toHaveCount(0)
 })
 
+test('a repository list that fails to load can be asked for again without pasting the token again', async ({
+  page,
+  github,
+}) => {
+  github.user()
+  github.on(/\/user\/repos\?/, json({ message: 'Server Error' }, { status: 502 }))
+
+  await page.goto('./')
+  const field = page.getByLabel('Personal access token')
+  await field.fill(TOKEN)
+  await page.getByRole('button', { name: 'Connect', exact: true }).click()
+
+  await expect(page.getByText('Server Error', { exact: true })).toBeVisible()
+  // GitHub accepted the token; only the list failed. It is still there to try again with.
+  await expect.poll(async () => credential(await field.inputValue())).toBe('TOKEN')
+
+  github.repos([repo('acme/app')])
+  await page.getByRole('button', { name: 'Connect', exact: true }).click()
+  await expect(page.getByText('Connected as octocat.', { exact: true })).toBeVisible()
+  await expect(repoBox(page, 'acme/app')).toBeVisible()
+  await expect(field).toHaveValue('')
+  expect(requests(github.calls)).toEqual(['GET /user', `GET ${REPOS_PATH}`, 'GET /user', `GET ${REPOS_PATH}`])
+})
+
+test('each problem is announced beside the control it is about', async ({ page, github }) => {
+  github.on(/\/user$/, json({ message: 'Bad credentials' }, { status: 401 }))
+
+  await page.goto('./')
+  const tokenCard = card(page, '1. Personal access token')
+  const reposCard = card(page, '2. Repositories to watch')
+  const startCard = card(page, '3. Start')
+  await page.getByLabel('Personal access token').fill(TOKEN)
+  await page.getByRole('button', { name: 'Connect', exact: true }).click()
+  await expect(tokenCard.getByRole('alert')).toHaveText(
+    'GitHub rejected that token. Check it was copied whole and has not expired.',
+  )
+
+  github.user()
+  github.repos([repo('acme/app')])
+  await page.getByRole('button', { name: 'Connect', exact: true }).click()
+  await expect(page.getByText('Connected as octocat.', { exact: true })).toBeVisible()
+  await expect(page.getByRole('alert')).toHaveCount(0)
+
+  const byNameField = page.getByLabel('Add a repository by name')
+  await byNameField.fill('nonsense')
+  await byNameField.press('Enter')
+  await expect(reposCard.getByRole('alert')).toHaveText('Enter a repository as owner/name.')
+
+  await page.getByRole('button', { name: 'Open dashboard' }).click()
+  await expect(startCard.getByRole('alert')).toHaveText('Select at least one repository.')
+  // Refusing to open does not take back why the name was refused.
+  await expect(reposCard.getByRole('alert')).toHaveText('Enter a repository as owner/name.')
+  await expect(page.getByRole('alert')).toHaveCount(2)
+})
+
 test('a repository the token cannot read is named, and deselecting it lets the dashboard open', async ({
   page,
   github,
@@ -143,7 +248,7 @@ test('a repository the token cannot read is named, and deselecting it lets the d
   await page.getByRole('button', { name: 'Select all shown' }).click()
   await page.getByRole('button', { name: 'Open dashboard' }).click()
 
-  const alert = page.getByRole('alert')
+  const alert = card(page, '3. Start').getByRole('alert')
   await expect(alert).toContainText(
     'The token cannot read Actions on acme/site: not found; the token may not include it.',
   )
@@ -161,6 +266,44 @@ test('a repository the token cannot read is named, and deselecting it lets the d
   expect(github.callsTo(/\/repos\/acme\/site\/actions\/runs\?per_page=1$/)).toHaveLength(1)
   expect(github.callsTo(/\/repos\/acme\/app\/actions\/runs\?per_page=1$/)).toHaveLength(2)
   expect((await storedSettings(page))?.repos).toEqual([ref('acme/app')])
+})
+
+test('the warning about repositories the token cannot read names only those still selected', async ({
+  page,
+  github,
+}) => {
+  github.user()
+  github.repos([repo('acme/app'), repo('acme/site'), repo('acme/docs')])
+  github.probe(ref('acme/app'))
+  github.probe(ref('acme/site'), json({ message: 'Not Found' }, { status: 404 }))
+  github.probe(ref('acme/docs'), json({ message: 'Not Found' }, { status: 404 }))
+
+  await connect(page)
+  await page.getByRole('button', { name: 'Select all shown' }).click()
+  await page.getByRole('button', { name: 'Open dashboard' }).click()
+
+  const alert = card(page, '3. Start').getByRole('alert')
+  await expect(alert).toContainText('acme/site: not found')
+  await expect(alert).toContainText('acme/docs: not found')
+  await expect(alert.getByRole('button', { name: 'Deselect these' })).toBeVisible()
+
+  await repoBox(page, 'acme/docs').uncheck()
+  await expect(alert).toContainText(
+    'The token cannot read Actions on acme/site: not found; the token may not include it.',
+  )
+  await expect(alert).not.toContainText('acme/docs')
+  await expect(alert.getByRole('button', { name: 'Deselect it' })).toBeVisible()
+
+  await repoBox(page, 'acme/site').uncheck()
+  await expect(alert).toHaveCount(0)
+
+  await repoBox(page, 'acme/site').check()
+  await expect(alert).toContainText('acme/site: not found')
+  await expect(alert).not.toContainText('acme/docs')
+
+  await page.getByRole('button', { name: 'Clear', exact: true }).click()
+  await expect(alert).toHaveCount(0)
+  expect(github.callsTo(PROBES)).toHaveLength(3)
 })
 
 test('a repository added by name or address is watched, and a malformed one is refused', async ({
@@ -196,6 +339,26 @@ test('a repository added by name or address is watched, and a malformed one is r
   await page.getByRole('button', { name: 'Open dashboard' }).click()
   await expect(page.locator('.section-title', { hasText: 'All clear' })).toBeVisible()
   expect(byName((await storedSettings(page))?.repos)).toEqual([ref('acme/infra'), ref('acme/tools')])
+})
+
+test('an empty add-by-name field is left alone', async ({ page, github }) => {
+  github.user()
+  github.repos([repo('acme/app')])
+
+  await connect(page)
+
+  const byNameField = page.getByLabel('Add a repository by name')
+  const add = page.getByRole('button', { name: 'Add', exact: true })
+  const refusal = page.getByText('Enter a repository as owner/name.', { exact: true })
+  await byNameField.press('Enter')
+  await byNameField.fill('   ')
+  await byNameField.press('Enter')
+  await expect(refusal).toHaveCount(0)
+  await expect(add).toBeDisabled()
+  await expect(page.getByText('0 selected', { exact: true })).toBeVisible()
+
+  await byNameField.fill('acme/tools')
+  await expect(add).toBeEnabled()
 })
 
 test('repositories from two accounts are flagged, and keeping one account drops the other', async ({
@@ -242,4 +405,58 @@ test('the token field says what kind of token was pasted, before anything is sen
   await expect(oauth).toHaveCount(0)
 
   expect(github.calls).toEqual([])
+})
+
+test.describe('changing what a set-up dashboard watches', () => {
+  test.use({ seed: dashboardSeed({ observedMax: { macos: 3 } }) })
+
+  /** From the dashboard to setup by way of Settings, once the stored token has listed its repositories. */
+  async function editRepositories(page: Page): Promise<void> {
+    await page.goto('./')
+    await expect(page.locator('.section-title', { hasText: 'All clear' })).toBeVisible()
+    await page.getByRole('navigation', { name: 'Sections' }).getByRole('button', { name: 'Settings' }).click()
+    await page.getByRole('button', { name: 'Edit repositories' }).click()
+    await expect(page.getByText('Connected as octocat.', { exact: true })).toBeVisible()
+  }
+
+  test('a plan chosen and then discarded changes nothing', async ({ page, github }) => {
+    github.runs(REPO, [], [])
+    github.user()
+    github.repos([repo('acme/app')])
+
+    await editRepositories(page)
+    await expect(page.getByRole('button', { name: 'Back to dashboard' })).toBeVisible()
+    await page.getByLabel('Plan').selectOption('team')
+    const discard = page.getByRole('button', { name: 'Discard changes' })
+    await expect(discard).toBeVisible()
+    expect((await storedSettings(page))?.plan, 'the plan before Open dashboard').toBe('pro')
+
+    await discard.click()
+    await expect(page.getByRole('heading', { name: 'Account' })).toBeVisible()
+    await expect(page.getByLabel('Plan')).toHaveValue('pro')
+    const stored = await storedSettings(page)
+    expect(stored?.plan).toBe('pro')
+    expect(stored?.observedMax).toEqual({ macos: 3 })
+  })
+
+  test('a plan chosen in setup is kept once the dashboard opens, and the peak seen under the old one is forgotten', async ({
+    page,
+    github,
+  }) => {
+    github.runs(REPO, [], [])
+    github.user()
+    github.repos([repo('acme/app')])
+    github.probe(REPO)
+
+    await editRepositories(page)
+    await page.getByLabel('Plan').selectOption('team')
+    await page.getByRole('button', { name: 'Open dashboard' }).click()
+
+    await expect(page.locator('.section-title', { hasText: 'All clear' })).toBeVisible()
+    const stored = await storedSettings(page)
+    expect(stored?.plan).toBe('team')
+    expect(stored?.repos).toEqual([REPO])
+    // A peak seen under one plan says nothing about whether another explains it.
+    expect(stored?.observedMax).toEqual({})
+  })
 })

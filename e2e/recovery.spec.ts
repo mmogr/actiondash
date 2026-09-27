@@ -151,6 +151,106 @@ test.describe('a browser that was left on recovery', () => {
     expect(github.calls.map(bearer)).toEqual(github.calls.map(() => 'NEW_TOKEN'))
   })
 
+  test('a plan picked while another account was connected is kept when the right token goes straight back', async ({
+    page,
+    github,
+  }) => {
+    github.user('someone-else')
+    github.repos([repo('other/lib')])
+
+    await page.goto('./')
+    await expect(recoveryCard(page)).toBeVisible()
+    const field = page.getByLabel('Personal access token')
+    await field.fill(NEW_TOKEN)
+    await field.press('Enter')
+    await expect(page.getByText('Connected as someone-else. Choose repositories below.', { exact: true })).toBeVisible()
+    await page.getByLabel('Plan').selectOption('team')
+
+    github.user('octocat')
+    github.probe(REPO)
+    github.runs(REPO, [], [])
+    await field.fill(NEW_TOKEN)
+    await page.getByRole('button', { name: 'Reconnect' }).click()
+
+    await expect(allClear(page)).toBeVisible()
+    const stored = await storedSettings(page)
+    expect(credential(stored.token), 'the stored token').toBe('NEW_TOKEN')
+    expect(stored.repos).toEqual([REPO])
+    expect(stored.plan).toBe('team')
+    expect(stored.tokenRejectedAt).toBeNull()
+  })
+
+  test('a replacement token whose repository list fails to load can be tried again without pasting it again', async ({
+    page,
+    github,
+  }) => {
+    github.user('someone-else')
+    github.on(/\/user\/repos\?/, json({ message: 'Server Error' }, { status: 502 }))
+
+    await page.goto('./')
+    await expect(recoveryCard(page)).toBeVisible()
+    const field = page.getByLabel('Personal access token')
+    await field.fill(NEW_TOKEN)
+    await field.press('Enter')
+
+    await expect(page.getByText('Server Error', { exact: true })).toBeVisible()
+    await expect.poll(async () => credential(await field.inputValue())).toBe('NEW_TOKEN')
+
+    github.repos([repo('other/lib')])
+    await page.getByRole('button', { name: 'Reconnect', exact: true }).click()
+    await expect(page.getByRole('checkbox', { name: 'other/lib public', exact: true })).toBeVisible()
+    await expect(field).toHaveValue('')
+    expect(requests(github.calls)).toEqual(['GET /user', `GET ${REPOS_PATH}`, 'GET /user', `GET ${REPOS_PATH}`])
+  })
+
+  test('a replacement token that reaches no repositories says so on recovery', async ({ page, github }) => {
+    github.user('someone-else')
+    github.repos([])
+
+    await page.goto('./')
+    await expect(recoveryCard(page)).toBeVisible()
+    await page.getByLabel('Personal access token').fill(NEW_TOKEN)
+    await page.getByRole('button', { name: 'Reconnect' }).click()
+
+    await expect(page.getByText('Connected as someone-else. Choose repositories below.', { exact: true })).toBeVisible()
+    await expect(page.locator('.card', { has: recoveryCard(page) }).getByRole('status')).toHaveText(
+      'The token reached GitHub but reported no repositories. Add repositories to it, or enter one below by name.',
+    )
+    await expect(page.getByLabel('Add a repository by name')).toBeVisible()
+  })
+
+  test('a token GitHub rejects after another account was connected goes back to asking for a token', async ({
+    page,
+    github,
+  }) => {
+    github.user('someone-else')
+    github.repos([repo('other/lib')])
+
+    await page.goto('./')
+    await expect(recoveryCard(page)).toBeVisible()
+    const field = page.getByLabel('Personal access token')
+    await field.fill(NEW_TOKEN)
+    await field.press('Enter')
+    const picker = page.getByRole('heading', { name: 'Repositories to watch' })
+    await expect(picker).toBeVisible()
+
+    github.on(/\/user$/, REJECTED)
+    await field.fill(NEW_TOKEN)
+    await page.getByRole('button', { name: 'Reconnect' }).click()
+
+    await expect(page.getByText('GitHub rejected that token too. Check it was copied whole.', { exact: true })).toBeVisible()
+    await expect(picker).toHaveCount(0)
+    await expect(page.getByText(/^Connected as/)).toHaveCount(0)
+    // Opening from here would check the repositories with the token GitHub rejected first.
+    await expect(page.getByRole('button', { name: 'Open dashboard' })).toHaveCount(0)
+    await github.expectNoNewCalls(async () => {})
+    expect(requests(github.calls)).toEqual(['GET /user', `GET ${REPOS_PATH}`, 'GET /user'])
+
+    const stored = await storedSettings(page)
+    expect(credential(stored.token), 'the stored token').toBe('TOKEN')
+    expect(stored.tokenRejectedAt).toBe(REJECTED_AT)
+  })
+
   test('a replacement token GitHub also rejects leaves the page on recovery', async ({ page, github }) => {
     github.on(/\/user$/, REJECTED)
 

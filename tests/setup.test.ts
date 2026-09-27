@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { joinList, keptList, ownersOf, sameAccount, sameSelection } from '../src/model/setup'
+import { joinList, keptList, ownersOf, sameAccount, sameSelection, watchPatch } from '../src/model/setup'
 
 describe('ownersOf', () => {
   it('counts the accounts behind a selection, largest first', () => {
@@ -40,5 +40,31 @@ describe('keptList', () => {
     expect(joinList(keptList({ repoCount: 1, planLabel: 'Free', learnedJobs: 0, hasHistory: false }))).toBe(
       '1 repository and the Free plan',
     )
+  })
+})
+
+describe('watchPatch', () => {
+  const app = { owner: 'acme', name: 'app' }
+  const site = { owner: 'acme', name: 'site' }
+  const lib = { owner: 'other', name: 'lib' }
+
+  it('keeps what was seen running while the owners and the plan stay the same', () => {
+    expect(watchPatch([app], 'pro', [app], 'pro')).toStrictEqual({ repos: [app], plan: 'pro' })
+    // Another repository under an owner already watched draws on the same slots.
+    expect(watchPatch([app], 'pro', [app, site], 'pro')).toStrictEqual({ repos: [app, site], plan: 'pro' })
+  })
+
+  it('forgets what was seen running when the owners change', () => {
+    expect(watchPatch([app], 'pro', [lib], 'pro')).toStrictEqual({ repos: [lib], plan: 'pro', observedMax: {} })
+    expect(watchPatch([app], 'pro', [app, lib], 'pro')).toStrictEqual({
+      repos: [app, lib],
+      plan: 'pro',
+      observedMax: {},
+    })
+    expect(watchPatch([], 'free', [app], 'free')).toStrictEqual({ repos: [app], plan: 'free', observedMax: {} })
+  })
+
+  it('forgets what was seen running when the plan changes', () => {
+    expect(watchPatch([app], 'pro', [app], 'team')).toStrictEqual({ repos: [app], plan: 'team', observedMax: {} })
   })
 })

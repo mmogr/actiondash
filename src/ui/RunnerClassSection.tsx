@@ -76,7 +76,8 @@ export function RunnerClassSection({ bucket, headline }: Props) {
       </div>
 
       {showLanes && <SlotLanes bucket={bucket} forecast={forecast} nowMs={nowMs} />}
-      {insight && <InsightCard insight={insight} nowMs={nowMs} />}
+      {/* Keyed, so a question left open cannot pass to another run after a check. */}
+      {insight && <InsightCard key={insight.run.id} insight={insight} nowMs={nowMs} />}
 
       {empty ? (
         <div class="empty">Nothing running or queued.</div>

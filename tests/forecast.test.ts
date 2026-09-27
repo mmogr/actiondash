@@ -208,6 +208,27 @@ describe('insightFor', () => {
     expect(insightFor(bucket, learned({ long: 10, a: 1 }), NOW)).toBeNull()
   })
 
+  it('passes over a run whose cancel has already been asked for, until that request lapses', () => {
+    // Runs 1 and 2, both superseded by run 3, hold every slot between them,
+    // and cancelling either starts run 3 at once.
+    const first = makeRun({ id: 1, run_number: 1, created_at: '2026-09-09T09:50:00Z', head_sha: 'a' })
+    const second = makeRun({ id: 2, run_number: 2, created_at: '2026-09-09T09:55:00Z', head_sha: 'b' })
+    const fresh = makeRun({ id: 3, run_number: 3, created_at: '2026-09-09T10:00:00Z', head_sha: 'c' })
+    const jobs = [
+      ...[11, 12, 13].map((id) => runningJob(id, 1, 'long', 5)),
+      ...[21, 22].map((id) => runningJob(id, 2, 'long', 5)),
+      queuedJob(30, 3, 'build', 2),
+    ]
+    const bucket = macos([first, second, fresh], jobs)
+    const durations = learned({ long: 15, build: 6 })
+
+    expect(insightFor(bucket, durations, NOW)?.run.id).toBe(1)
+    expect(insightFor(bucket, durations, NOW, new Map([[1, NOW - MIN]]))?.run.id).toBe(2)
+    expect(insightFor(bucket, durations, NOW, new Map([[1, NOW - MIN], [2, NOW - MIN]]))).toBeNull()
+    // Asked for so long ago that GitHub has evidently not acted on it.
+    expect(insightFor(bucket, durations, NOW, new Map([[1, NOW - 3 * MIN]]))?.run.id).toBe(1)
+  })
+
   it('says nothing when the cancellation would not move the beneficiary', () => {
     // A superseded run behind the beneficiary in the queue does not hold it up.
     const old = makeRun({ id: 1, run_number: 1, created_at: '2026-09-09T09:50:00Z', head_sha: 'a' })
