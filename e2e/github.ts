@@ -1,7 +1,7 @@
-import type { BrowserContext, Request, Route } from '@playwright/test'
+import { expect, type BrowserContext, type Request, type Route } from '@playwright/test'
 import { JOBS_QUERY, runsQuery } from '../src/github/queries'
-import type { RepoRef, WorkflowJob, WorkflowRun } from '../src/github/types'
-import { json, type Call, type Reply } from '../tests/replies'
+import type { Repo, RepoRef, WorkflowJob, WorkflowRun } from '../src/github/types'
+import { empty, json, type Call, type Reply } from '../tests/replies'
 import { NEW_TOKEN, TOKEN } from './seed'
 
 /**
@@ -85,14 +85,35 @@ export class BrowserGitHub {
     return this.on(/\/user$/, json({ login, name: null }))
   }
 
+  repos(list: Repo[]): this {
+    return this.on(/\/user\/repos\?/, json(list))
+  }
+
+  /** The access check setup makes for each repository before opening the dashboard. */
+  probe(repo: RepoRef, reply: Reply = json({ total_count: 0, workflow_runs: [] })): this {
+    return this.on(new RegExp(`${repoPath(repo)}/actions/runs\\?per_page=1$`), reply)
+  }
+
   /** Both run listings of one repository. */
   runs(repo: RepoRef, queued: WorkflowRun[], running: WorkflowRun[]): this {
     for (const run of [...queued, ...running]) this.served.add(run.id)
-    this.on(this.runsPattern(repo, 'queued'), json({ total_count: queued.length, workflow_runs: queued }))
-    return this.on(
-      this.runsPattern(repo, 'in_progress'),
-      json({ total_count: running.length, workflow_runs: running }),
-    )
+    this.listing(repo, 'queued', json({ total_count: queued.length, workflow_runs: queued }))
+    return this.listing(repo, 'in_progress', json({ total_count: running.length, workflow_runs: running }))
+  }
+
+  /** Both run listings of one repository answer with the same failure. */
+  failRuns(repo: RepoRef, reply: Reply): this {
+    this.listing(repo, 'queued', reply)
+    return this.listing(repo, 'in_progress', reply)
+  }
+
+  /**
+   * One run listing, replacing whatever runs() or failRuns() set for it. The
+   * caller answers for any runs in the reply: they count as served only when
+   * passed to runs().
+   */
+  listing(repo: RepoRef, status: 'queued' | 'in_progress', reply: Reply): this {
+    return this.on(new RegExp(`${repoPath(repo)}/actions/runs${literal(runsQuery(status))}$`), reply)
   }
 
   jobs(runId: number, jobs: WorkflowJob[]): this {
@@ -102,12 +123,37 @@ export class BrowserGitHub {
     )
   }
 
-  async attach(context: BrowserContext): Promise<void> {
-    await context.route(`${API}/**`, (route) => this.handle(route))
+  /** A cancel or re-run, answered 202 with no body as GitHub does unless told otherwise. */
+  write(path: RegExp, reply: Reply = empty(202)): this {
+    return this.on(path, reply)
   }
 
-  private runsPattern(repo: RepoRef, status: string): RegExp {
-    return new RegExp(`${repoPath(repo)}/actions/runs${literal(runsQuery(status))}$`)
+  callsTo(re: RegExp, method?: string): ApiCall[] {
+    return this.calls.filter((c) => re.test(c.url) && (method === undefined || c.method === method))
+  }
+
+  /** Waits until at least count requests matching the pattern have been made. */
+  async waitForCalls(re: RegExp, count = 1, method?: string): Promise<ApiCall[]> {
+    await expect
+      .poll(() => this.callsTo(re, method).length, { message: `waiting for ${count} request(s) to ${re}` })
+      .toBeGreaterThanOrEqual(count)
+    return this.callsTo(re, method)
+  }
+
+  /**
+   * Runs the step, then requires that GitHub heard nothing new. A request
+   * starts asynchronously after the page decides to make it, so this waits a
+   * short real-time moment before looking: the one fixed wait in the suite.
+   */
+  async expectNoNewCalls(step: () => Promise<void>): Promise<void> {
+    const before = this.calls.length
+    await step()
+    await new Promise((resolve) => setTimeout(resolve, 300))
+    expect(this.calls.slice(before).map((c) => `${c.method} ${c.path}`)).toEqual([])
+  }
+
+  async attach(context: BrowserContext): Promise<void> {
+    await context.route(`${API}/**`, (route) => this.handle(route))
   }
 
   private async handle(route: Route): Promise<void> {

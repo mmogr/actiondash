@@ -44,7 +44,7 @@ export default defineConfig({
   projects: [
     { name: 'desktop', use: { ...devices['Desktop Chrome'] }, testIgnore: 'tripwires/**' },
     // Narrowed by file rather than by skipping inside tests: skips are banned.
-    { name: 'phone', use: { ...devices['Pixel 7'] }, testMatch: ['smoke.spec.ts'] },
+    { name: 'phone', use: { ...devices['Pixel 7'] }, testMatch: ['smoke.spec.ts', 'dashboard-states.spec.ts'] },
     // Tests written to fail, so check-guards can prove each guard trips.
     ...(process.env.E2E_TRIPWIRES ? [{ name: 'tripwires', testMatch: 'tripwires/**/*.spec.ts' }] : []),
   ],
