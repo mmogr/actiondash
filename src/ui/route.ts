@@ -58,18 +58,26 @@ function scrollToRun(id: number): void {
   setTimeout(() => row.classList.remove('is-flash'), 2_000)
 }
 
+/**
+ * The address follows the screen. Replaced rather than pushed, so Back leaves
+ * the page instead of stepping through tabs.
+ */
+function syncAddress(): void {
+  const current = tab.value
+  if (view.value !== 'dashboard' || pendingRun.value !== null) return
+  const next = `#${current}`
+  if (window.location.hash !== next) window.history.replaceState(null, '', next)
+}
+
 export function watchRoute(): void {
   apply(window.location.hash)
-  window.addEventListener('hashchange', () => apply(window.location.hash))
-
-  // The address follows the screen. Replaced rather than pushed, so Back
-  // leaves the page instead of stepping through tabs.
-  effect(() => {
-    const current = tab.value
-    if (view.value !== 'dashboard' || pendingRun.value !== null) return
-    const next = `#${current}`
-    if (window.location.hash !== next) window.history.replaceState(null, '', next)
+  // An address that names nothing changes no signal, so the effect would not
+  // run and it would stay; putting the address back here covers that too.
+  window.addEventListener('hashchange', () => {
+    apply(window.location.hash)
+    syncAddress()
   })
+  effect(syncAddress)
 
   // A requested run is shown once the Now screen has rows to show it in.
   effect(() => {

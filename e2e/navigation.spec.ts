@@ -79,6 +79,31 @@ test.describe('with one repository', () => {
     expect(page.url().startsWith(baseURL!)).toBe(false)
   })
 
+  test('following Show in list from Your runs shows the run without adding a step to Back', async ({
+    page,
+    github,
+    baseURL,
+  }) => {
+    const mine = makeRun({ id: 1, run_number: 7, status: 'in_progress', actor: { login: 'octocat' } })
+    github.runs(REPO, [], [mine])
+    github.jobs(1, [makeJob({ id: 11, run_id: 1, status: 'in_progress', started_at: '2026-09-09T10:01:00Z' })])
+    await page.goto('./')
+    const row = page.locator('[data-run="1"]')
+    await expect(row).toBeVisible()
+    await expect(page).toHaveURL(/#now$/)
+    const length = await page.evaluate(() => history.length)
+
+    await page.getByRole('region', { name: 'Your runs' }).getByRole('link', { name: 'Show in list' }).click()
+
+    await expect(row).toHaveClass(/\bis-flash\b/)
+    await expect(row.getByRole('button', { name: 'Jobs of app #7' })).toBeFocused()
+    await expect(page).toHaveURL(/#now$/)
+    expect(await page.evaluate(() => history.length)).toBe(length)
+
+    await page.goBack()
+    expect(page.url().startsWith(baseURL!)).toBe(false)
+  })
+
   test('a section reached through the address follows Back and Forward', async ({ page, github }) => {
     github.runs(REPO, [], [])
     await page.goto('./')
@@ -101,6 +126,22 @@ test.describe('with one repository', () => {
     await page.goForward()
     await expect(alerts).toHaveAttribute('aria-current', 'page')
     await expect(page.getByRole('heading', { name: 'Everyone' })).toBeVisible()
+  })
+
+  test('an address that names nothing is put back to the section showing', async ({ page, github }) => {
+    github.runs(REPO, [], [])
+    await page.goto('./#settings')
+    const settings = page.getByRole('navigation', { name: 'Sections' }).getByRole('button', { name: 'Settings' })
+    await expect(settings).toHaveAttribute('aria-current', 'page')
+    await expect(page.getByRole('heading', { name: 'Account' })).toBeVisible()
+
+    await page.evaluate(() => {
+      location.hash = '#bogus'
+    })
+
+    await expect(page).toHaveURL(/#settings$/)
+    await expect(settings).toHaveAttribute('aria-current', 'page')
+    await expect(page.getByRole('heading', { name: 'Account' })).toBeVisible()
   })
 })
 
