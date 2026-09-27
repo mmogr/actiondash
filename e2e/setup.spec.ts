@@ -117,6 +117,33 @@ test('choosing repositories and a plan opens the dashboard, and a reload goes st
   expect(afterReload.filter((r) => !/\/actions\/runs\?status=/.test(r))).toEqual([])
 })
 
+test('the selection and the plan hold still while each repository is checked', async ({ page, github }) => {
+  github.user()
+  github.repos([repo('acme/app'), repo('acme/site')])
+  const probe = deferred()
+  github.probe(ref('acme/app'), probe.reply)
+  github.runs(ref('acme/app'), [], [])
+
+  await connect(page)
+  await repoBox(page, 'acme/app').check()
+  await page.getByRole('button', { name: 'Open dashboard' }).click()
+  await github.waitForCalls(PROBES)
+
+  await expect(repoBox(page, 'acme/app')).toBeDisabled()
+  await expect(repoBox(page, 'acme/site')).toBeDisabled()
+  await expect(page.getByRole('button', { name: 'Select all shown' })).toBeDisabled()
+  await expect(page.getByRole('button', { name: 'Clear', exact: true })).toBeDisabled()
+  await expect(page.getByLabel('Add a repository by name')).toBeDisabled()
+  await expect(page.getByRole('button', { name: 'Add', exact: true })).toBeDisabled()
+  await expect(page.getByLabel('Plan')).toBeDisabled()
+  // Narrowing the list changes nothing that is being checked.
+  await expect(page.getByLabel('Filter repositories')).toBeEnabled()
+
+  probe.resolve(json({ total_count: 0, workflow_runs: [] }))
+  await expect(page.locator('.section-title', { hasText: 'All clear' })).toBeVisible()
+  expect(github.callsTo(PROBES).map((c) => c.path)).toEqual(['/repos/acme/app/actions/runs?per_page=1'])
+})
+
 test('a rejected token is never stored', async ({ page, github }) => {
   github.on(/\/user$/, json({ message: 'Bad credentials' }, { status: 401 }))
 

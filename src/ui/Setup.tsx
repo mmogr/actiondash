@@ -365,10 +365,15 @@ export function Setup() {
               value={filter}
               onInput={(e) => setFilter((e.target as HTMLInputElement).value)}
             />
-            <button onClick={() => setSelected(new Set([...selected, ...visible.map((r) => r.full_name)]))}>
+            <button
+              onClick={() => setSelected(new Set([...selected, ...visible.map((r) => r.full_name)]))}
+              disabled={busy}
+            >
               Select all shown
             </button>
-            <button onClick={() => setSelected(new Set())}>Clear</button>
+            <button onClick={() => setSelected(new Set())} disabled={busy}>
+              Clear
+            </button>
           </div>
 
           {visible.length > 0 && (
@@ -379,6 +384,7 @@ export function Setup() {
                     type="checkbox"
                     checked={selected.has(repo.full_name)}
                     onChange={() => toggle(repo.full_name)}
+                    disabled={busy}
                   />
                   <span class="name">{repo.full_name}</span>
                   <span class="tag">{repo.private ? 'private' : 'public'}</span>
@@ -393,12 +399,15 @@ export function Setup() {
               placeholder="Or add by name: owner/repo"
               aria-label="Add a repository by name"
               value={manual}
+              disabled={busy}
               onInput={(e) => setManual((e.target as HTMLInputElement).value)}
               onKeyDown={(e) => {
                 if (e.key === 'Enter') addManual()
               }}
             />
-            <button onClick={addManual}>Add</button>
+            <button onClick={addManual} disabled={busy}>
+              Add
+            </button>
           </div>
 
           {owners.length > 1 && (
@@ -414,6 +423,7 @@ export function Setup() {
                   onClick={() =>
                     setSelected(new Set([...selected].filter((k) => k.split('/')[0] === owners[0]!.owner)))
                   }
+                  disabled={busy}
                 >
                   Keep only {owners[0]!.owner}
                 </button>
@@ -442,6 +452,7 @@ export function Setup() {
               Plan{' '}
               <select
                 value={settings.value.plan}
+                disabled={busy}
                 onChange={(e) =>
                   updateSettings({
                     plan: (e.target as HTMLSelectElement).value as PlanId,
@@ -470,6 +481,7 @@ export function Setup() {
                   setSelected(new Set([...selected].filter((k) => !unreadable.keys.includes(k))))
                   setUnreadable(null)
                 }}
+                disabled={busy}
               >
                 Deselect {unreadable.keys.length === 1 ? 'it' : 'these'}
               </button>
