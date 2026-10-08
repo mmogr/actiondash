@@ -19,7 +19,7 @@ concurrency:
 jobs:
   build:
     # Ubuntu only. Deploying the dashboard must never consume a macOS slot.
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-26.04
     timeout-minutes: 15
     steps:
       - uses: actions/checkout@v5
@@ -62,7 +62,7 @@ jobs:
 
   deploy:
     needs: build
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-26.04
     environment:
       name: github-pages
       url: ${{ steps.deployment.outputs.page_url }}

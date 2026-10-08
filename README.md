@@ -262,7 +262,7 @@ Every pull request runs `npm run verify`, browser tests included, in
 on a branch that is up to date with `main`. A failing run keeps its Playwright
 report and traces as an artifact for a week. On `main`,
 `.github/workflows/deploy.yml` runs the same command again and publishes to
-GitHub Pages. Both run on `ubuntu-latest` only, so checking
+GitHub Pages. Both run on `ubuntu-26.04` only, so checking
 and deploying the dashboard never compete for the macOS slots it exists to
 protect.
 

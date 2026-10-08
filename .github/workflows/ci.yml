@@ -22,7 +22,7 @@ concurrency:
 jobs:
   verify:
     # Ubuntu only. Verifying the dashboard must never consume a macOS slot.
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-26.04
     # A hung browser must not hold a runner for the default six hours.
     timeout-minutes: 15
     steps:
