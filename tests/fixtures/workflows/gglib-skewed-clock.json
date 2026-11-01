@@ -1,0 +1,1362 @@
+{
+ "source": "mmogr/gglib run 41290042490, captured 2026-11-01",
+ "run": {
+  "id": 41290042490,
+  "name": "CI",
+  "run_number": 3682,
+  "event": "pull_request",
+  "path": ".github/workflows/ci.yml",
+  "head_sha": "21a6c74f4faaef94bd96bdd1a2e60c4f4f55c5b7",
+  "head_branch": "fix(cli)/image-draws-on-the-paired-machine",
+  "status": "completed",
+  "conclusion": "success",
+  "run_attempt": 1,
+  "workflow_url": "https://api.github.com/repos/mmogr/gglib/actions/workflows/217691065",
+  "created_at": "2026-11-01T09:43:24Z",
+  "run_started_at": "2026-11-01T09:43:24Z",
+  "repoOwner": "mmogr",
+  "repoName": "gglib",
+  "referenced_workflows": [
+   {
+    "path": "mmogr/gglib/.github/workflows/release-tag.yml@6287e9e287ed51020b929e6b3a8a2a9b75ce5bb3",
+    "sha": "6287e9e287ed51020b929e6b3a8a2a9b75ce5bb3",
+    "ref": "refs/pull/1711/merge"
+   }
+  ]
+ },
+ "files": {
+  "mmogr/gglib/.github/workflows/ci.yml@21a6c74f4faaef94bd96bdd1a2e60c4f4f55c5b7": "name: CI\n\non:\n  push:\n    branches: [main]\n  pull_request:\n    branches: [main]\n\n# A pull request's runs share one group, and a newer run cancels the older:\n# after a force-push or an `@dependabot rebase` the older run is testing a\n# commit nobody will merge.\n#\n# A push to main gets a group of its own, named by its SHA, so no other CI\n# run ever joins it. GitHub keeps at most one run pending in a group and\n# cancels the older pending run when a newer one arrives, whatever\n# `cancel-in-progress` says, so one group shared by main's pushes would drop\n# runs merged in quick succession, and the push run is the one that runs\n# `release`, which tags. The builds it dispatches run in release.yml under\n# a group of the tag's own, out of this workflow's reach.\nconcurrency:\n  group: ${{ github.event_name == 'pull_request' && format('ci-pr-{0}', github.event.pull_request.number) || format('ci-main-{0}', github.sha) }}\n  cancel-in-progress: ${{ github.event_name == 'pull_request' }}\n\n# Read only. A job that needs more says so: `scope`, `cache-prune` and\n# `release`.\npermissions:\n  contents: read\n\nenv:\n  CARGO_TERM_COLOR: always\n\n# Every job has a timeout-minutes, counted from when it starts rather than\n# from when it was queued: a ceiling for a hang, well above a cold run. The\n# cross-OS legs take theirs from the matrix: 75 minutes on macOS, where CLI\n# Check builds llama.xcframework when its cache misses, and 45 elsewhere.\njobs:\n  fmt:\n    name: Format\n    runs-on: ubuntu-24.04\n    timeout-minutes: 10\n    steps:\n      - name: Checkout repository\n        uses: actions/checkout@v7\n\n      - name: Install Rust toolchain\n        run: rustup show\n\n      - name: Check formatting\n        run: cargo fmt --all -- --check\n\n  quality:\n    name: Lint & Typecheck\n    runs-on: ubuntu-24.04\n    timeout-minutes: 10\n    steps:\n      - name: Checkout repository\n        uses: actions/checkout@v7\n\n      - name: Setup Node.js\n        uses: actions/setup-node@v7\n        with:\n          node-version-file: '.nvmrc'\n          cache: 'npm'\n\n      - name: Install dependencies\n        run: npm ci\n\n      # The design-system guardrails in eslint.config.js (the raw <button> ban,\n      # the emoji ban, the @tauri-apps import boundary) were advisory until this\n      # job existed — nothing in CI ran eslint. --max-warnings 0 also keeps\n      # react-hooks/exhaustive-deps from accumulating silently.\n      - name: Lint\n        run: npm run lint -- --max-warnings 0\n\n      - name: Typecheck\n        run: npm run typecheck\n\n  # No `needs:` — nothing here compiles the workspace, so gating these behind\n  # `fmt` only lengthened the critical path. `ci-success` still requires every\n  # job, so nothing loses enforcement.\n  #\n  # This job and `enforcement` below run the Makefile targets\n  # `make pre-commit` runs and name no check of their own, so CI and a local\n  # run cannot check different things.\n  boundaries:\n    name: Check Boundaries\n    runs-on: ubuntu-24.04\n    timeout-minutes: 10\n    steps:\n      - name: Checkout repository\n        uses: actions/checkout@v7\n\n      - name: Check crate boundaries\n        run: make boundaries\n\n      # A dependency a manifest declares and none of that crate's targets\n      # names. cargo-shear reads the source as text and compiles nothing, so\n      # code for another platform or behind a feature counts as a use.\n      - name: Install cargo-shear\n        uses: taiki-e/install-action@68a389c788b2cd04016ce8c80ee23b80d2ab3d68 # v2.88.1\n        with:\n          tool: cargo-shear\n\n      - name: Check for unused dependencies\n        run: make unused-deps\n\n      - name: Upload boundary results\n        uses: actions/upload-artifact@v7\n        if: always()\n        with:\n          name: boundary-results\n          path: boundary-status.json\n\n  enforcement:\n    name: Enforce Architecture\n    runs-on: ubuntu-24.04\n    timeout-minutes: 10\n    steps:\n      - name: Checkout repository\n        uses: actions/checkout@v7\n\n      # check_workflow_yaml.sh runs it and fails here without it. The release\n      # tarball, checked against the checksum its release lists, so a moved\n      # asset cannot change what lints. shellcheck comes with the runner.\n      - name: Install actionlint\n        env:\n          URL: https://github.com/rhysd/actionlint/releases/download/v1.7.12/actionlint_1.7.12_linux_amd64.tar.gz\n          SHA256: 8aca8db96f1b94770f1b0d72b6dddcb1ebb8123cb3712530b08cc387b349a3d8\n        run: |\n          curl -fsSL --retry 3 -o \"$RUNNER_TEMP/actionlint.tar.gz\" \"$URL\"\n          echo \"$SHA256  $RUNNER_TEMP/actionlint.tar.gz\" | sha256sum -c -\n          tar -xzf \"$RUNNER_TEMP/actionlint.tar.gz\" -C \"$RUNNER_TEMP\" actionlint\n          sudo install \"$RUNNER_TEMP/actionlint\" /usr/local/bin/actionlint\n          actionlint --version\n          shellcheck --version\n\n      # Every architecture script, in the order the Makefile's `enforce` recipe\n      # lists them. The first to fail ends the step, and its output is the end\n      # of the log. Among them is the workflow YAML check, which cannot catch a\n      # break in this file: GitHub starts no job from a workflow it will not\n      # parse, so `make pre-commit` is where that case is caught, before the\n      # push.\n      - name: Run the architecture checks\n        run: make enforce\n\n  # Each reading an ADR's criterion names, in contracts/upstream/llama's\n  # observed.json, against its hand-kept approval. It reads two committed\n  # files and never starts an engine, so a recorder that fails cannot turn it\n  # red; a reading that moved, or one nobody has approved, does.\n  adr-readings:\n    name: ADR criterion moved\n    runs-on: ubuntu-24.04\n    timeout-minutes: 10\n    steps:\n      - name: Checkout repository\n        uses: actions/checkout@v7\n\n      - name: Check each ADR reading against its approval\n        run: make adr-readings\n\n  test:\n    name: Test (Rust)\n    runs-on: ubuntu-24.04\n    timeout-minutes: 45\n    # No `needs:`. This was chained to `clippy` so it would restore the target\n    # dir clippy had just populated — but clippy builds `--all-features` and\n    # this job builds default features, so on run 32705784511 it inherited\n    # 2.57 GB and got 49 of 630 units fresh. Five minutes of serialization for\n    # a cache that was 92% inapplicable. Each job has its own shared-key now,\n    # so each warms from its own history instead of the other's.\n    #\n    # Every test step below pipes into `tee` so the output survives as an\n    # artifact, and a pipeline reports its *last* command's status — `tee`'s,\n    # which is always 0. GitHub's default shell is `bash -e` without pipefail,\n    # so a failing `cargo test` was reported as a passing step: three of the\n    # six CI runs before this change were green with a failing test inside.\n    # `shell: bash` is `bash --noprofile --norc -eo pipefail`, which makes\n    # cargo's status the one that counts.\n    #\n    # Set per job rather than on the workflow: a workflow-level default would\n    # also reach `cli-cross-os`, which runs on windows-2022, and switching that\n    # leg from pwsh to Git Bash has nothing to do with this problem.\n    defaults:\n      run:\n        shell: bash\n    steps:\n      - name: Checkout repository\n        uses: actions/checkout@v7\n\n      # A shared-key per build configuration, and only main saves; the\n      # rust-prelude action says why. `large-packages` stays off because this\n      # job installs the GTK and appindicator packages it would purge.\n      - name: Rust prelude\n        uses: ./.github/actions/rust-prelude\n        with:\n          apt-packages: >-\n            libgtk-3-dev\n            libwebkit2gtk-4.1-dev\n            libayatana-appindicator3-dev\n            librsvg2-dev\n            libasound2-dev\n          shared-key: \"ci-test\"\n          save-if: ${{ github.ref == 'refs/heads/main' }}\n\n      - name: Lockfile guard\n        run: cargo metadata --locked --format-version 1 > /dev/null\n\n      - name: Setup Node.js\n        uses: actions/setup-node@v7\n        with:\n          node-version-file: '.nvmrc'\n          cache: 'npm'\n\n      # gglib-axum embeds `web_ui/` and its tests serve `/` from it.\n      - name: Build Web UI\n        run: |\n          npm ci\n          npm run build\n\n      # One build, then one run over it. The fifteen-crate loop this replaces\n      # cost 23m15s of a 57m job, and it was not merely repeating work: naming\n      # a crate with `-p` changes feature unification, so `cargo test -p\n      # gglib-runtime` ran 329 tests where the workspace build ran 352. The 23\n      # in llama::{build,config,deps,download,update} sat behind features\n      # gglib-cli turned on, so the loop tested a configuration no real build\n      # used and the badge was 23 tests short of the truth.\n      #\n      # `--no-run` first for two reasons: a compile failure stays\n      # distinguishable from a test failure, and the JSON is where the\n      # binary-to-package map comes from. It cannot come from the text —\n      # `integration_guards` belongs to gglib-agent and says so nowhere.\n      - name: Build test binaries\n        run: cargo test --no-run --message-format=json > cargo-test-artifacts.json\n\n      # `--no-fail-fast` is a deliberate change, not a transcription. Without\n      # it cargo stops at the first failing binary, so on a red run every later\n      # crate's tests go unrun and the log says nothing about them. One failure\n      # should not hide the state of everything after it.\n      #\n      # No `--verbose`: nothing parses the per-rustc lines and they were 5324\n      # of this step's log. And no `--all-targets`, ever — it would silently\n      # drop the doctests, which this step is the only thing running now that\n      # the separate `cargo test --doc` step is gone. split_test_output.py\n      # fails a green run that produced no Doc-tests sections, which is the\n      # standing guard for that.\n      - name: Run Rust tests\n        run: cargo test --no-fail-fast 2>&1 | tee rust-test-output.txt\n\n      # The download accelerator's helper is Python, so `cargo test` does not\n      # run it. Its tests drive its progress bar through the huggingface_hub\n      # the requirements file pins. In a venv, so nothing is installed into\n      # the runner's own Python.\n      - name: Test the download helper\n        run: |\n          python3 -m venv /tmp/hfx\n          /tmp/hfx/bin/pip install --quiet -r crates/gglib-download/scripts/hf_xet_requirements.txt\n          cd crates/gglib-download/scripts && /tmp/hfx/bin/python -m unittest test_hf_xet_downloader\n\n      # badges.yml counts per-crate tests out of rust-test-<crate>.txt,\n      # through scripts/write_badges.py. Those used to come from the loop\n      # above; they now come from dividing the one run's output by the package\n      # each binary belongs to. `always()` so a red suite still publishes what\n      # it did run.\n      - name: Split test output per crate\n        if: always()\n        run: ./scripts/split_test_output.py cargo-test-artifacts.json rust-test-output.txt\n\n      - name: Upload test results\n        uses: actions/upload-artifact@v7\n        if: always()\n        with:\n          name: test-results\n          # A glob, so the set is whatever the run built.\n          path: rust-test-*.txt\n          retention-days: 30\n\n  bindings:\n    name: Bindings Freshness\n    runs-on: ubuntu-24.04\n    timeout-minutes: 30\n    # Its own job rather than a step on `test`, which is where it lived on the\n    # stated grounds that \"the cargo cache is warm in this job\". It was not:\n    # this builds `--features ts-bindings`, a different feature unification\n    # from the one `test` had just produced, and the log shows it recompiling\n    # accordingly. Three minutes seventeen of critical path buying nothing that\n    # a job running in parallel does not buy for free.\n    #\n    # The frontend's wire types are generated from the Rust types, and the\n    # generated output is committed so the GUI build needs no cargo. That only\n    # stays honest if something regenerates and compares — otherwise a changed\n    # Rust field ships against a stale TypeScript mirror, which is the whole\n    # class of drift the generation exists to end.\n    #\n    # Staleness only. The annotations themselves are checked by\n    # `check_ts_bindings.sh` in `enforcement`, because a missing annotation\n    # regenerates consistently and leaves this diff clean.\n    steps:\n      - name: Checkout repository\n        uses: actions/checkout@v7\n\n      # Its own shared-key, and only main saves; the rust-prelude action\n      # says why.\n      - name: Rust prelude\n        uses: ./.github/actions/rust-prelude\n        with:\n          apt-packages: >-\n            libgtk-3-dev\n            libwebkit2gtk-4.1-dev\n            libayatana-appindicator3-dev\n            librsvg2-dev\n            libasound2-dev\n          shared-key: \"ci-bindings\"\n          save-if: ${{ github.ref == 'refs/heads/main' }}\n\n      # No frontend build. gglib-axum compiles without `web_ui/`: the\n      # `#[allow_missing = true]` in its `src/ui.rs` leaves the embedded asset\n      # set empty. The one member whose build can need it is gglib-app, whose\n      # `tauri::generate_context!()` embeds `frontendDist` when its\n      # `custom-protocol` feature is on, and `make bindings` excludes it.\n      - name: Check generated TypeScript bindings are current\n        run: make bindings-check\n\n  rustdoc:\n    name: Rustdoc\n    runs-on: ubuntu-24.04\n    timeout-minutes: 20\n    # Off `test` for the same reason as `bindings` above: it sat there for a\n    # cargo cache that did not apply to it. rustdoc builds its own artifacts\n    # and the job log shows 137 crates recompiling, so the four and a half\n    # minutes it took were four and a half minutes of critical path.\n    #\n    # The same invocation release.yml's `deploy-docs` publishes with, run on\n    # every PR so a broken link is caught by the change that breaks it rather\n    # than by whoever next cuts a release: `deploy-docs` runs only for a\n    # release, so nothing else checks rustdoc on the way in.\n    steps:\n      - name: Checkout repository\n        uses: actions/checkout@v7\n\n      # Its own shared-key, and only main saves; the rust-prelude action\n      # says why.\n      - name: Rust prelude\n        uses: ./.github/actions/rust-prelude\n        with:\n          apt-packages: >-\n            libgtk-3-dev\n            libwebkit2gtk-4.1-dev\n            libayatana-appindicator3-dev\n            librsvg2-dev\n            libasound2-dev\n          shared-key: \"ci-rustdoc\"\n          save-if: ${{ github.ref == 'refs/heads/main' }}\n\n      # No frontend build. gglib-axum compiles without `web_ui/`: the\n      # `#[allow_missing = true]` in its `src/ui.rs` leaves the embedded asset\n      # set empty. The one member whose build can need it is gglib-app, whose\n      # `tauri::generate_context!()` embeds `frontendDist` when its\n      # `custom-protocol` feature is on, and `--exclude gglib-app` leaves it out.\n      - name: Check rustdoc has no warnings\n        env:\n          RUSTDOCFLAGS: -D warnings\n        run: ./scripts/doc_workspace.py -- --document-private-items --exclude gglib-app\n\n      # rustdoc does not warn about a Markdown link that goes nowhere, and a\n      # crate README is its front page, so a relative link that works on\n      # GitHub can break here with the step above green.\n      - name: Check the links on each crate's front page\n        run: python3 scripts/check_doc_links.py target/doc\n\n  test-frontend:\n    name: Test (Frontend)\n    runs-on: ubuntu-24.04\n    timeout-minutes: 20\n    # No `needs:` — this job is pure npm and finishes in about a minute. It used\n    # to wait on a full workspace clippy build it shares nothing with.\n    # Same masking as the Rust job: `npm run test:run … | tee` reported `tee`'s\n    # exit status, so a failing suite passed the step. See the note there.\n    defaults:\n      run:\n        shell: bash\n    steps:\n      - name: Checkout repository\n        uses: actions/checkout@v7\n\n      - name: Setup Node.js\n        uses: actions/setup-node@v7\n        with:\n          node-version-file: '.nvmrc'\n          cache: 'npm'\n\n      - name: Install dependencies\n        run: npm ci\n\n      # Two orphan barrels sat in `src/` because nothing looks for files that\n      # nothing imports: `tsc` is happy to compile an island, and eslint only\n      # ever sees one file at a time. Scoped to files, dependencies and\n      # unlisted imports — the export-level classes are noisier and are not\n      # gated yet, deliberately. `npm run deadcode` is the same command.\n      - name: Check for dead files and undeclared dependencies\n        run: npm run deadcode\n\n      - name: Run TypeScript tests\n        run: npm run test:run -- --reporter=json --reporter=default --outputFile=ts-test-results.json 2>&1 | tee ts-test-output.txt\n\n      - name: Upload test results\n        uses: actions/upload-artifact@v7\n        if: always()\n        with:\n          name: ts-test-results\n          path: |\n            ts-test-output.txt\n            ts-test-results.json\n          retention-days: 30\n\n  clippy:\n    name: Clippy\n    runs-on: ubuntu-24.04\n    timeout-minutes: 30\n    # No `needs:` — clippy is a long pole and nothing gates it. It no longer\n    # warms anyone else's cache: it builds `--all-features`, which is not what\n    # `test` or `cli-cross-os` build, and the shared key that pretended\n    # otherwise cost `test` five minutes of waiting for artifacts it could not\n    # use.\n    steps:\n      - name: Checkout repository\n        uses: actions/checkout@v7\n\n      # Its own shared-key, and only main saves; the rust-prelude action\n      # says why.\n      - name: Rust prelude\n        uses: ./.github/actions/rust-prelude\n        with:\n          apt-packages: >-\n            libgtk-3-dev\n            libwebkit2gtk-4.1-dev\n            libayatana-appindicator3-dev\n            librsvg2-dev\n            libasound2-dev\n          shared-key: \"ci-clippy\"\n          save-if: ${{ github.ref == 'refs/heads/main' }}\n\n      - name: Setup Node.js\n        uses: actions/setup-node@v7\n        with:\n          node-version-file: '.nvmrc'\n          cache: 'npm'\n\n      - name: Build Web UI\n        run: |\n          npm ci\n          npm run build\n\n      - name: Run clippy\n        run: cargo clippy --all-targets --all-features -- -D warnings\n\n  cli-cross-os:\n    name: CLI Check (${{ matrix.target }})\n    runs-on: ${{ matrix.os }}\n    timeout-minutes: ${{ matrix.timeout }}\n    # Only when `scope` says a change can reach these builds. `clippy` first,\n    # so no macOS or Windows minutes go on a tree ubuntu clippy has rejected.\n    if: needs.scope.outputs.cross_os == 'true'\n    needs: [clippy, scope]\n    strategy:\n      fail-fast: false\n      matrix:\n        include:\n          - target: x86_64-unknown-linux-gnu\n            os: ubuntu-24.04\n            timeout: 45\n          - target: aarch64-apple-darwin\n            os: macos-26\n            timeout: 75\n          - target: x86_64-pc-windows-msvc\n            os: windows-2022\n            timeout: 45\n    steps:\n      - name: Checkout repository\n        uses: actions/checkout@v7\n\n      # Its own shared-key per target, and only main saves; the rust-prelude\n      # action says why. Main runs this job when Cargo.lock or the toolchain\n      # moves, so the key the next pull requests restore is saved there. The\n      # Linux leg builds one crate and needs no disk freed.\n      - name: Rust prelude\n        uses: ./.github/actions/rust-prelude\n        with:\n          free-disk: \"false\"\n          apt-packages: libasound2-dev\n          shared-key: \"ci-cli-${{ matrix.target }}\"\n          save-if: ${{ github.ref == 'refs/heads/main' }}\n\n      - name: Check gglib-cli compilation\n        run: cargo test -p gglib-cli --no-run\n\n      # The pinned engines themselves, on the two platforms whose builds a\n      # runner can run. The `gglib` just built installs each one as a user's\n      # machine would, into a folder of the job's own, and the action fetches\n      # the recorder's tiny models; both are cached. Each engine's `--help`\n      # and each pinned release's asset list then go to `gglib-runtime`'s\n      # ignored tests: every flag and fixed value gglib starts an engine with\n      # must be one its `--help` lists, and every row of the two download\n      # tables must match exactly one asset. `--version`, which gglib also\n      # runs both servers with, is run here directly: sd-server's `--help`\n      # does not list it.\n      - name: Install the pinned engines and the test models\n        if: runner.os != 'Windows'\n        id: engines\n        uses: ./.github/actions/pinned-engines\n        with:\n          target: ${{ matrix.target }}\n\n      - name: Save the engines' help and the releases' assets\n        if: runner.os != 'Windows'\n        shell: bash\n        env:\n          GH_TOKEN: ${{ github.token }}\n          ENGINES: ${{ steps.engines.outputs.engines }}\n        run: |\n          help=\"$RUNNER_TEMP/engine-help\"\n          assets=\"$RUNNER_TEMP/engine-assets\"\n          mkdir -p \"$help\" \"$assets\"\n          \"$ENGINES/.llama/bin/llama-server\" --help > \"$help/llama-server.txt\" 2>&1\n          \"$ENGINES/.llama/bin/llama-bench\" --help > \"$help/llama-bench.txt\" 2>&1\n          \"$ENGINES/.sd/bin/sd-server\" --help > \"$help/sd-server.txt\" 2>&1\n          \"$ENGINES/.llama/bin/llama-server\" --version\n          \"$ENGINES/.sd/bin/sd-server\" --version\n          gh release view \"${{ steps.engines.outputs.llama }}\" -R ggml-org/llama.cpp \\\n            --json assets -q '.assets[].name' > \"$assets/llama.txt\"\n          gh release view \"${{ steps.engines.outputs.sd }}\" -R leejet/stable-diffusion.cpp \\\n            --json assets -q '.assets[].name' > \"$assets/sd.txt\"\n\n      - name: Check every flag gglib passes is one the pinned engines take\n        if: runner.os != 'Windows'\n        env:\n          GGLIB_ENGINE_HELP_DIR: ${{ runner.temp }}/engine-help\n          GGLIB_ENGINE_ASSETS_DIR: ${{ runner.temp }}/engine-assets\n        run: cargo test -p gglib-runtime --lib -- --ignored\n\n      # The pinned llama-server, started through gglib's own launch path on\n      # the tiny models, writes what it answered into contracts/upstream\n      # (engine_contract_tests.rs says what is kept). Report-only for now, as\n      # is the comparison below: a recorder or a reading that is not yet\n      # stable on a runner shows in the step summary without blocking a merge.\n      # The models variable is set on this step alone, so the ignored tests\n      # above skip the recorder.\n      - name: Record the pinned llama-server\n        if: runner.os != 'Windows'\n        id: record\n        continue-on-error: true\n        env:\n          GGLIB_ENGINES_DIR: ${{ steps.engines.outputs.engines }}\n          GGLIB_ENGINE_MODELS_DIR: ${{ steps.engines.outputs.models }}\n          GGLIB_ENGINE_BODIES_DIR: ${{ runner.temp }}/upstream-bodies\n          GGLIB_RECORD_CONTRACTS: \"1\"\n        run: cargo test -p gglib-runtime --lib engine_contract -- --ignored --nocapture\n\n      - name: Compare with contracts/upstream\n        if: runner.os != 'Windows'\n        continue-on-error: true\n        shell: bash\n        env:\n          PIN: ${{ steps.engines.outputs.llama }}\n          ARTIFACT: ${{ runner.os == 'Linux' && 'upstream-recordings' || format('upstream-recordings-{0}', matrix.target) }}\n          RECORDED: ${{ steps.record.outcome }}\n        run: |\n          if [[ $RECORDED != success ]]; then\n            echo \"::error title=the recorder did not finish::Read the \\\"Record the pinned llama-server\\\" step on ${{ matrix.target }}; contracts/upstream was not checked.\"\n            echo \"The recorder did not finish on ${{ matrix.target }}, so contracts/upstream was not checked.\" >> \"$GITHUB_STEP_SUMMARY\"\n            exit 1\n          fi\n          changed=$(git status --porcelain -- contracts/upstream | awk '{print $2}')\n          if [[ -z $changed ]]; then\n            echo \"contracts/upstream matches what $PIN answered on ${{ matrix.target }}.\" >> \"$GITHUB_STEP_SUMMARY\"\n            exit 0\n          fi\n          names=$(xargs -n1 basename <<<\"$changed\" | paste -sd, - | sed 's/,/, /g')\n          count=$(wc -l <<<\"$changed\" | tr -d ' ')\n          echo \"::error title=contracts/upstream is stale::$count files differ from what $PIN answered on this tree: $names. Run \\`make record-upstream\\` on this branch, or download artifact \\`$ARTIFACT\\` from this run and commit it.\"\n          {\n            echo \"### contracts/upstream on ${{ matrix.target }}: $count files differ from what $PIN answered\"\n            echo\n            echo '```diff'\n            git diff -- contracts/upstream | head -c 60000\n            echo '```'\n          } >> \"$GITHUB_STEP_SUMMARY\"\n          exit 1\n\n      # The in-process engine, a phone's: gglib-engine-llama over llama.cpp's\n      # own llama.xcframework at the pin, asked the same questions on the same\n      # models, into contracts/upstream/llama-inproc (engine_contract_inproc.rs\n      # says what differs). macOS only, where the framework builds, and\n      # report-only as the llama-server recording is: a framework that does\n      # not build, a recorder that fails or a recording that moved shows in the\n      # step summary. Test (Rust) holds the committed recording to llama's on\n      # every OS. The flag that turns the recorder on is set on its step alone.\n      - name: Build or restore llama.xcframework at the pin\n        if: runner.os == 'macOS'\n        id: xcframework\n        continue-on-error: true\n        uses: ./.github/actions/llama-xcframework\n\n      - name: Record the in-process engine\n        if: runner.os == 'macOS' && steps.xcframework.outcome == 'success'\n        id: record-inproc\n        continue-on-error: true\n        env:\n          GGLIB_ENGINE_MODELS_DIR: ${{ steps.engines.outputs.models }}\n          GGLIB_INPROC_ENGINE: \"1\"\n          GGLIB_RECORD_CONTRACTS: \"1\"\n        run: >-\n          cargo test -p gglib-runtime --lib --features inproc-contract\n          engine_contract_tests::the_in_process_engine -- --ignored --nocapture\n\n      - name: Compare with contracts/upstream/llama-inproc\n        if: runner.os == 'macOS'\n        continue-on-error: true\n        shell: bash\n        env:\n          PIN: ${{ steps.engines.outputs.llama }}\n          BUILT: ${{ steps.xcframework.outcome }}\n          RECORDED: ${{ steps.record-inproc.outcome }}\n        run: |\n          if [[ $BUILT != success || $RECORDED != success ]]; then\n            echo \"::error title=the in-process recorder did not finish::Read the \\\"Build or restore llama.xcframework at the pin\\\" and \\\"Record the in-process engine\\\" steps; contracts/upstream/llama-inproc was not checked.\"\n            echo \"The in-process recorder did not finish, so contracts/upstream/llama-inproc was not checked.\" >> \"$GITHUB_STEP_SUMMARY\"\n            exit 1\n          fi\n          changed=$(git status --porcelain -- contracts/upstream/llama-inproc | awk '{print $2}')\n          if [[ -z $changed ]]; then\n            echo \"contracts/upstream/llama-inproc matches what the in-process engine answered at $PIN.\" >> \"$GITHUB_STEP_SUMMARY\"\n            exit 0\n          fi\n          names=$(xargs -n1 basename <<<\"$changed\" | paste -sd, - | sed 's/,/, /g')\n          count=$(wc -l <<<\"$changed\" | tr -d ' ')\n          echo \"::error title=contracts/upstream/llama-inproc is stale::$count files differ from what the in-process engine answered at $PIN on this tree: $names. Run \\`make record-upstream-inproc\\` on a Mac on this branch, or download artifact \\`upstream-recordings-${{ matrix.target }}\\` from this run and commit its llama-inproc/.\"\n          {\n            echo \"### contracts/upstream/llama-inproc: $count files differ from what the in-process engine answered at $PIN\"\n            echo\n            echo '```diff'\n            git diff -- contracts/upstream/llama-inproc | head -c 60000\n            echo '```'\n          } >> \"$GITHUB_STEP_SUMMARY\"\n          exit 1\n\n      - name: Gather the recordings\n        if: runner.os != 'Windows' && always()\n        shell: bash\n        run: |\n          out=\"$RUNNER_TEMP/upstream-recordings\"\n          mkdir -p \"$out\"\n          cp -R contracts/upstream/. \"$out/\"\n          if [[ -d $RUNNER_TEMP/upstream-bodies ]]; then\n            rm -rf \"$out/llama/bodies\"\n            cp -R \"$RUNNER_TEMP/upstream-bodies\" \"$out/llama/bodies\"\n          fi\n\n      # The artifact is laid out as contracts/upstream is, with the redacted\n      # bodies in llama/bodies/, so committing it is unpacking it there.\n      - name: Upload the recordings\n        if: runner.os != 'Windows' && always()\n        uses: actions/upload-artifact@v7\n        with:\n          name: ${{ runner.os == 'Linux' && 'upstream-recordings' || format('upstream-recordings-{0}', matrix.target) }}\n          path: ${{ runner.temp }}/upstream-recordings\n          if-no-files-found: ignore\n\n  # The `clippy` job above runs on ubuntu only, so until now no lint had ever\n  # seen the inside of a `#[cfg(windows)]` block. `cli-cross-os` visits all\n  # three platforms but only compiles — `cargo test --no-run` does not lint.\n  #\n  # Running it turned up four kinds of thing in code that had been there for\n  # months: an import unused on Windows, an unreadable literal, enum variants\n  # dead on Windows, and a function that could be `const` there.\n  #\n  # Linux is deliberately absent: the `clippy` job already covers it with the\n  # same invocation, and repeating it here would only spend runner minutes.\n  #\n  # Whole workspace rather than the crates that carry `#[cfg]`. Two reasons:\n  # a hand-kept crate list goes stale the first time someone adds platform\n  # code to a crate not on it, and — measured while writing this — naming a\n  # subset changes feature unification, flipping rustls off `ring` and onto\n  # `aws-lc-sys`, which then wants a C toolchain. The whole workspace is both\n  # the honest scope and the one that builds. It needs the Web UI for the same\n  # reason the `clippy` job does: `gglib-app` embeds it.\n  clippy-cross-os:\n    name: Clippy (${{ matrix.target }})\n    runs-on: ${{ matrix.os }}\n    timeout-minutes: ${{ matrix.timeout }}\n    # As `cli-cross-os`: when `scope` says so, and after ubuntu clippy.\n    if: needs.scope.outputs.cross_os == 'true'\n    needs: [clippy, scope]\n    strategy:\n      fail-fast: false\n      matrix:\n        include:\n          - target: aarch64-apple-darwin\n            os: macos-26\n            timeout: 75\n          - target: x86_64-pc-windows-msvc\n            os: windows-2022\n            timeout: 45\n    steps:\n      - name: Checkout repository\n        uses: actions/checkout@v7\n\n      # Its own shared-key per target, and only main saves, as for\n      # `cli-cross-os`.\n      - name: Rust prelude\n        uses: ./.github/actions/rust-prelude\n        with:\n          shared-key: \"ci-clippy-${{ matrix.target }}\"\n          save-if: ${{ github.ref == 'refs/heads/main' }}\n\n      - name: Setup Node.js\n        uses: actions/setup-node@v7\n        with:\n          node-version-file: '.nvmrc'\n          cache: 'npm'\n\n      - name: Build Web UI\n        run: |\n          npm ci\n          npm run build\n\n      - name: Run clippy\n        run: cargo clippy --all-targets --all-features -- -D warnings\n\n  # The crates a phone build compiles, the Makefile's PHONE_CRATES, checked\n  # for aarch64-apple-ios. On macOS because ring, aws-lc-sys and the bundled\n  # SQLite compile C for the target in their build scripts, which takes\n  # Xcode's iOS SDK. That the same crates reach no desktop-only package is the\n  # `boundaries` job's: it reads their closure for this target from the\n  # metadata, with no Apple toolchain.\n  #\n  # Whenever `scope` says a change reaches a Rust build. It waits for `scope`\n  # alone, not `clippy`, so an iOS break shows without the longest job ahead\n  # of it.\n  ios-check:\n    name: iOS Check\n    runs-on: macos-26\n    timeout-minutes: 45\n    needs: [scope]\n    if: needs.scope.outputs.ios == 'true'\n    steps:\n      - name: Checkout repository\n        uses: actions/checkout@v7\n\n      # rust-toolchain.toml lists the Apple targets, so the toolchain step\n      # installs them. Its own shared-key, and only main saves; the\n      # rust-prelude action says why.\n      - name: Rust prelude\n        uses: ./.github/actions/rust-prelude\n        with:\n          shared-key: \"ci-ios-check\"\n          save-if: ${{ github.ref == 'refs/heads/main' }}\n\n      - name: Check the phone crates for aarch64-apple-ios\n        run: make ios-check\n\n  # What a change can reach, read once on Linux so the macOS and Windows jobs\n  # run only when it can matter to them. scripts/ci_scope.py says what each\n  # output means; every gated job's `if:` and `ci-success` read these and\n  # nothing else.\n  #\n  # A pull request is the merge commit against its first parent. A push is\n  # compared with the commit main was at before it, since one push can carry\n  # several commits; `before` is all zeros only when a branch is created, and\n  # then the commit's parent stands in. The pull request count is for an\n  # admin's direct push, which no pull request CI has seen.\n  scope:\n    name: Scope\n    runs-on: ubuntu-24.04\n    timeout-minutes: 10\n    permissions:\n      contents: read\n      pull-requests: read\n    outputs:\n      version_only: ${{ steps.scope.outputs.version_only }}\n      rust: ${{ steps.scope.outputs.rust }}\n      ffi: ${{ steps.scope.outputs.ffi }}\n      ios: ${{ steps.scope.outputs.ios }}\n      lock: ${{ steps.scope.outputs.lock }}\n      cross_os: ${{ steps.scope.outputs.cross_os }}\n      apple: ${{ steps.scope.outputs.apple }}\n    steps:\n      - name: Checkout repository\n        uses: actions/checkout@v7\n        with:\n          # The head and its parent: a pull request's base, or a push's\n          # fallback.\n          fetch-depth: 2\n\n      # scripts/apple/ffi-inputs-changed.sh reads gglib-ffi's closure with\n      # `cargo tree`.\n      - name: Install Rust toolchain\n        run: rustup show\n\n      - name: Decide what this change can reach\n        id: scope\n        env:\n          EVENT: ${{ github.event_name }}\n          BEFORE: ${{ github.event.before }}\n          SHA: ${{ github.sha }}\n          GH_TOKEN: ${{ github.token }}\n        run: |\n          if [[ $EVENT == pull_request ]]; then\n            ./scripts/ci_scope.py scope --base HEAD^1 --head HEAD >> \"$GITHUB_OUTPUT\"\n            exit 0\n          fi\n          base=HEAD^1\n          if [[ ! $BEFORE =~ ^0+$ ]]; then\n            git fetch --no-tags --depth=1 origin \"$BEFORE\"\n            base=$BEFORE\n          fi\n          prs=$(gh api \"repos/$GITHUB_REPOSITORY/commits/$SHA/pulls\" --jq length)\n          ./scripts/ci_scope.py scope --base \"$base\" --head \"$SHA\" --event push --pr-count \"$prs\" >> \"$GITHUB_OUTPUT\"\n\n  # gglib-ffi as the app links it: GglibFFI.xcframework, a dynamic framework\n  # per slice (iOS device, iOS simulator, macOS) linking llama.cpp's own\n  # llama.framework at the pin, checked slice by slice, the committed Swift\n  # binding held to what the library generates, and that binding compiled and\n  # called against the macOS slice, its served engine streaming a reply from\n  # tinygemma3 on the Mac's CPU. It boots no simulator.\n  #\n  # llama.xcframework comes from the llama-xcframework action, which restores\n  # the one `phone-llama` cached for the pin and the runner's Xcode, or builds\n  # it; the model comes from the pinned-engines action, as CLI Check's do.\n  #\n  # The runner's default Xcode, as ggchat's CI uses: the framework this\n  # builds is the one an app built with that Xcode links. Unoptimised, since\n  # nothing it answers depends on optimisation; release.yml builds the\n  # optimised one it ships.\n  ffi-apple:\n    name: Swift Framework (macOS)\n    runs-on: macos-26\n    needs: [scope]\n    if: needs.scope.outputs.apple == 'true'\n    # A cold build of three slices, the generator and the Swift package is a\n    # few minutes, and llama.cpp's three builds half an hour more when its\n    # cache misses; the ceiling is for a hang, not for a slow runner.\n    timeout-minutes: 75\n    steps:\n      - name: Checkout repository\n        uses: actions/checkout@v7\n\n      # rust-toolchain.toml lists the three Apple targets, so the toolchain\n      # step installs them. Its own shared-key, and only main saves; the\n      # rust-prelude action says why. Main saves it whenever a push reaches\n      # the framework.\n      - name: Rust prelude\n        uses: ./.github/actions/rust-prelude\n        with:\n          shared-key: \"ci-ffi-apple\"\n          save-if: ${{ github.ref == 'refs/heads/main' }}\n\n      # After the Rust cache, never before it: rust-cache pre-cleans target/\n      # when it restores another Cargo.lock's entry, and that clean deletes\n      # every file under target/ outside a profile's own folders, the\n      # framework in target/apple included. A version bump is such a run.\n      - name: Build or restore llama.xcframework at the pin\n        uses: ./.github/actions/llama-xcframework\n\n      - name: Xcode and Swift\n        run: |\n          xcodebuild -version\n          swift --version\n\n      # The pinned-engines action without its engines: the recorder's tiny\n      # models, restored, fetched and saved under the key CLI Check uses, and\n      # the pin's chat templates beside them.\n      - name: Fetch the test models\n        id: models\n        uses: ./.github/actions/pinned-engines\n        with:\n          target: aarch64-apple-darwin\n          engines: \"false\"\n\n      - name: Build the XCFramework and check each slice\n        run: make ffi-xcframework-fast\n\n      - name: The committed Swift binding is what the library generates\n        run: make ffi-binding-check\n\n      - name: The Swift binding links and calls the macOS slice, and its engine streams a reply\n        env:\n          GGLIB_ENGINE_MODELS_DIR: ${{ steps.models.outputs.models }}\n        run: make ffi-smoke\n\n  # llama.cpp's own llama.xcframework at the pin, built by upstream's script\n  # with the runner's Xcode for the iPhone, its simulator and the Mac, and\n  # checked for the slices and the llama.h functions the phone engine links.\n  # The llama-xcframework action caches it by the pin, the Xcode version and\n  # the build script, so a run compiles llama.cpp only when one of them moves.\n  #\n  # Then the phone engine's decoder over llama.h (gglib-engine-llama's `llama`\n  # feature) is built against that framework, the one place CI links it: its\n  # tests on the Mac's slice, on the CPU, read the tiny models the CLI Check\n  # legs record with, and fail if they are missing; clippy lints it for the\n  # Mac, the iPhone and its simulator. Every other job builds the crate as\n  # plain Rust, with no framework.\n  #\n  # When the change reaches the Swift framework's inputs, as `ffi-apple`:\n  # gglib-engine-llama is in gglib-ffi's closure, and the pin, the\n  # llama-xcframework action and the test models' list are inputs. A run that\n  # misses the xcframework cache saves its entry, so a pull request restores\n  # main's entry or one an earlier run of its own saved.\n  phone-llama:\n    name: Phone Engine on llama.cpp (macOS)\n    runs-on: macos-26\n    timeout-minutes: 75\n    needs: [scope]\n    if: needs.scope.outputs.apple == 'true'\n    steps:\n      - name: Checkout repository\n        uses: actions/checkout@v7\n\n      # rust-toolchain.toml lists the Apple targets, so the toolchain step\n      # installs them. Its own shared-key, and only main saves; the\n      # rust-prelude action says why.\n      - name: Rust prelude\n        uses: ./.github/actions/rust-prelude\n        with:\n          shared-key: \"ci-phone-llama\"\n          save-if: ${{ github.ref == 'refs/heads/main' }}\n\n      # After the Rust cache, never before it: rust-cache pre-cleans target/\n      # when it restores another Cargo.lock's entry, and that clean deletes\n      # every file under target/ outside a profile's own folders, the\n      # framework in target/apple included. A version bump is such a run.\n      - name: Build or restore llama.xcframework at the pin\n        uses: ./.github/actions/llama-xcframework\n\n      # The pinned-engines action without its engines, as `ffi-apple` runs it.\n      - name: Fetch the test models\n        id: models\n        uses: ./.github/actions/pinned-engines\n        with:\n          target: aarch64-apple-darwin\n          engines: \"false\"\n\n      - name: The decoder over llama.h, tested on the Mac's slice\n        env:\n          GGLIB_ENGINE_MODELS_DIR: ${{ steps.models.outputs.models }}\n        run: make engine-llama-test\n\n      - name: The decoder over llama.h, linted for the Mac, the iPhone and its simulator\n        run: make engine-llama-clippy\n\n  # Main's Rust caches, down to the newest entry per job and toolchain.\n  # rust-cache keys an entry\n  # `v0-rust-<shared-key>-<os>-<arch>-<env hash>-<lockfile hash>` and\n  # restores by everything before the lockfile hash, so once a newer entry\n  # exists for the same job and env hash an older one is never restored\n  # again; but it stays until the repository's 10 GB limit evicts something,\n  # and what it evicts first is the macOS entries, saved least often. Every\n  # lockfile change leaves a generation of these behind, so this runs on\n  # every push. The env hash stays in the group: two runner images with\n  # different toolchains serve the pool at once during a rollout, and each\n  # restores only its own lineage.\n  #\n  # After the jobs that save on most pushes, so their new entries are\n  # counted; an entry the macOS jobs save later is pruned by the next push.\n  cache-prune:\n    name: Prune the Rust caches\n    runs-on: ubuntu-24.04\n    timeout-minutes: 10\n    if: always() && github.event_name == 'push' && github.ref == 'refs/heads/main'\n    needs: [test, bindings, rustdoc, clippy, cli-cross-os, clippy-cross-os]\n    permissions:\n      actions: write\n    defaults:\n      run:\n        shell: bash\n    steps:\n      # A failure here costs cache space, not correctness, and must not turn\n      # main's run red: the release pull request and the badges follow only\n      # a green one. A delete that loses a race with another run's prune is\n      # a warning.\n      - name: Delete every entry but the newest per job and toolchain\n        continue-on-error: true\n        env:\n          GH_TOKEN: ${{ github.token }}\n          GH_REPO: ${{ github.repository }}\n        run: |\n          gh cache list --ref refs/heads/main --json id,key,createdAt --limit 500 \\\n            | jq -r '[.[] | select(.key | test(\"^v0-rust-.+-[0-9a-f]{8}-[0-9a-f]{8}$\"))]\n                     | group_by(.key | sub(\"-[0-9a-f]{8}$\"; \"\"))\n                     | .[] | sort_by(.createdAt) | .[:-1][] | \"\\(.id) \\(.key)\"' \\\n            > \"$RUNNER_TEMP/stale.txt\"\n          echo \"$(wc -l < \"$RUNNER_TEMP/stale.txt\") stale entries\"\n          while read -r id key; do\n            echo \"Deleting $key\"\n            gh cache delete \"$id\" < /dev/null || echo \"::warning::could not delete $key\"\n          done < \"$RUNNER_TEMP/stale.txt\"\n\n  # The one required check. A gated job's own `if:` reads its scope output,\n  # and this holds every job to what that output says it must have done:\n  #\n  #   job                            must be\n  #   cli-cross-os, clippy-cross-os  success if cross_os, else skipped\n  #   ios-check                      success if ios, else skipped\n  #   ffi-apple, phone-llama         success if apple, else skipped\n  #   every other job                success\n  #\n  # A skip is a pass only where its gate says `false`, so a gate that comes\n  # out wrong, or empty because `scope` failed, cannot turn a run green with\n  # the job unrun. A matrix job reports one result for all its legs.\n  ci-success:\n    name: CI Success\n    runs-on: ubuntu-24.04\n    timeout-minutes: 10\n    if: always()\n    needs: [scope, boundaries, bindings, enforcement, adr-readings, quality, rustdoc, test, test-frontend, clippy, clippy-cross-os, fmt, cli-cross-os, ios-check, ffi-apple, phone-llama]\n    steps:\n      - name: Check every job did what its scope says\n        env:\n          NEEDS: ${{ toJSON(needs) }}\n        shell: python3 {0}\n        run: |\n          import json, os, sys\n\n          GATES = {\n              \"cli-cross-os\": \"cross_os\",\n              \"clippy-cross-os\": \"cross_os\",\n              \"ios-check\": \"ios\",\n              \"ffi-apple\": \"apple\",\n              \"phone-llama\": \"apple\",\n          }\n          OUTPUTS = (\"version_only\", \"rust\", \"ffi\", \"ios\", \"lock\", \"cross_os\", \"apple\")\n\n          needs = json.loads(os.environ[\"NEEDS\"])\n          scope = needs.get(\"scope\", {}).get(\"outputs\", {})\n          bad = []\n          for name in OUTPUTS:\n              value = scope.get(name)\n              print(f\"scope: {name}={value}\")\n              if value not in (\"true\", \"false\"):\n                  bad.append(f\"scope output {name} is {value!r}, not true or false\")\n          for job in GATES:\n              if job not in needs:\n                  bad.append(f\"{job} is gated here but missing from needs\")\n          for job, info in sorted(needs.items()):\n              gate = GATES.get(job)\n              want = \"success\" if gate is None or scope.get(gate) == \"true\" else \"skipped\"\n              got = info[\"result\"]\n              print(f\"{job}: {got}\" + (f\" ({gate}={scope.get(gate)})\" if gate else \"\"))\n              if got != want:\n                  bad.append(f\"{job} is {got}, and must be {want}\")\n          for line in bad:\n              print(f\"::error::{line}\")\n          sys.exit(1 if bad else 0)\n\n  release:\n    name: Release\n    needs: [ci-success]\n    if: always() && needs.ci-success.result == 'success' && github.event_name == 'push' && github.ref == 'refs/heads/main'\n    # A called workflow cannot exceed the caller's grant: these are exactly\n    # what release-tag.yml's create-release job asks for. The two secrets\n    # are the App's, which makes the tag; nothing else is passed.\n    permissions:\n      contents: write\n      issues: write\n      pull-requests: write\n      actions: write\n    uses: ./.github/workflows/release-tag.yml\n    secrets:\n      APP_ID: ${{ secrets.APP_ID }}\n      APP_PRIVATE_KEY: ${{ secrets.APP_PRIVATE_KEY }}\n",
+  "mmogr/gglib/.github/workflows/release-tag.yml@6287e9e287ed51020b929e6b3a8a2a9b75ce5bb3": "# The tagging half of a release, called by ci.yml's `release` job after CI\n# passes on a push to main, so its check shows on the commit. When main's\n# version has no `v<version>` tag it tags the commit that set that version,\n# makes the GitHub (pre)release, and dispatches release.yml, which builds and\n# publishes the assets in a run of its own. Nothing that cancels this CI run\n# can then cancel the builds.\n#\n# This tags every candidate. release-please.yml never tags, and promote.yml\n# tags a stable version itself, from the candidate's tag, so a promotion\n# never comes this way.\n#\n# Run by hand, it tags without waiting for CI: the same steps on main as it\n# is now, and then the release PR workflow, which otherwise follows CI. That\n# is the maintainer's shortcut past a CI run that takes an hour, taken on\n# their own judgement of the tree: nothing here has tested it. A CI run that\n# finishes afterwards finds the tag and releases nothing twice.\n\nname: Release tag\n\non:\n  workflow_call:\n    secrets:\n      APP_ID:\n        required: true\n      APP_PRIVATE_KEY:\n        required: true\n  workflow_dispatch:\n\npermissions:\n  contents: read\n\ndefaults:\n  run:\n    # GitHub's default is `bash -e`; this adds pipefail.\n    shell: bash\n\njobs:\n  check-version:\n    name: Check Version Change\n    runs-on: ubuntu-24.04\n    timeout-minutes: 10\n    permissions:\n      contents: read\n    outputs:\n      changed: ${{ steps.version.outputs.changed }}\n      version: ${{ steps.version.outputs.version }}\n      is-prerelease: ${{ steps.version.outputs.is-prerelease }}\n      bump: ${{ steps.bump.outputs.sha }}\n    steps:\n      - name: Checkout repository\n        uses: actions/checkout@v7\n        with:\n          # The whole history and every tag: the bump commit is found in the\n          # history, and a stable version is compared with its last RC's tag.\n          fetch-depth: 0\n          persist-credentials: false\n\n      - name: Get current version\n        id: version\n        run: |\n          VERSION=$(grep -m1 '^version = ' Cargo.toml | sed -E 's/version = \"(.*)\"/\\1/')\n          echo \"version=$VERSION\" >> \"$GITHUB_OUTPUT\"\n\n          # A prerelease is any version carrying a -alpha, -beta or -rc suffix.\n          if [[ \"$VERSION\" == *\"-alpha\"* ]] || [[ \"$VERSION\" == *\"-beta\"* ]] || [[ \"$VERSION\" == *\"-rc\"* ]]; then\n            echo \"is-prerelease=true\" >> \"$GITHUB_OUTPUT\"\n          else\n            echo \"is-prerelease=false\" >> \"$GITHUB_OUTPUT\"\n          fi\n\n          # Asked of the remote rather than the checkout's tags, so a tag made\n          # since the checkout counts.\n          if git ls-remote --exit-code --tags origin \"refs/tags/v${VERSION}\" > /dev/null; then\n            echo \"changed=false\" >> \"$GITHUB_OUTPUT\"\n            echo \"v$VERSION is already tagged\"\n          else\n            echo \"changed=true\" >> \"$GITHUB_OUTPUT\"\n            echo \"New version detected: v$VERSION\"\n          fi\n\n      # The tag goes on the commit that set the version, not on this run's\n      # commit. When runs overlap, or a run is cancelled and a later one picks\n      # the version up, the run that tags can be testing a newer commit; the\n      # bump commit is the same whichever run gets there.\n      #\n      # -G matches a line the commit added or removed. The newest such commit\n      # is the one that added it, since main still carries the line.\n      - name: Find the commit that set the version\n        id: bump\n        if: steps.version.outputs.changed == 'true'\n        env:\n          VERSION: ${{ steps.version.outputs.version }}\n        run: |\n          ver_re=$(printf '%s' \"$VERSION\" | sed 's/[.[\\*^$/]/\\\\&/g')\n          bump=$(git log -1 --format=%H -G\"^version = \\\"${ver_re}\\\"\\$\" -- Cargo.toml)\n          if [ -z \"$bump\" ]; then\n            echo \"::error::no commit in main's history sets version = \\\"$VERSION\\\" in Cargo.toml\"\n            exit 1\n          fi\n          git show \"$bump:Cargo.toml\" > \"$RUNNER_TEMP/bump-Cargo.toml\"\n          if [ \"$(grep -m1 '^version = ' \"$RUNNER_TEMP/bump-Cargo.toml\")\" != \"version = \\\"$VERSION\\\"\" ]; then\n            echo \"::error::$bump was found as the commit that set $VERSION, but its Cargo.toml says otherwise\"\n            exit 1\n          fi\n          echo \"sha=$bump\" >> \"$GITHUB_OUTPUT\"\n          echo \"v$VERSION will tag $bump\"\n\n      # A stable version is released only as its last release candidate with\n      # the version changed. promote.yml makes one that way from the\n      # candidate's tag and never comes here, so this guards a version set\n      # to stable on main by hand. Checked before anything is tagged, so a\n      # refusal leaves no tag and no release behind; the script's header\n      # says how to recover. Judged on the bump commit's own tree, so a bump\n      # whose run was overtaken is not judged on a newer one.\n      - name: Require a stable release to match its last RC\n        if: steps.version.outputs.changed == 'true' && steps.version.outputs.is-prerelease != 'true'\n        env:\n          BUMP: ${{ steps.bump.outputs.sha }}\n        run: |\n          git checkout --detach \"$BUMP\"\n          scripts/check_rc_promotion.sh\n\n  create-release:\n    name: Create Release\n    runs-on: ubuntu-24.04\n    timeout-minutes: 10\n    needs: check-version\n    if: needs.check-version.outputs.changed == 'true'\n    permissions:\n      # The tag and the release.\n      contents: write\n      # The release PR's labels, below: the issues list finds it, and a\n      # label on a pull request needs pull-requests: write even through the\n      # issues endpoints (issues: write alone got a 403 on v0.29.0-rc.4).\n      issues: write\n      pull-requests: write\n      # The dispatch of release.yml.\n      actions: write\n    env:\n      GH_TOKEN: ${{ github.token }}\n      GH_REPO: ${{ github.repository }}\n      VERSION: ${{ needs.check-version.outputs.version }}\n      BUMP: ${{ needs.check-version.outputs.bump }}\n    steps:\n      # Through the API, which creates the tag only if no tag of that name\n      # exists. Two overlapping runs on main can both find the version\n      # untagged; the one that loses gets a 422 and stops here, and the\n      # winner makes the release and dispatches the build.\n      #\n      # A re-run of this job after it failed past this step meets its own\n      # tag, on the bump commit, and carries on: the release is made if it\n      # is missing, and the build dispatched again (a second dispatch waits\n      # in release.yml's concurrency group, then replaces the assets as a\n      # whole). The attempt number is what tells that from a lost race,\n      # where the loser is on its first attempt and the winner's release\n      # may not exist yet.\n      # The tag is made with the App's token. GITHUB_TOKEN may create a\n      # ref only at the run's own commit: at any other it gets a 403 with\n      # `X-Accepted-Github-Permissions: contents=write,workflows=write`, a\n      # permission it never has. The bump commit is the run's own only when\n      # nothing merged after the release PR before this ran, which a hand\n      # run or a busy main breaks. The App has that permission (its\n      # settings: \"Workflows: read and write\").\n      - name: App token\n        id: app\n        uses: actions/create-github-app-token@v3\n        with:\n          app-id: ${{ secrets.APP_ID }}\n          private-key: ${{ secrets.APP_PRIVATE_KEY }}\n\n      - name: Tag the bump commit\n        id: tag\n        env:\n          ATTEMPT: ${{ github.run_attempt }}\n          GH_TOKEN: ${{ steps.app.outputs.token }}\n        run: |\n          if out=$(gh api -X POST \"repos/$GH_REPO/git/refs\" -f ref=\"refs/tags/v$VERSION\" -f sha=\"$BUMP\" 2>&1); then\n            echo \"tagged=true\" >> \"$GITHUB_OUTPUT\"\n            echo \"Tagged $BUMP as v$VERSION\"\n            exit 0\n          fi\n          echo \"$out\"\n          # A 422 also answers a bad sha, so only an existing tag counts.\n          if ! grep -q 'HTTP 422' <<< \"$out\"; then exit 1; fi\n          at=$(gh api \"repos/$GH_REPO/git/ref/tags/v$VERSION\" --jq .object.sha) || exit 1\n          if [ \"$at\" = \"$BUMP\" ] && [ \"$ATTEMPT\" -gt 1 ]; then\n            echo \"tagged=true\" >> \"$GITHUB_OUTPUT\"\n            echo \"::notice::v$VERSION is already on $BUMP from an earlier attempt of this run; carrying on from there\"\n            exit 0\n          fi\n          echo \"tagged=false\" >> \"$GITHUB_OUTPUT\"\n          echo \"::notice::another run tagged v$VERSION; this run makes no release and dispatches nothing\"\n\n      # The notes are generated, sorted by .github/release.yml.\n      - name: Create GitHub Release\n        if: steps.tag.outputs.tagged == 'true'\n        env:\n          PRERELEASE: ${{ needs.check-version.outputs.is-prerelease }}\n        run: |\n          if gh release view \"v$VERSION\" > /dev/null 2>&1; then\n            echo \"the release for v$VERSION exists already\"\n            exit 0\n          fi\n          args=(--title \"Release v$VERSION\" --generate-notes --verify-tag)\n          if [ \"$PRERELEASE\" = \"true\" ]; then args+=(--prerelease); fi\n          gh release create \"v$VERSION\" \"${args[@]}\"\n\n      # From main, whose release.yml is the current one; it checks out the tag.\n      # A failed build is re-run with the same command.\n      - name: Dispatch the build\n        if: steps.tag.outputs.tagged == 'true'\n        run: gh workflow run release.yml --ref main -f tag=\"v$VERSION\"\n\n      # release-please.yml never tags (it runs with skip-github-release), so it\n      # cannot see that the release PR it opened has been released, and it\n      # opens no other while a merged release PR is labelled\n      # `autorelease: pending`. Swapping that label for `autorelease: tagged`\n      # is how a release tells it. Only the merged PR titled for this version\n      # is touched; a promotion has no such PR, and nothing changes. Last and\n      # allowed to fail, so a label can never hold up the build: if it fails,\n      # release-please.yml stops with an error naming the label.\n      - name: Mark the release PR as tagged\n        if: steps.tag.outputs.tagged == 'true'\n        continue-on-error: true\n        uses: actions/github-script@v9\n        with:\n          script: |\n            const { owner, repo } = context.repo;\n            const title = `chore(main): release ${process.env.VERSION}`;\n            // The issues list rather than search, which can lag behind a label.\n            const items = await github.paginate(github.rest.issues.listForRepo, {\n              owner, repo, state: 'closed', labels: 'autorelease: pending', per_page: 100,\n            });\n            for (const item of items) {\n              if (!item.pull_request?.merged_at || item.title !== title) continue;\n              await github.rest.issues.removeLabel({\n                owner, repo, issue_number: item.number, name: 'autorelease: pending',\n              });\n              await github.rest.issues.addLabels({\n                owner, repo, issue_number: item.number, labels: ['autorelease: tagged'],\n              });\n              core.info(`#${item.number} is now labelled autorelease: tagged`);\n            }\n\n      # Run by hand there is no CI run for release-please.yml to follow, so\n      # it is started here, after the relabel above: its gate reads that\n      # label.\n      - name: Refresh the release PR\n        if: github.event_name == 'workflow_dispatch' && steps.tag.outputs.tagged == 'true'\n        run: gh workflow run release-please.yml --ref main\n"
+ },
+ "jobs": [
+  {
+   "id": 124799281041,
+   "run_id": 41290042490,
+   "name": "Lint & Typecheck",
+   "status": "completed",
+   "conclusion": "success",
+   "labels": [
+    "ubuntu-24.04"
+   ],
+   "runner_name": "GitHub Actions 1000072573",
+   "html_url": "https://github.com/mmogr/gglib/actions/runs/41290042490/job/124799281041",
+   "created_at": "2026-11-01T09:43:47Z",
+   "started_at": "2026-11-01T09:43:49Z",
+   "completed_at": "2026-11-01T09:45:01Z",
+   "steps": [
+    {
+     "number": 1,
+     "name": "Set up job",
+     "status": "completed",
+     "conclusion": "success"
+    },
+    {
+     "number": 2,
+     "name": "Checkout repository",
+     "status": "completed",
+     "conclusion": "success"
+    },
+    {
+     "number": 3,
+     "name": "Setup Node.js",
+     "status": "completed",
+     "conclusion": "success"
+    },
+    {
+     "number": 4,
+     "name": "Install dependencies",
+     "status": "completed",
+     "conclusion": "success"
+    },
+    {
+     "number": 5,
+     "name": "Lint",
+     "status": "completed",
+     "conclusion": "success"
+    },
+    {
+     "number": 6,
+     "name": "Typecheck",
+     "status": "completed",
+     "conclusion": "success"
+    },
+    {
+     "number": 11,
+     "name": "Post Setup Node.js",
+     "status": "completed",
+     "conclusion": "success"
+    },
+    {
+     "number": 12,
+     "name": "Post Checkout repository",
+     "status": "completed",
+     "conclusion": "success"
+    },
+    {
+     "number": 13,
+     "name": "Complete job",
+     "status": "completed",
+     "conclusion": "success"
+    }
+   ]
+  },
+  {
+   "id": 124799281221,
+   "run_id": 41290042490,
+   "name": "Clippy",
+   "status": "completed",
+   "conclusion": "success",
+   "labels": [
+    "ubuntu-24.04"
+   ],
+   "runner_name": "GitHub Actions 1000072577",
+   "html_url": "https://github.com/mmogr/gglib/actions/runs/41290042490/job/124799281221",
+   "created_at": "2026-11-01T09:43:47Z",
+   "started_at": "2026-11-01T09:43:48Z",
+   "completed_at": "2026-11-01T09:58:30Z",
+   "steps": [
+    {
+     "number": 1,
+     "name": "Set up job",
+     "status": "completed",
+     "conclusion": "success"
+    },
+    {
+     "number": 2,
+     "name": "Checkout repository",
+     "status": "completed",
+     "conclusion": "success"
+    },
+    {
+     "number": 3,
+     "name": "Rust prelude",
+     "status": "completed",
+     "conclusion": "success"
+    },
+    {
+     "number": 4,
+     "name": "Setup Node.js",
+     "status": "completed",
+     "conclusion": "success"
+    },
+    {
+     "number": 5,
+     "name": "Build Web UI",
+     "status": "completed",
+     "conclusion": "success"
+    },
+    {
+     "number": 6,
+     "name": "Run clippy",
+     "status": "completed",
+     "conclusion": "success"
+    },
+    {
+     "number": 10,
+     "name": "Post Setup Node.js",
+     "status": "completed",
+     "conclusion": "success"
+    },
+    {
+     "number": 11,
+     "name": "Post Rust prelude",
+     "status": "completed",
+     "conclusion": "success"
+    },
+    {
+     "number": 12,
+     "name": "Post Checkout repository",
+     "status": "completed",
+     "conclusion": "success"
+    },
+    {
+     "number": 13,
+     "name": "Complete job",
+     "status": "completed",
+     "conclusion": "success"
+    }
+   ]
+  },
+  {
+   "id": 124799281229,
+   "run_id": 41290042490,
+   "name": "Scope",
+   "status": "completed",
+   "conclusion": "success",
+   "labels": [
+    "ubuntu-24.04"
+   ],
+   "runner_name": "GitHub Actions 1000072574",
+   "html_url": "https://github.com/mmogr/gglib/actions/runs/41290042490/job/124799281229",
+   "created_at": "2026-11-01T09:43:47Z",
+   "started_at": "2026-11-01T09:43:48Z",
+   "completed_at": "2026-11-01T09:44:13Z",
+   "steps": [
+    {
+     "number": 1,
+     "name": "Set up job",
+     "status": "completed",
+     "conclusion": "success"
+    },
+    {
+     "number": 2,
+     "name": "Checkout repository",
+     "status": "completed",
+     "conclusion": "success"
+    },
+    {
+     "number": 3,
+     "name": "Install Rust toolchain",
+     "status": "completed",
+     "conclusion": "success"
+    },
+    {
+     "number": 4,
+     "name": "Decide what this change can reach",
+     "status": "completed",
+     "conclusion": "success"
+    },
+    {
+     "number": 8,
+     "name": "Post Checkout repository",
+     "status": "completed",
+     "conclusion": "success"
+    },
+    {
+     "number": 9,
+     "name": "Complete job",
+     "status": "completed",
+     "conclusion": "success"
+    }
+   ]
+  },
+  {
+   "id": 124799281243,
+   "run_id": 41290042490,
+   "name": "Check Boundaries",
+   "status": "completed",
+   "conclusion": "success",
+   "labels": [
+    "ubuntu-24.04"
+   ],
+   "runner_name": "GitHub Actions 1000072576",
+   "html_url": "https://github.com/mmogr/gglib/actions/runs/41290042490/job/124799281243",
+   "created_at": "2026-11-01T09:43:47Z",
+   "started_at": "2026-11-01T09:43:48Z",
+   "completed_at": "2026-11-01T09:44:39Z",
+   "steps": [
+    {
+     "number": 1,
+     "name": "Set up job",
+     "status": "completed",
+     "conclusion": "success"
+    },
+    {
+     "number": 2,
+     "name": "Checkout repository",
+     "status": "completed",
+     "conclusion": "success"
+    },
+    {
+     "number": 3,
+     "name": "Check crate boundaries",
+     "status": "completed",
+     "conclusion": "success"
+    },
+    {
+     "number": 4,
+     "name": "Install cargo-shear",
+     "status": "completed",
+     "conclusion": "success"
+    },
+    {
+     "number": 5,
+     "name": "Check for unused dependencies",
+     "status": "completed",
+     "conclusion": "success"
+    },
+    {
+     "number": 6,
+     "name": "Upload boundary results",
+     "status": "completed",
+     "conclusion": "success"
+    },
+    {
+     "number": 12,
+     "name": "Post Checkout repository",
+     "status": "completed",
+     "conclusion": "success"
+    },
+    {
+     "number": 13,
+     "name": "Complete job",
+     "status": "completed",
+     "conclusion": "success"
+    }
+   ]
+  },
+  {
+   "id": 124799281269,
+   "run_id": 41290042490,
+   "name": "Bindings Freshness",
+   "status": "completed",
+   "conclusion": "success",
+   "labels": [
+    "ubuntu-24.04"
+   ],
+   "runner_name": "GitHub Actions 1000072580",
+   "html_url": "https://github.com/mmogr/gglib/actions/runs/41290042490/job/124799281269",
+   "created_at": "2026-11-01T09:43:47Z",
+   "started_at": "2026-11-01T09:43:48Z",
+   "completed_at": "2026-11-01T09:00:27Z",
+   "steps": [
+    {
+     "number": 1,
+     "name": "Set up job",
+     "status": "completed",
+     "conclusion": "success"
+    },
+    {
+     "number": 2,
+     "name": "Checkout repository",
+     "status": "completed",
+     "conclusion": "success"
+    },
+    {
+     "number": 3,
+     "name": "Rust prelude",
+     "status": "completed",
+     "conclusion": "success"
+    },
+    {
+     "number": 4,
+     "name": "Check generated TypeScript bindings are current",
+     "status": "completed",
+     "conclusion": "success"
+    },
+    {
+     "number": 7,
+     "name": "Post Rust prelude",
+     "status": "completed",
+     "conclusion": "success"
+    },
+    {
+     "number": 8,
+     "name": "Post Checkout repository",
+     "status": "completed",
+     "conclusion": "success"
+    },
+    {
+     "number": 9,
+     "name": "Complete job",
+     "status": "completed",
+     "conclusion": "success"
+    }
+   ]
+  },
+  {
+   "id": 124799281286,
+   "run_id": 41290042490,
+   "name": "Rustdoc",
+   "status": "completed",
+   "conclusion": "success",
+   "labels": [
+    "ubuntu-24.04"
+   ],
+   "runner_name": "GitHub Actions 1000072575",
+   "html_url": "https://github.com/mmogr/gglib/actions/runs/41290042490/job/124799281286",
+   "created_at": "2026-11-01T09:43:47Z",
+   "started_at": "2026-11-01T09:43:49Z",
+   "completed_at": "2026-11-01T09:51:51Z",
+   "steps": [
+    {
+     "number": 1,
+     "name": "Set up job",
+     "status": "completed",
+     "conclusion": "success"
+    },
+    {
+     "number": 2,
+     "name": "Checkout repository",
+     "status": "completed",
+     "conclusion": "success"
+    },
+    {
+     "number": 3,
+     "name": "Rust prelude",
+     "status": "completed",
+     "conclusion": "success"
+    },
+    {
+     "number": 4,
+     "name": "Check rustdoc has no warnings",
+     "status": "completed",
+     "conclusion": "success"
+    },
+    {
+     "number": 5,
+     "name": "Check the links on each crate's front page",
+     "status": "completed",
+     "conclusion": "success"
+    },
+    {
+     "number": 9,
+     "name": "Post Rust prelude",
+     "status": "completed",
+     "conclusion": "success"
+    },
+    {
+     "number": 10,
+     "name": "Post Checkout repository",
+     "status": "completed",
+     "conclusion": "success"
+    },
+    {
+     "number": 11,
+     "name": "Complete job",
+     "status": "completed",
+     "conclusion": "success"
+    }
+   ]
+  },
+  {
+   "id": 124799281327,
+   "run_id": 41290042490,
+   "name": "Test (Rust)",
+   "status": "completed",
+   "conclusion": "success",
+   "labels": [
+    "ubuntu-24.04"
+   ],
+   "runner_name": "GitHub Actions 1000072579",
+   "html_url": "https://github.com/mmogr/gglib/actions/runs/41290042490/job/124799281327",
+   "created_at": "2026-11-01T09:43:47Z",
+   "started_at": "2026-11-01T09:43:48Z",
+   "completed_at": "2026-11-01T09:09:16Z",
+   "steps": [
+    {
+     "number": 1,
+     "name": "Set up job",
+     "status": "completed",
+     "conclusion": "success"
+    },
+    {
+     "number": 2,
+     "name": "Checkout repository",
+     "status": "completed",
+     "conclusion": "success"
+    },
+    {
+     "number": 3,
+     "name": "Rust prelude",
+     "status": "completed",
+     "conclusion": "success"
+    },
+    {
+     "number": 4,
+     "name": "Lockfile guard",
+     "status": "completed",
+     "conclusion": "success"
+    },
+    {
+     "number": 5,
+     "name": "Setup Node.js",
+     "status": "completed",
+     "conclusion": "success"
+    },
+    {
+     "number": 6,
+     "name": "Build Web UI",
+     "status": "completed",
+     "conclusion": "success"
+    },
+    {
+     "number": 7,
+     "name": "Build test binaries",
+     "status": "completed",
+     "conclusion": "success"
+    },
+    {
+     "number": 8,
+     "name": "Run Rust tests",
+     "status": "completed",
+     "conclusion": "success"
+    },
+    {
+     "number": 9,
+     "name": "Test the download helper",
+     "status": "completed",
+     "conclusion": "success"
+    },
+    {
+     "number": 10,
+     "name": "Split test output per crate",
+     "status": "completed",
+     "conclusion": "success"
+    },
+    {
+     "number": 11,
+     "name": "Upload test results",
+     "status": "completed",
+     "conclusion": "success"
+    },
+    {
+     "number": 20,
+     "name": "Post Setup Node.js",
+     "status": "completed",
+     "conclusion": "success"
+    },
+    {
+     "number": 21,
+     "name": "Post Rust prelude",
+     "status": "completed",
+     "conclusion": "success"
+    },
+    {
+     "number": 22,
+     "name": "Post Checkout repository",
+     "status": "completed",
+     "conclusion": "success"
+    },
+    {
+     "number": 23,
+     "name": "Complete job",
+     "status": "completed",
+     "conclusion": "success"
+    }
+   ]
+  },
+  {
+   "id": 124799281329,
+   "run_id": 41290042490,
+   "name": "Enforce Architecture",
+   "status": "completed",
+   "conclusion": "success",
+   "labels": [
+    "ubuntu-24.04"
+   ],
+   "runner_name": "GitHub Actions 1000072581",
+   "html_url": "https://github.com/mmogr/gglib/actions/runs/41290042490/job/124799281329",
+   "created_at": "2026-11-01T09:43:47Z",
+   "started_at": "2026-11-01T09:43:49Z",
+   "completed_at": "2026-11-01T09:44:02Z",
+   "steps": [
+    {
+     "number": 1,
+     "name": "Set up job",
+     "status": "completed",
+     "conclusion": "success"
+    },
+    {
+     "number": 2,
+     "name": "Checkout repository",
+     "status": "completed",
+     "conclusion": "success"
+    },
+    {
+     "number": 3,
+     "name": "Install actionlint",
+     "status": "completed",
+     "conclusion": "success"
+    },
+    {
+     "number": 4,
+     "name": "Run the architecture checks",
+     "status": "completed",
+     "conclusion": "success"
+    },
+    {
+     "number": 8,
+     "name": "Post Checkout repository",
+     "status": "completed",
+     "conclusion": "success"
+    },
+    {
+     "number": 9,
+     "name": "Complete job",
+     "status": "completed",
+     "conclusion": "success"
+    }
+   ]
+  },
+  {
+   "id": 124799281370,
+   "run_id": 41290042490,
+   "name": "Format",
+   "status": "completed",
+   "conclusion": "success",
+   "labels": [
+    "ubuntu-24.04"
+   ],
+   "runner_name": "GitHub Actions 1000072582",
+   "html_url": "https://github.com/mmogr/gglib/actions/runs/41290042490/job/124799281370",
+   "created_at": "2026-11-01T09:43:47Z",
+   "started_at": "2026-11-01T09:43:48Z",
+   "completed_at": "2026-11-01T09:44:17Z",
+   "steps": [
+    {
+     "number": 1,
+     "name": "Set up job",
+     "status": "completed",
+     "conclusion": "success"
+    },
+    {
+     "number": 2,
+     "name": "Checkout repository",
+     "status": "completed",
+     "conclusion": "success"
+    },
+    {
+     "number": 3,
+     "name": "Install Rust toolchain",
+     "status": "completed",
+     "conclusion": "success"
+    },
+    {
+     "number": 4,
+     "name": "Check formatting",
+     "status": "completed",
+     "conclusion": "success"
+    },
+    {
+     "number": 8,
+     "name": "Post Checkout repository",
+     "status": "completed",
+     "conclusion": "success"
+    },
+    {
+     "number": 9,
+     "name": "Complete job",
+     "status": "completed",
+     "conclusion": "success"
+    }
+   ]
+  },
+  {
+   "id": 124799281383,
+   "run_id": 41290042490,
+   "name": "Test (Frontend)",
+   "status": "completed",
+   "conclusion": "success",
+   "labels": [
+    "ubuntu-24.04"
+   ],
+   "runner_name": "GitHub Actions 1000072578",
+   "html_url": "https://github.com/mmogr/gglib/actions/runs/41290042490/job/124799281383",
+   "created_at": "2026-11-01T09:43:47Z",
+   "started_at": "2026-11-01T09:43:48Z",
+   "completed_at": "2026-11-01T09:46:51Z",
+   "steps": [
+    {
+     "number": 1,
+     "name": "Set up job",
+     "status": "completed",
+     "conclusion": "success"
+    },
+    {
+     "number": 2,
+     "name": "Checkout repository",
+     "status": "completed",
+     "conclusion": "success"
+    },
+    {
+     "number": 3,
+     "name": "Setup Node.js",
+     "status": "completed",
+     "conclusion": "success"
+    },
+    {
+     "number": 4,
+     "name": "Install dependencies",
+     "status": "completed",
+     "conclusion": "success"
+    },
+    {
+     "number": 5,
+     "name": "Check for dead files and undeclared dependencies",
+     "status": "completed",
+     "conclusion": "success"
+    },
+    {
+     "number": 6,
+     "name": "Run TypeScript tests",
+     "status": "completed",
+     "conclusion": "success"
+    },
+    {
+     "number": 7,
+     "name": "Upload test results",
+     "status": "completed",
+     "conclusion": "success"
+    },
+    {
+     "number": 13,
+     "name": "Post Setup Node.js",
+     "status": "completed",
+     "conclusion": "success"
+    },
+    {
+     "number": 14,
+     "name": "Post Checkout repository",
+     "status": "completed",
+     "conclusion": "success"
+    },
+    {
+     "number": 15,
+     "name": "Complete job",
+     "status": "completed",
+     "conclusion": "success"
+    }
+   ]
+  },
+  {
+   "id": 124799281608,
+   "run_id": 41290042490,
+   "name": "ADR criterion moved",
+   "status": "completed",
+   "conclusion": "success",
+   "labels": [
+    "ubuntu-24.04"
+   ],
+   "runner_name": "GitHub Actions 1000072593",
+   "html_url": "https://github.com/mmogr/gglib/actions/runs/41290042490/job/124799281608",
+   "created_at": "2026-11-01T09:43:47Z",
+   "started_at": "2026-11-01T09:43:49Z",
+   "completed_at": "2026-11-01T09:43:59Z",
+   "steps": [
+    {
+     "number": 1,
+     "name": "Set up job",
+     "status": "completed",
+     "conclusion": "success"
+    },
+    {
+     "number": 2,
+     "name": "Checkout repository",
+     "status": "completed",
+     "conclusion": "success"
+    },
+    {
+     "number": 3,
+     "name": "Check each ADR reading against its approval",
+     "status": "completed",
+     "conclusion": "success"
+    },
+    {
+     "number": 6,
+     "name": "Post Checkout repository",
+     "status": "completed",
+     "conclusion": "success"
+    },
+    {
+     "number": 7,
+     "name": "Complete job",
+     "status": "completed",
+     "conclusion": "success"
+    }
+   ]
+  },
+  {
+   "id": 124799370909,
+   "run_id": 41290042490,
+   "name": "iOS Check",
+   "status": "completed",
+   "conclusion": "success",
+   "labels": [
+    "macos-26"
+   ],
+   "runner_name": "GitHub Actions 1000072609",
+   "html_url": "https://github.com/mmogr/gglib/actions/runs/41290042490/job/124799370909",
+   "created_at": "2026-11-01T09:44:13Z",
+   "started_at": "2026-11-01T09:50:47Z",
+   "completed_at": "2026-11-01T09:51:55Z",
+   "steps": [
+    {
+     "number": 1,
+     "name": "Set up job",
+     "status": "completed",
+     "conclusion": "success"
+    },
+    {
+     "number": 2,
+     "name": "Checkout repository",
+     "status": "completed",
+     "conclusion": "success"
+    },
+    {
+     "number": 3,
+     "name": "Rust prelude",
+     "status": "completed",
+     "conclusion": "success"
+    },
+    {
+     "number": 4,
+     "name": "Check the phone crates for aarch64-apple-ios",
+     "status": "completed",
+     "conclusion": "success"
+    },
+    {
+     "number": 7,
+     "name": "Post Rust prelude",
+     "status": "completed",
+     "conclusion": "success"
+    },
+    {
+     "number": 8,
+     "name": "Post Checkout repository",
+     "status": "completed",
+     "conclusion": "success"
+    },
+    {
+     "number": 9,
+     "name": "Complete job",
+     "status": "completed",
+     "conclusion": "success"
+    }
+   ]
+  },
+  {
+   "id": 124799372121,
+   "run_id": 41290042490,
+   "name": "Phone Engine on llama.cpp (macOS)",
+   "status": "completed",
+   "conclusion": "skipped",
+   "labels": [
+    "macos-26"
+   ],
+   "runner_name": null,
+   "html_url": "https://github.com/mmogr/gglib/actions/runs/41290042490/job/124799372121",
+   "created_at": "2026-11-01T09:44:13Z",
+   "started_at": "2026-11-01T09:44:13Z",
+   "completed_at": "2026-11-01T09:44:13Z",
+   "steps": []
+  },
+  {
+   "id": 124799372265,
+   "run_id": 41290042490,
+   "name": "Swift Framework (macOS)",
+   "status": "completed",
+   "conclusion": "skipped",
+   "labels": [
+    "macos-26"
+   ],
+   "runner_name": null,
+   "html_url": "https://github.com/mmogr/gglib/actions/runs/41290042490/job/124799372265",
+   "created_at": "2026-11-01T09:44:13Z",
+   "started_at": "2026-11-01T09:44:13Z",
+   "completed_at": "2026-11-01T09:44:13Z",
+   "steps": []
+  },
+  {
+   "id": 124802248132,
+   "run_id": 41290042490,
+   "name": "Clippy (x86_64-pc-windows-msvc)",
+   "status": "completed",
+   "conclusion": "success",
+   "labels": [
+    "windows-2022"
+   ],
+   "runner_name": "GitHub Actions 1000072616",
+   "html_url": "https://github.com/mmogr/gglib/actions/runs/41290042490/job/124802248132",
+   "created_at": "2026-11-01T09:58:30Z",
+   "started_at": "2026-11-01T09:58:32Z",
+   "completed_at": "2026-11-01T09:18:22Z",
+   "steps": [
+    {
+     "number": 1,
+     "name": "Set up job",
+     "status": "completed",
+     "conclusion": "success"
+    },
+    {
+     "number": 2,
+     "name": "Checkout repository",
+     "status": "completed",
+     "conclusion": "success"
+    },
+    {
+     "number": 3,
+     "name": "Rust prelude",
+     "status": "completed",
+     "conclusion": "success"
+    },
+    {
+     "number": 4,
+     "name": "Setup Node.js",
+     "status": "completed",
+     "conclusion": "success"
+    },
+    {
+     "number": 5,
+     "name": "Build Web UI",
+     "status": "completed",
+     "conclusion": "success"
+    },
+    {
+     "number": 6,
+     "name": "Run clippy",
+     "status": "completed",
+     "conclusion": "success"
+    },
+    {
+     "number": 10,
+     "name": "Post Setup Node.js",
+     "status": "completed",
+     "conclusion": "success"
+    },
+    {
+     "number": 11,
+     "name": "Post Rust prelude",
+     "status": "completed",
+     "conclusion": "success"
+    },
+    {
+     "number": 12,
+     "name": "Post Checkout repository",
+     "status": "completed",
+     "conclusion": "success"
+    },
+    {
+     "number": 13,
+     "name": "Complete job",
+     "status": "completed",
+     "conclusion": "success"
+    }
+   ]
+  },
+  {
+   "id": 124802248134,
+   "run_id": 41290042490,
+   "name": "CLI Check (aarch64-apple-darwin)",
+   "status": "completed",
+   "conclusion": "success",
+   "labels": [
+    "macos-26"
+   ],
+   "runner_name": "GitHub Actions 1000072626",
+   "html_url": "https://github.com/mmogr/gglib/actions/runs/41290042490/job/124802248134",
+   "created_at": "2026-11-01T09:58:30Z",
+   "started_at": "2026-11-01T09:08:03Z",
+   "completed_at": "2026-11-01T09:29:11Z",
+   "steps": [
+    {
+     "number": 1,
+     "name": "Set up job",
+     "status": "completed",
+     "conclusion": "success"
+    },
+    {
+     "number": 2,
+     "name": "Checkout repository",
+     "status": "completed",
+     "conclusion": "success"
+    },
+    {
+     "number": 3,
+     "name": "Rust prelude",
+     "status": "completed",
+     "conclusion": "success"
+    },
+    {
+     "number": 4,
+     "name": "Check gglib-cli compilation",
+     "status": "completed",
+     "conclusion": "success"
+    },
+    {
+     "number": 5,
+     "name": "Install the pinned engines and the test models",
+     "status": "completed",
+     "conclusion": "success"
+    },
+    {
+     "number": 6,
+     "name": "Save the engines' help and the releases' assets",
+     "status": "completed",
+     "conclusion": "success"
+    },
+    {
+     "number": 7,
+     "name": "Check every flag gglib passes is one the pinned engines take",
+     "status": "completed",
+     "conclusion": "success"
+    },
+    {
+     "number": 8,
+     "name": "Record the pinned llama-server",
+     "status": "completed",
+     "conclusion": "success"
+    },
+    {
+     "number": 9,
+     "name": "Compare with contracts/upstream",
+     "status": "completed",
+     "conclusion": "success"
+    },
+    {
+     "number": 10,
+     "name": "Build or restore llama.xcframework at the pin",
+     "status": "completed",
+     "conclusion": "success"
+    },
+    {
+     "number": 11,
+     "name": "Record the in-process engine",
+     "status": "completed",
+     "conclusion": "success"
+    },
+    {
+     "number": 12,
+     "name": "Compare with contracts/upstream/llama-inproc",
+     "status": "completed",
+     "conclusion": "success"
+    },
+    {
+     "number": 13,
+     "name": "Gather the recordings",
+     "status": "completed",
+     "conclusion": "success"
+    },
+    {
+     "number": 14,
+     "name": "Upload the recordings",
+     "status": "completed",
+     "conclusion": "success"
+    },
+    {
+     "number": 27,
+     "name": "Post Rust prelude",
+     "status": "completed",
+     "conclusion": "success"
+    },
+    {
+     "number": 28,
+     "name": "Post Checkout repository",
+     "status": "completed",
+     "conclusion": "success"
+    },
+    {
+     "number": 29,
+     "name": "Complete job",
+     "status": "completed",
+     "conclusion": "success"
+    }
+   ]
+  },
+  {
+   "id": 124802248164,
+   "run_id": 41290042490,
+   "name": "CLI Check (x86_64-pc-windows-msvc)",
+   "status": "completed",
+   "conclusion": "success",
+   "labels": [
+    "windows-2022"
+   ],
+   "runner_name": "GitHub Actions 1000072617",
+   "html_url": "https://github.com/mmogr/gglib/actions/runs/41290042490/job/124802248164",
+   "created_at": "2026-11-01T09:58:30Z",
+   "started_at": "2026-11-01T09:58:32Z",
+   "completed_at": "2026-11-01T09:21:47Z",
+   "steps": [
+    {
+     "number": 1,
+     "name": "Set up job",
+     "status": "completed",
+     "conclusion": "success"
+    },
+    {
+     "number": 2,
+     "name": "Checkout repository",
+     "status": "completed",
+     "conclusion": "success"
+    },
+    {
+     "number": 3,
+     "name": "Rust prelude",
+     "status": "completed",
+     "conclusion": "success"
+    },
+    {
+     "number": 4,
+     "name": "Check gglib-cli compilation",
+     "status": "completed",
+     "conclusion": "success"
+    },
+    {
+     "number": 5,
+     "name": "Install the pinned engines and the test models",
+     "status": "completed",
+     "conclusion": "skipped"
+    },
+    {
+     "number": 6,
+     "name": "Save the engines' help and the releases' assets",
+     "status": "completed",
+     "conclusion": "skipped"
+    },
+    {
+     "number": 7,
+     "name": "Check every flag gglib passes is one the pinned engines take",
+     "status": "completed",
+     "conclusion": "skipped"
+    },
+    {
+     "number": 8,
+     "name": "Record the pinned llama-server",
+     "status": "completed",
+     "conclusion": "skipped"
+    },
+    {
+     "number": 9,
+     "name": "Compare with contracts/upstream",
+     "status": "completed",
+     "conclusion": "skipped"
+    },
+    {
+     "number": 10,
+     "name": "Build or restore llama.xcframework at the pin",
+     "status": "completed",
+     "conclusion": "skipped"
+    },
+    {
+     "number": 11,
+     "name": "Record the in-process engine",
+     "status": "completed",
+     "conclusion": "skipped"
+    },
+    {
+     "number": 12,
+     "name": "Compare with contracts/upstream/llama-inproc",
+     "status": "completed",
+     "conclusion": "skipped"
+    },
+    {
+     "number": 13,
+     "name": "Gather the recordings",
+     "status": "completed",
+     "conclusion": "skipped"
+    },
+    {
+     "number": 14,
+     "name": "Upload the recordings",
+     "status": "completed",
+     "conclusion": "skipped"
+    },
+    {
+     "number": 27,
+     "name": "Post Rust prelude",
+     "status": "completed",
+     "conclusion": "success"
+    },
+    {
+     "number": 28,
+     "name": "Post Checkout repository",
+     "status": "completed",
+     "conclusion": "success"
+    },
+    {
+     "number": 29,
+     "name": "Complete job",
+     "status": "completed",
+     "conclusion": "success"
+    }
+   ]
+  },
+  {
+   "id": 124802248197,
+   "run_id": 41290042490,
+   "name": "Clippy (aarch64-apple-darwin)",
+   "status": "completed",
+   "conclusion": "success",
+   "labels": [
+    "macos-26"
+   ],
+   "runner_name": "GitHub Actions 1000072638",
+   "html_url": "https://github.com/mmogr/gglib/actions/runs/41290042490/job/124802248197",
+   "created_at": "2026-11-01T09:58:30Z",
+   "started_at": "2026-11-01T09:22:04Z",
+   "completed_at": "2026-11-01T09:36:59Z",
+   "steps": [
+    {
+     "number": 1,
+     "name": "Set up job",
+     "status": "completed",
+     "conclusion": "success"
+    },
+    {
+     "number": 2,
+     "name": "Checkout repository",
+     "status": "completed",
+     "conclusion": "success"
+    },
+    {
+     "number": 3,
+     "name": "Rust prelude",
+     "status": "completed",
+     "conclusion": "success"
+    },
+    {
+     "number": 4,
+     "name": "Setup Node.js",
+     "status": "completed",
+     "conclusion": "success"
+    },
+    {
+     "number": 5,
+     "name": "Build Web UI",
+     "status": "completed",
+     "conclusion": "success"
+    },
+    {
+     "number": 6,
+     "name": "Run clippy",
+     "status": "completed",
+     "conclusion": "success"
+    },
+    {
+     "number": 10,
+     "name": "Post Setup Node.js",
+     "status": "completed",
+     "conclusion": "success"
+    },
+    {
+     "number": 11,
+     "name": "Post Rust prelude",
+     "status": "completed",
+     "conclusion": "success"
+    },
+    {
+     "number": 12,
+     "name": "Post Checkout repository",
+     "status": "completed",
+     "conclusion": "success"
+    },
+    {
+     "number": 13,
+     "name": "Complete job",
+     "status": "completed",
+     "conclusion": "success"
+    }
+   ]
+  },
+  {
+   "id": 124802248210,
+   "run_id": 41290042490,
+   "name": "CLI Check (x86_64-unknown-linux-gnu)",
+   "status": "completed",
+   "conclusion": "success",
+   "labels": [
+    "ubuntu-24.04"
+   ],
+   "runner_name": "GitHub Actions 1000072618",
+   "html_url": "https://github.com/mmogr/gglib/actions/runs/41290042490/job/124802248210",
+   "created_at": "2026-11-01T09:58:30Z",
+   "started_at": "2026-11-01T09:58:32Z",
+   "completed_at": "2026-11-01T09:12:26Z",
+   "steps": [
+    {
+     "number": 1,
+     "name": "Set up job",
+     "status": "completed",
+     "conclusion": "success"
+    },
+    {
+     "number": 2,
+     "name": "Checkout repository",
+     "status": "completed",
+     "conclusion": "success"
+    },
+    {
+     "number": 3,
+     "name": "Rust prelude",
+     "status": "completed",
+     "conclusion": "success"
+    },
+    {
+     "number": 4,
+     "name": "Check gglib-cli compilation",
+     "status": "completed",
+     "conclusion": "success"
+    },
+    {
+     "number": 5,
+     "name": "Install the pinned engines and the test models",
+     "status": "completed",
+     "conclusion": "success"
+    },
+    {
+     "number": 6,
+     "name": "Save the engines' help and the releases' assets",
+     "status": "completed",
+     "conclusion": "success"
+    },
+    {
+     "number": 7,
+     "name": "Check every flag gglib passes is one the pinned engines take",
+     "status": "completed",
+     "conclusion": "success"
+    },
+    {
+     "number": 8,
+     "name": "Record the pinned llama-server",
+     "status": "completed",
+     "conclusion": "success"
+    },
+    {
+     "number": 9,
+     "name": "Compare with contracts/upstream",
+     "status": "completed",
+     "conclusion": "success"
+    },
+    {
+     "number": 10,
+     "name": "Build or restore llama.xcframework at the pin",
+     "status": "completed",
+     "conclusion": "skipped"
+    },
+    {
+     "number": 11,
+     "name": "Record the in-process engine",
+     "status": "completed",
+     "conclusion": "skipped"
+    },
+    {
+     "number": 12,
+     "name": "Compare with contracts/upstream/llama-inproc",
+     "status": "completed",
+     "conclusion": "skipped"
+    },
+    {
+     "number": 13,
+     "name": "Gather the recordings",
+     "status": "completed",
+     "conclusion": "success"
+    },
+    {
+     "number": 14,
+     "name": "Upload the recordings",
+     "status": "completed",
+     "conclusion": "success"
+    },
+    {
+     "number": 27,
+     "name": "Post Rust prelude",
+     "status": "completed",
+     "conclusion": "success"
+    },
+    {
+     "number": 28,
+     "name": "Post Checkout repository",
+     "status": "completed",
+     "conclusion": "success"
+    },
+    {
+     "number": 29,
+     "name": "Complete job",
+     "status": "completed",
+     "conclusion": "success"
+    }
+   ]
+  }
+ ]
+}

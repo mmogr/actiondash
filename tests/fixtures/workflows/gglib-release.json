@@ -1,0 +1,1100 @@
+{
+ "source": "mmogr/gglib run 41288556179, captured 2026-11-01",
+ "run": {
+  "id": 41288556179,
+  "name": "Release",
+  "run_number": 278,
+  "event": "workflow_dispatch",
+  "path": ".github/workflows/release.yml",
+  "head_sha": "fd7009f2e63b9ab84d2aa8ffd24096969962c7ae",
+  "head_branch": "main",
+  "status": "completed",
+  "conclusion": "success",
+  "run_attempt": 1,
+  "workflow_url": "https://api.github.com/repos/mmogr/gglib/actions/workflows/217691068",
+  "created_at": "2026-11-01T09:21:57Z",
+  "run_started_at": "2026-11-01T09:21:57Z",
+  "repoOwner": "mmogr",
+  "repoName": "gglib",
+  "referenced_workflows": []
+ },
+ "files": {
+  "mmogr/gglib/.github/workflows/release.yml@fd7009f2e63b9ab84d2aa8ffd24096969962c7ae": "# Builds a release's assets and publishes them to its GitHub release, then,\n# for a stable version, to the apt, dnf and pacman repositories, the AUR,\n# Homebrew and the docs site.\n#\n# CI's `release` job (release-tag.yml) tags a candidate, and promote.yml a\n# stable version; each makes the release and dispatches this workflow with\n# `tag`. A run of its own, not a part of the CI run, so cancelling CI after\n# the tag cannot leave a release half built. A build that failed is re-run with the same tag:\n#\n#   gh workflow run release.yml --ref main -f tag=v<version>\n#\n# `test_run` builds the dispatched ref instead and keeps every file as a\n# `dryrun-*` artifact; it attests, uploads and deploys nothing.\n\nname: Release\n\non:\n  workflow_dispatch:\n    inputs:\n      tag:\n        description: 'The tag to build and publish, v<version>; CI passes it'\n        required: false\n        default: ''\n        type: string\n      test_run:\n        description: 'Test run: build the ref, keep the files as artifacts, publish nothing'\n        required: false\n        default: false\n        type: boolean\n\npermissions:\n  contents: read\n\n# One run per tag at a time, and never cancelled: a re-dispatch waits for the\n# run before it, then replaces its assets as a whole.\nconcurrency:\n  group: release-${{ inputs.tag || github.ref_name }}\n  cancel-in-progress: false\n\ndefaults:\n  run:\n    # GitHub's default is `bash -e`; this adds pipefail. The Windows steps\n    # that use cmd-style `copy` and 7z's `*` say `shell: pwsh` themselves.\n    shell: bash\n\njobs:\n  meta:\n    name: Read the version\n    runs-on: ubuntu-24.04\n    timeout-minutes: 10\n    outputs:\n      version: ${{ steps.version.outputs.version }}\n      is-prerelease: ${{ steps.version.outputs.is-prerelease }}\n      sha: ${{ steps.version.outputs.sha }}\n      # The prefix of the asset artifacts' names, which `publish` collects.\n      artifacts: ${{ steps.version.outputs.artifacts }}\n    steps:\n      - name: Require a tag or a test run\n        env:\n          TAG: ${{ inputs.tag }}\n          TEST_RUN: ${{ inputs.test_run }}\n        run: |\n          if [ -z \"$TAG\" ] && [ \"$TEST_RUN\" != \"true\" ]; then\n            echo \"::error::give a tag to build and publish (-f tag=v<version>), or -f test_run=true\"\n            exit 1\n          fi\n          # Only a version tag is built: nothing else is checked out, named\n          # or published from here.\n          if [ -n \"$TAG\" ] && ! [[ \"$TAG\" =~ ^v[0-9]+\\.[0-9]+\\.[0-9]+(-[0-9A-Za-z.]+)?$ ]]; then\n            echo \"::error::$TAG is not a version tag (vX.Y.Z or vX.Y.Z-rc.N)\"\n            exit 1\n          fi\n\n      - name: Checkout repository\n        uses: actions/checkout@v7\n        with:\n          ref: ${{ inputs.tag != '' && format('refs/tags/{0}', inputs.tag) || github.sha }}\n          persist-credentials: false\n\n      - name: Get the version\n        id: version\n        env:\n          TAG: ${{ inputs.tag }}\n          TEST_RUN: ${{ inputs.test_run }}\n        run: |\n          VERSION=$(grep -m1 '^version = ' Cargo.toml | sed -E 's/version = \"(.*)\"/\\1/')\n          if [ -n \"$TAG\" ] && [ \"v$VERSION\" != \"$TAG\" ]; then\n            echo \"::error::$TAG's Cargo.toml says $VERSION\"\n            exit 1\n          fi\n          echo \"version=$VERSION\" >> \"$GITHUB_OUTPUT\"\n          echo \"sha=$(git rev-parse HEAD)\" >> \"$GITHUB_OUTPUT\"\n\n          # A prerelease is any version carrying a -alpha, -beta or -rc suffix.\n          if [[ \"$VERSION\" == *\"-alpha\"* ]] || [[ \"$VERSION\" == *\"-beta\"* ]] || [[ \"$VERSION\" == *\"-rc\"* ]]; then\n            echo \"is-prerelease=true\" >> \"$GITHUB_OUTPUT\"\n          else\n            echo \"is-prerelease=false\" >> \"$GITHUB_OUTPUT\"\n          fi\n\n          if [ \"$TEST_RUN\" = \"true\" ]; then\n            echo \"artifacts=dryrun\" >> \"$GITHUB_OUTPUT\"\n            echo \"::notice::Test run of $VERSION at $(git rev-parse --short HEAD): nothing will be published\"\n          else\n            echo \"artifacts=release\" >> \"$GITHUB_OUTPUT\"\n          fi\n\n      # release-tag.yml and promote.yml make the release before they\n      # dispatch; publishing adds assets to it and never creates one.\n      - name: Require the release to exist\n        if: inputs.tag != ''\n        env:\n          GH_TOKEN: ${{ github.token }}\n          TAG: ${{ inputs.tag }}\n        run: |\n          if ! gh release view \"$TAG\" -R \"$GITHUB_REPOSITORY\" > /dev/null; then\n            echo \"::error::there is no release for $TAG. For a candidate, re-run the failed jobs of the CI run that tagged it, which makes the release and dispatches this again; or by hand: gh release create $TAG --title 'Release $TAG' --generate-notes --verify-tag (--prerelease for a candidate, --notes-start-tag <last stable> for a stable version), for a candidate swap the merged release PR's label autorelease: pending for autorelease: tagged, then dispatch again\"\n            exit 1\n          fi\n\n  build:\n    name: Build ${{ matrix.target }}\n    runs-on: ${{ matrix.os }}\n    needs: meta\n    timeout-minutes: 60\n    permissions:\n      contents: read\n      # Signed build provenance for each asset: the OIDC identity and the\n      # attestation it records.\n      id-token: write\n      attestations: write\n    strategy:\n      fail-fast: false\n      matrix:\n        # No macOS leg: `build-gui`'s macOS leg builds the same CLI for the app to\n        # carry, and packages it as this job would.\n        include:\n          # A Linux binary needs at least the glibc of the image it was built on, and the\n          # AppImage also carries that image's WebKitGTK and GLib. So this is the oldest\n          # image gglib supports, pinned: ubuntu-latest moves to 26.04 (glibc 2.43) from\n          # 2026-10-19 (actions/runner-images#14748), and an AppImage built there will not\n          # start on Ubuntu 24.04. Steps below test runner.os, never this label.\n          - target: x86_64-unknown-linux-gnu\n            os: ubuntu-24.04\n          - target: x86_64-pc-windows-msvc\n            os: windows-2022\n\n    steps:\n      - name: Checkout repository\n        uses: actions/checkout@v7\n        with:\n          ref: ${{ needs.meta.outputs.sha }}\n          persist-credentials: false\n\n      # This job builds `-p gglib-cli` and nothing else. The CLI does not\n      # link GTK or WebKit: ci.yml's `cli-cross-os` job compiles it on Linux\n      # with libasound2-dev alone, and gglib-app's job installs its own set.\n      # dpkg-dev provides dpkg-shlibdeps, which computes the CLI .deb's\n      # Depends below. The Rust cache is restored and never saved; the\n      # rust-prelude action says why.\n      - name: Rust prelude\n        uses: ./.github/actions/rust-prelude\n        with:\n          large-packages: \"true\"\n          apt-packages: libasound2-dev pkg-config dpkg-dev\n          shared-key: \"release-${{ matrix.target }}\"\n          save-if: \"false\"\n\n      - name: Cache node_modules\n        uses: actions/cache@v6\n        with:\n          path: node_modules\n          key: ${{ matrix.target }}-node-${{ hashFiles('package.json') }}\n\n      # The key covers every file the bundle's code and markup come from: the\n      # frontend sources, both HTML entry points, the Vite and TypeScript\n      # configs, and the manifest and its lock. Tailwind also scans the rest\n      # of the repository for class names; that is left out on purpose, since\n      # a change there can only add or drop utilities nothing in src/ uses.\n      # Each pattern is plain because hashFiles does not expand braces, so\n      # `src/**/*.{ts,tsx}` would match nothing. A test_run of a branch that\n      # changes any of these files, a lock-only npm update included, rebuilds\n      # the bundle instead of embedding main's.\n      - name: Cache Web UI\n        id: webui-cache\n        uses: actions/cache@v6\n        with:\n          path: web_ui\n          key: ${{ matrix.target }}-webui-${{ hashFiles('src/**', 'index.html', 'tray.html', 'vite.config.ts', 'tsconfig*.json', 'package.json', 'package-lock.json') }}\n\n      - name: Setup Node.js\n        if: steps.webui-cache.outputs.cache-hit != 'true'\n        uses: actions/setup-node@v7\n        with:\n          node-version-file: '.nvmrc'\n          cache: 'npm'\n\n      - name: Build Web UI\n        if: steps.webui-cache.outputs.cache-hit != 'true'\n        run: |\n          npm ci\n          npm run build\n\n      # The dashboard is compiled into the binary now (crates/gglib-axum/src/ui.rs).\n      # A release built from a tree where the frontend step silently failed\n      # would ship an API with no dashboard, and nothing downstream would say\n      # so. Fail here instead.\n      - name: Assert the dashboard is present before it is embedded\n        run: test -f web_ui/index.html\n\n      - name: Build binary\n        run: cargo build --release --target ${{ matrix.target }} -p gglib-cli\n\n      # Everything that ships lands in dist/. One staging directory means the\n      # attest and upload steps take `dist/*` rather than a per-OS list, and\n      # what they take is exactly the release assets — not whatever else is\n      # lying around the checkout.\n      - name: Package binary (Unix)\n        if: matrix.os != 'windows-2022'\n        run: |\n          set -euo pipefail\n          mkdir -p package dist\n          cp target/${{ matrix.target }}/release/gglib package/\n          tar czf dist/gglib-${{ needs.meta.outputs.version }}-${{ matrix.target }}.tar.gz \\\n            -C package gglib\n\n      # Into dist/ with the tarball, so it is hashed, attested and attached to\n      # the release like every other asset. The apt repository is built from\n      # this same file by the `linux-repos` job.\n      - name: Package CLI .deb (Linux)\n        if: runner.os == 'Linux'\n        run: scripts/build_cli_deb.sh target/${{ matrix.target }}/release/gglib ${{ needs.meta.outputs.version }} dist\n\n      - name: Upload .deb for the Linux repositories\n        if: runner.os == 'Linux'\n        uses: actions/upload-artifact@v7\n        with:\n          name: pkg-cli\n          path: dist/*.deb\n          retention-days: 7\n\n      - name: Package binary (Windows)\n        if: matrix.os == 'windows-2022'\n        shell: pwsh\n        run: |\n          mkdir package\n          mkdir dist\n          copy target\\${{ matrix.target }}\\release\\gglib.exe package\\\n          cd package\n          7z a ..\\dist\\gglib-${{ needs.meta.outputs.version }}-${{ matrix.target }}.zip gglib.exe\n          cd ..\n\n      # Binds each artifact's digest to this workflow, commit and runner via\n      # keyless Sigstore signing — no private key to store or leak. Verified by\n      # a user with:\n      #   gh attestation verify <file> --repo ${{ github.repository }}\n      #\n      # This is provenance, not code signing: it does not affect macOS\n      # Gatekeeper or Windows SmartScreen, which still need a Developer ID and\n      # Authenticode respectively.\n      - name: Attest build provenance\n        if: inputs.test_run != true\n        uses: actions/attest-build-provenance@v4\n        with:\n          subject-path: dist/*\n\n      # Every file that ships goes up as an artifact, and `publish` attaches\n      # them all at once. On a test run these `dryrun-*` artifacts are the\n      # result: a dry run's whole purpose is to put the real artifact in\n      # someone's hands before a tag exists. #904 (GUI path resolved against\n      # the CI workspace) and #907 (GUI and CLI could not find each other on\n      # Windows) both reached a tagged release, because neither is visible\n      # until the built binary is run.\n      - name: Upload the assets\n        uses: actions/upload-artifact@v7\n        with:\n          name: ${{ needs.meta.outputs.artifacts }}-cli-${{ matrix.target }}\n          path: dist/*\n          retention-days: 7\n\n  build-gui:\n    name: Build GUI ${{ matrix.target }}\n    runs-on: ${{ matrix.os }}\n    needs: meta\n    timeout-minutes: 75\n    permissions:\n      contents: read\n      id-token: write\n      attestations: write\n    strategy:\n      fail-fast: false\n      matrix:\n        include:\n          # A Linux binary needs at least the glibc of the image it was built on, and the\n          # AppImage also carries that image's WebKitGTK and GLib. So this is the oldest\n          # image gglib supports, pinned: ubuntu-latest moves to 26.04 (glibc 2.43) from\n          # 2026-10-19 (actions/runner-images#14748), and an AppImage built there will not\n          # start on Ubuntu 24.04. Steps below test runner.os, never this label.\n          - target: x86_64-unknown-linux-gnu\n            os: ubuntu-24.04\n          - target: aarch64-apple-darwin\n            os: macos-26\n          - target: x86_64-pc-windows-msvc\n            os: windows-2022\n\n    steps:\n      - name: Checkout repository\n        uses: actions/checkout@v7\n        with:\n          ref: ${{ needs.meta.outputs.sha }}\n          persist-credentials: false\n\n      # Restores the Rust cache only, as in the `build` job.\n      - name: Rust prelude\n        uses: ./.github/actions/rust-prelude\n        with:\n          large-packages: \"true\"\n          apt-packages: >-\n            libwebkit2gtk-4.1-dev\n            libayatana-appindicator3-dev\n            librsvg2-dev\n            patchelf\n            libgtk-3-dev\n            libssl-dev\n            libasound2-dev\n            pkg-config\n            rpm\n          shared-key: \"gui-${{ matrix.target }}\"\n          save-if: \"false\"\n\n      - name: Install Node.js\n        uses: actions/setup-node@v7\n        with:\n          node-version-file: '.nvmrc'\n          cache: 'npm'\n\n      # Previously two OS-specific steps that deleted node_modules and\n      # package-lock.json before `npm install`, to dodge the old npm bug where a\n      # lockfile omitted other platforms' native binaries. The committed lockfile\n      # records every variant of @rolldown/binding, @tailwindcss/oxide,\n      # lightningcss and @tauri-apps/cli for linux/darwin/win32, so `npm ci`\n      # resolves the correct one per runner — and the release build now uses the\n      # same pinned dependency set as every other job.\n      - name: Install frontend dependencies\n        run: npm ci\n\n      # The app launches the CLI beside it and never one from PATH\n      # (src-tauri/src/daemon/launch.rs), so every artifact below has one\n      # there. Built first, with the dashboard it embeds, and copied to where\n      # Tauri's externalBin takes it from: binaries/gglib-<target triple>.\n      - name: Build the CLI the app carries\n        shell: bash\n        run: |\n          set -euo pipefail\n          npm run build\n          test -f web_ui/index.html\n          cargo build --release --target ${{ matrix.target }} -p gglib-cli\n          ext=\"\"\n          if [ \"${{ runner.os }}\" = \"Windows\" ]; then ext=\".exe\"; fi\n          mkdir -p src-tauri/binaries\n          cp \"target/${{ matrix.target }}/release/gglib${ext}\" \\\n            \"src-tauri/binaries/gglib-${{ matrix.target }}${ext}\"\n\n      # The macOS CLI asset, packaged as the `build` job packages the others:\n      # the one binary at the archive's root, under the name the Homebrew\n      # formula and SHA256SUMS expect.\n      - name: Package the CLI (macOS)\n        if: runner.os == 'macOS'\n        run: |\n          set -euo pipefail\n          mkdir -p package dist\n          cp target/${{ matrix.target }}/release/gglib package/\n          tar czf dist/gglib-${{ needs.meta.outputs.version }}-${{ matrix.target }}.tar.gz \\\n            -C package gglib\n\n      # tauri.sidecar.conf.json adds the CLI as an externalBin. It is merged\n      # in here only, not in tauri.conf.json: tauri-build refuses to compile\n      # the app when an externalBin is missing, and every `cargo check` and\n      # clippy run in CI would need a CLI binary built first.\n      #\n      # The deb is the one artifact without it. Tauri installs an externalBin\n      # to /usr/bin/gglib, the very file the CLI's own deb installs, and apt\n      # refuses to install the two together. So the deb depends on the gglib\n      # package of this version instead, which puts the CLI beside\n      # /usr/bin/gglib-app all the same. The rpm and AppImage carry it: there\n      # is no CLI rpm for them to depend on.\n      #\n      # A release candidate's version, 0.26.2-rc.6, suits neither Linux\n      # package as it stands. RPM refuses a `-` in a version, and dpkg reads\n      # everything after it as the Debian revision, which sorts the candidate\n      # after 0.26.2. Tauri gives neither package a version of its own, and\n      # its `version` must be semver, so `0.26.2~rc.6` cannot be passed in. So\n      # the rpm is bundled from the built app with the version split the\n      # Fedora way, Version 0.26.2 and Release 0.rc.6, which sorts before the\n      # release's 0.26.2-1; `tauri bundle` leaves the binary, and the version\n      # it shows, alone. The deb is repacked with the `~` spelling the CLI's\n      # deb uses (build_cli_deb.sh). A stable version keeps its own version in\n      # both, and its rpm the default Release 1.\n      - name: Build Tauri app\n        run: |\n          set -euo pipefail\n          echo \"Building Tauri app for ${{ matrix.target }}\"\n          sidecar=src-tauri/tauri.sidecar.conf.json\n          if [ \"${{ matrix.os }}\" == \"windows-2022\" ]; then\n            npm run tauri:build -- --target ${{ matrix.target }} --bundles nsis --config \"$sidecar\"\n          elif [ \"${{ runner.os }}\" = \"Linux\" ]; then\n            version=\"${{ needs.meta.outputs.version }}\"\n            rpm_args=(--config \"$sidecar\")\n            if [[ \"$version\" == *-* ]]; then\n              base=\"${version%%-*}\"\n              pre=\"${version#*-}\"\n              if [[ ! \"$pre\" =~ ^[A-Za-z0-9.]+$ ]]; then\n                echo \"::error::cannot spell prerelease '$pre' as an rpm release\"\n                exit 1\n              fi\n              rpm_args+=(--config \"{\\\"version\\\":\\\"$base\\\",\\\"bundle\\\":{\\\"linux\\\":{\\\"rpm\\\":{\\\"release\\\":\\\"0.$pre\\\"}}}}\")\n            fi\n            npm run tauri:build -- --target ${{ matrix.target }} --bundles appimage --config \"$sidecar\"\n            npm run tauri:bundle -- --target ${{ matrix.target }} --bundles rpm \"${rpm_args[@]}\"\n            depends=\"{\\\"bundle\\\":{\\\"linux\\\":{\\\"deb\\\":{\\\"depends\\\":[\\\"gglib (= ${version/-/\\~})\\\"]}}}}\"\n            npm run tauri:build -- --target ${{ matrix.target }} --bundles deb --config \"$depends\"\n            if [[ \"$version\" == *-* ]]; then\n              deb=$(find \"target/${{ matrix.target }}/release/bundle/deb\" -maxdepth 1 -name '*.deb' | head -n1)\n              unpacked=\"$RUNNER_TEMP/gui-deb\"\n              dpkg-deb -R \"$deb\" \"$unpacked\"\n              sed -i \"s/^Version: .*/Version: ${version/-/\\~}/\" \"$unpacked/DEBIAN/control\"\n              dpkg-deb --root-owner-group --build \"$unpacked\" \"$deb\" >/dev/null\n            fi\n          else\n            npm run tauri:build -- --target ${{ matrix.target }} --config \"$sidecar\"\n          fi\n        shell: bash\n\n      # Proof, before anything ships, that each artifact has the CLI the app\n      # will look for, and that the deb names the package that supplies it.\n      - name: Check the app carries its CLI (Unix)\n        if: matrix.os != 'windows-2022'\n        shell: bash\n        run: |\n          set -euo pipefail\n          bundle=\"target/${{ matrix.target }}/release/bundle\"\n          if [ \"${{ runner.os }}\" = \"Linux\" ]; then\n            deb=$(find \"$bundle/deb\" -maxdepth 1 -name '*.deb' | head -n1)\n            dpkg-deb --field \"$deb\" Depends | tee /dev/stderr | grep -q 'gglib (= '\n            version=\"${{ needs.meta.outputs.version }}\"\n            deb_version=$(dpkg-deb --field \"$deb\" Version)\n            echo \"deb Version: $deb_version\"\n            test \"$deb_version\" = \"${version/-/\\~}\"\n            if dpkg-deb --contents \"$deb\" | grep -q '/usr/bin/gglib$'; then\n              echo \"::error::the deb carries /usr/bin/gglib, which the CLI's deb owns\"\n              exit 1\n            fi\n            rpm=$(find \"$bundle/rpm\" -maxdepth 1 -name '*.rpm' | head -n1)\n            rpm -qlp \"$rpm\" | grep -qx '/usr/bin/gglib'\n            want_rpm=\"$version-1\"\n            if [[ \"$version\" == *-* ]]; then want_rpm=\"${version%%-*}-0.${version#*-}\"; fi\n            rpm_version=$(rpm -qp --qf '%{VERSION}-%{RELEASE}' \"$rpm\")\n            echo \"rpm Version-Release: $rpm_version\"\n            test \"$rpm_version\" = \"$want_rpm\"\n            appimage=$(find \"$bundle/appimage\" -maxdepth 1 -name '*.AppImage' | head -n1)\n            chmod +x \"$appimage\"\n            ( cd \"$RUNNER_TEMP\" && \"$GITHUB_WORKSPACE/$appimage\" --appimage-extract >/dev/null )\n            test -x \"$RUNNER_TEMP/squashfs-root/usr/bin/gglib\"\n          else\n            test -x \"$bundle/macos/GGLib GUI.app/Contents/MacOS/gglib\"\n          fi\n        \n      - name: Debug build output (Windows)\n        if: matrix.os == 'windows-2022'\n        run: |\n          Write-Output \"=== BUILD - Checking output structure ===\"\n          Write-Output \"Contents of target:\"\n          if (Test-Path target/) {\n            Get-ChildItem -Force target/\n          } else {\n            Write-Output \"No target directory found\"\n          }\n          Write-Output \"Contents of target/release:\"\n          if (Test-Path target/release/) {\n            Get-ChildItem -Force target/release/\n          } else {\n            Write-Output \"No release directory found\"\n          }\n          Write-Output \"Contents of target/release/bundle:\"\n          if (Test-Path target/release/bundle/) {\n            Get-ChildItem -Force target/release/bundle/\n          } else {\n            Write-Output \"No bundle directory found\"\n          }\n          Write-Output \"Searching for all executables:\"\n          if (Test-Path target/) {\n            Get-ChildItem -Recurse -Name \"gglib-app*\" target/\n          } else {\n            Write-Output \"No gglib-app executables found\"\n          }\n        shell: pwsh\n\n      - name: Debug build output (Unix)\n        if: matrix.os != 'windows-2022'\n        run: |\n          echo \"=== BUILD - Checking output structure ===\"\n          echo \"Contents of target:\"\n          if [ -d \"target/\" ]; then\n            ls -la target/\n          else\n            echo \"No target directory found\"\n          fi\n          echo \"Contents of target/release:\"\n          if [ -d \"target/release/\" ]; then\n            ls -la target/release/\n          else\n            echo \"No release directory found\"\n          fi\n          echo \"Contents of target/release/bundle:\"\n          if [ -d \"target/release/bundle/\" ]; then\n            ls -la target/release/bundle/\n          else\n            echo \"No bundle directory found\"\n          fi\n          echo \"Searching for all .app bundles:\"\n          find target -name \"*.app\" -type d 2>/dev/null || echo \"No .app bundles found\"\n          echo \"Searching for all executables:\"\n          find target -name \"gglib-app*\" -type f 2>/dev/null || echo \"No gglib-app executables found\"\n\n      - name: Prepare GUI binary for packaging (Linux)\n        if: runner.os == 'Linux'\n        run: |\n          mkdir -p gui-release\n          cp target/${{ matrix.target }}/release/gglib-app gui-release/\n          cp target/${{ matrix.target }}/release/gglib gui-release/\n          chmod +x gui-release/gglib-app gui-release/gglib\n\n      - name: Prepare GUI binary for packaging (macOS)\n        if: startsWith(matrix.os, 'macos')\n        run: |\n          mkdir -p gui-release\n          \n          echo \"Checking build output structure...\"\n          echo \"Contents of target/${{ matrix.target }}/release:\"\n          if [ -d \"target/${{ matrix.target }}/release/\" ]; then\n            ls -la \"target/${{ matrix.target }}/release/\"\n          else\n            echo \"No target-specific release directory found\"\n          fi\n          \n          # First check for the bare binary (always created)\n          if [ -f \"target/${{ matrix.target }}/release/gglib-app\" ]; then\n            echo \"Found bare binary in target-specific directory, copying...\"\n            cp \"target/${{ matrix.target }}/release/gglib-app\" \"target/${{ matrix.target }}/release/gglib\" gui-release/\n            chmod +x gui-release/gglib-app gui-release/gglib\n          else\n            echo \"ERROR: Bare binary not found! target/${{ matrix.target }}/release/gglib-app does not exist.\"\n            exit 1\n          fi\n          \n          # Try to copy the .app bundle if it exists (only created for native builds, not cross-compilation)\n          if [ -d \"target/${{ matrix.target }}/release/bundle/macos/GGLib GUI.app\" ]; then\n            echo \"Found .app bundle in target-specific directory, copying...\"\n            cp -r \"target/${{ matrix.target }}/release/bundle/macos/GGLib GUI.app\" gui-release/\n            \n            # Copy the install script and README for macOS users\n            echo \"Copying macOS install script and README...\"\n            cp scripts/macos-install.command gui-release/\n            cp scripts/MACOS-README.txt gui-release/\n            chmod +x gui-release/macos-install.command\n          else\n            echo \"Note: No .app bundle found (expected for cross-compilation). Using bare binary only.\"\n          fi\n\n      - name: Prepare GUI binary for packaging (Windows)\n        if: matrix.os == 'windows-2022'\n        shell: pwsh\n        run: |\n          mkdir gui-release\n          copy target\\${{ matrix.target }}\\release\\gglib-app.exe gui-release\\\n          copy target\\${{ matrix.target }}\\release\\gglib.exe gui-release\\\n\n      # The installers below were built by the step above and then discarded:\n      # nothing copied them out of target/, so no release has ever carried an\n      # AppImage, deb, rpm, dmg or NSIS setup. The Windows branch looked for\n      # `bundle\\msi\\*.msi` while the build asked for `--bundles nsis`, so it\n      # could never match.\n      #\n      # tauri-bundler derives these filenames from productName (\"GGLib GUI\"),\n      # which contains a space, and the exact separators and casing it applies\n      # per format are decided inside the bundler. Glob for each one and rename\n      # to a predictable, space-free asset name instead of hard-coding what we\n      # guess it emits — and fail loudly on no match, because a silent no-match\n      # is precisely the bug being fixed here.\n      - name: Stage GUI installers (Unix)\n        if: matrix.os != 'windows-2022'\n        shell: bash\n        run: |\n          set -euo pipefail\n          mkdir -p dist\n          bundle=\"target/${{ matrix.target }}/release/bundle\"\n          stem=\"gglib-gui-${{ needs.meta.outputs.version }}-${{ matrix.target }}\"\n\n          stage() {\n            dir=\"$bundle/$1\"; ext=\"$2\"; dest=\"dist/${stem}.$2\"\n            found=$(find \"$dir\" -maxdepth 1 -type f -name \"*.${ext}\" 2>/dev/null | sort | head -n1)\n            if [ -z \"$found\" ]; then\n              echo \"::error::no *.${ext} in ${dir} — bundler did not produce it, or renamed it\"\n              exit 1\n            fi\n            mv \"$found\" \"$dest\"\n            echo \"staged $(basename \"$found\") -> $(basename \"$dest\")\"\n          }\n\n          if [ \"${{ runner.os }}\" = \"Linux\" ]; then\n            stage appimage AppImage\n            stage deb deb\n            stage rpm rpm\n          else\n            stage dmg dmg\n          fi\n\n      - name: Upload .deb and .rpm for the Linux repositories\n        if: runner.os == 'Linux'\n        uses: actions/upload-artifact@v7\n        with:\n          name: pkg-gui\n          path: |\n            dist/*.deb\n            dist/*.rpm\n          retention-days: 7\n\n      - name: Stage GUI installers (Windows)\n        if: matrix.os == 'windows-2022'\n        shell: bash\n        run: |\n          set -euo pipefail\n          mkdir -p dist\n          bundle=\"target/${{ matrix.target }}/release/bundle\"\n          dest=\"dist/gglib-gui-${{ needs.meta.outputs.version }}-${{ matrix.target }}-setup.exe\"\n          found=$(find \"$bundle/nsis\" -maxdepth 1 -type f -name \"*.exe\" 2>/dev/null | sort | head -n1)\n          if [ -z \"$found\" ]; then\n            echo \"::error::no NSIS installer in ${bundle}/nsis — bundler did not produce it, or renamed it\"\n            exit 1\n          fi\n          mv \"$found\" \"$dest\"\n          echo \"staged $(basename \"$found\") -> $(basename \"$dest\")\"\n\n      - name: Package GUI archive (Unix)\n        if: matrix.os != 'windows-2022'\n        run: |\n          set -euo pipefail\n          mkdir -p dist\n          tar czf dist/gglib-gui-${{ needs.meta.outputs.version }}-${{ matrix.target }}.tar.gz \\\n            -C gui-release .\n\n      - name: Package GUI archive (Windows)\n        if: matrix.os == 'windows-2022'\n        shell: pwsh\n        run: |\n          cd gui-release\n          7z a ..\\dist\\gglib-gui-${{ needs.meta.outputs.version }}-${{ matrix.target }}.zip *\n          cd ..\n\n      # Binds each artifact's digest to this workflow, commit and runner via\n      # keyless Sigstore signing — no private key to store or leak. Verified by\n      # a user with:\n      #   gh attestation verify <file> --repo ${{ github.repository }}\n      #\n      # This is provenance, not code signing: it does not affect macOS\n      # Gatekeeper or Windows SmartScreen, which still need a Developer ID and\n      # Authenticode respectively.\n      - name: Attest build provenance\n        if: inputs.test_run != true\n        uses: actions/attest-build-provenance@v4\n        with:\n          subject-path: dist/*\n\n      # As in the `build` job. On a dry run the installers are the thing most\n      # worth having, since #906 shipped a release whose installers were built\n      # and then never attached.\n      - name: Upload the assets\n        uses: actions/upload-artifact@v7\n        with:\n          name: ${{ needs.meta.outputs.artifacts }}-gui-${{ matrix.target }}\n          path: dist/*\n          retention-days: 7\n\n  # gglib-ffi as an app links it, attached to the release as three assets:\n  # GglibFFI-<version>.xcframework.zip, a dynamic framework per slice (iOS\n  # device, iOS simulator, macOS); GglibFFI-swift-<version>.zip, the Swift\n  # uniffi generates for it with the header, modulemap and a binding.json\n  # naming the gglib version, uniffi version and llama.cpp pin; and\n  # llama-<version>.xcframework.zip, llama.cpp's own llama.xcframework at the\n  # pin, which every GglibFFI slice links and an app embeds beside it.\n  # scripts/apple/package-release.sh says what each holds and how it is\n  # checked. An app pins each framework archive by URL and by the checksum\n  # SHA256SUMS lists for it, which is what `swift package compute-checksum`\n  # reports.\n  #\n  # llama.xcframework comes from the llama-xcframework action, restored from\n  # the cache ci.yml's `phone-llama` keeps for the pin and the runner's\n  # Xcode, or built; the smoke test serves the recorder's tinygemma3, fetched\n  # by the pinned-engines action.\n  #\n  # The runner's default Xcode, as ci.yml's `ffi-apple` and ggchat's CI use:\n  # the framework shipped is the one an app built with that Xcode links.\n  # Optimised, with the workspace's release profile as it stands.\n  build-phone:\n    name: Build Swift framework\n    runs-on: macos-26\n    needs: meta\n    permissions:\n      contents: read\n      id-token: write\n      attestations: write\n    # A cold optimised build of three slices, then two Swift packages, and\n    # llama.cpp's three builds when its cache misses. The ceiling is for a\n    # hang, not for a slow runner.\n    timeout-minutes: 120\n    steps:\n      - name: Checkout repository\n        uses: actions/checkout@v7\n        with:\n          ref: ${{ needs.meta.outputs.sha }}\n          persist-credentials: false\n\n      # rust-toolchain.toml lists the three Apple targets, so the toolchain\n      # step installs them. Restores the Rust cache only, as in the `build`\n      # job.\n      - name: Rust prelude\n        uses: ./.github/actions/rust-prelude\n        with:\n          shared-key: \"release-phone\"\n          save-if: \"false\"\n\n      # After the Rust cache, never before it: rust-cache pre-cleans target/\n      # when it restores another Cargo.lock's entry, and that clean deletes\n      # every file under target/ outside a profile's own folders, the\n      # framework in target/apple included. A version bump is such a run.\n      - name: Build or restore llama.xcframework at the pin\n        uses: ./.github/actions/llama-xcframework\n\n      # Which Xcode built the shipped bytes, in the log of the run that\n      # built them.\n      - name: Xcode and Swift\n        run: |\n          xcodebuild -version\n          swift --version\n\n      # The pinned-engines action without its engines, as ci.yml's\n      # `ffi-apple` runs it. The models' entry is the one cache a release may\n      # save, under the key CI saves, and only when CI has not saved it.\n      - name: Fetch the test models\n        id: models\n        uses: ./.github/actions/pinned-engines\n        with:\n          target: aarch64-apple-darwin\n          engines: \"false\"\n\n      - name: Build the XCFramework and check each slice\n        run: make ffi-xcframework\n\n      - name: The Swift binding links and calls the macOS slice, and its engine streams a reply\n        env:\n          GGLIB_ENGINE_MODELS_DIR: ${{ steps.models.outputs.models }}\n        run: make ffi-smoke\n\n      # Into dist/, which holds nothing else on this runner, so the steps\n      # below attest and upload exactly the three archives.\n      - name: Package the frameworks and the Swift binding\n        env:\n          VERSION: ${{ needs.meta.outputs.version }}\n        run: scripts/apple/package-release.sh \"$VERSION\" dist\n\n      # Provenance, as in the `build` job; it is not code signing, and Xcode\n      # signs the framework when it embeds it in an app.\n      - name: Attest build provenance\n        if: inputs.test_run != true\n        uses: actions/attest-build-provenance@v4\n        with:\n          subject-path: dist/*\n\n      # As in the `build` job: a dry run's archives are the thing to try in\n      # an app before a tag exists.\n      - name: Upload the assets\n        uses: actions/upload-artifact@v7\n        with:\n          name: ${{ needs.meta.outputs.artifacts }}-phone\n          path: dist/*\n          retention-days: 7\n\n  # The only job that writes to the release, and it runs only once every\n  # build has succeeded, so a release carries all its assets or none of this\n  # run's. A re-dispatch replaces them as a whole: SHA256SUMS goes first, so\n  # no download can check against a manifest from the run before, and comes\n  # back last, once every asset it lists is up.\n  #\n  # On a test run this collects and hashes the `dryrun-*` artifacts, so the\n  # manifest is built and checked before a real release needs it.\n  publish:\n    name: Publish the release\n    runs-on: ubuntu-24.04\n    needs: [meta, build, build-gui, build-phone]\n    timeout-minutes: 15\n    permissions:\n      contents: write\n    steps:\n      # Each artifact into a folder of its own, so two that carry a file of\n      # the same name are caught below instead of one overwriting the other.\n      - name: Collect the assets\n        uses: actions/download-artifact@v8\n        with:\n          pattern: ${{ needs.meta.outputs.artifacts }}-*\n          path: collected\n\n      - name: Build SHA256SUMS\n        run: |\n          set -euo pipefail\n          mkdir assets\n          dupes=$(find collected -type f -exec basename {} \\; | LC_ALL=C sort | uniq -d)\n          if [ -n \"$dupes\" ]; then\n            echo \"::error::more than one build produced: $dupes\"\n            exit 1\n          fi\n          find collected -type f -exec mv {} assets/ \\;\n          # LC_ALL=C so the ordering is byte-wise and reproducible, whatever\n          # order the matrix legs finished in.\n          ( cd assets && sha256sum -- * ) | LC_ALL=C sort -k2 > SHA256SUMS\n          echo \"::group::SHA256SUMS\"; cat SHA256SUMS; echo \"::endgroup::\"\n\n          # Canonical form only: 64 lowercase hex, two spaces, then a bare\n          # filename carrying no directory component and no leading whitespace,\n          # so the manifest stays diffable between releases and a consumer\n          # splitting on whitespace gets the name it expects.\n          if grep -nvE '^[0-9a-f]{64}  [^/[:space:]][^/]*$' SHA256SUMS; then\n            echo \"::error::non-canonical, path-bearing or leading-space line in SHA256SUMS\"\n            exit 1\n          fi\n\n      - name: Upload the assets, SHA256SUMS last\n        if: inputs.test_run != true\n        env:\n          GH_TOKEN: ${{ github.token }}\n          GH_REPO: ${{ github.repository }}\n          TAG: ${{ inputs.tag }}\n        run: |\n          set -euo pipefail\n          if [ -n \"$(gh release view \"$TAG\" --json assets --jq '.assets[] | select(.name == \"SHA256SUMS\") | .name')\" ]; then\n            gh release delete-asset \"$TAG\" SHA256SUMS --yes\n          fi\n          gh release upload \"$TAG\" assets/* --clobber\n          gh release upload \"$TAG\" SHA256SUMS --clobber\n\n  # gglib-bin and gglib-gui-bin, rendered from packaging/aur with the\n  # release's own SHA256SUMS and built. The same packages go two ways: the\n  # `aur` job pushes their PKGBUILD and .SRCINFO, and `linux-repos` serves\n  # the built packages from the pacman repository.\n  #\n  # Runs on Arch so makepkg itself writes .SRCINFO and verifies every source\n  # against its checksum by downloading it from the release. It holds no\n  # secret, so it needs no approval; what it builds reaches users only\n  # through jobs that do.\n  arch-packages:\n    name: Build Arch packages\n    runs-on: ubuntu-24.04\n    needs: [meta, publish]\n    if: needs.meta.outputs.is-prerelease == 'false' && inputs.test_run != true\n    timeout-minutes: 20\n    permissions:\n      contents: read\n    container: archlinux:base-devel\n    env:\n      VERSION: ${{ needs.meta.outputs.version }}\n    steps:\n      - name: Checkout repository\n        uses: actions/checkout@v7\n        with:\n          ref: ${{ needs.meta.outputs.sha }}\n          persist-credentials: false\n\n      # Read back from the release, which is what a user's download is\n      # checked against.\n      - name: Fetch SHA256SUMS\n        run: curl -fsSL -o SHA256SUMS \"https://github.com/${{ github.repository }}/releases/download/v${VERSION}/SHA256SUMS\"\n\n      # --nodeps: the packages repackage built binaries, so building them\n      # needs none of the desktop libraries they depend on at run time.\n      # PKGDEST collects both packages in one directory for the repository.\n      - name: Render, verify and build the packages\n        run: |\n          set -euo pipefail\n          scripts/render_aur.sh \"$VERSION\" SHA256SUMS aur\n          # makepkg refuses to run as root.\n          useradd -m builder\n          mkdir arch\n          chown -R builder aur arch\n          for dir in aur/*/; do\n            su builder -c \"cd '$dir' && makepkg --verifysource --noconfirm && makepkg --printsrcinfo > .SRCINFO\"\n            echo \"::group::$(basename \"$dir\")/.SRCINFO\"; cat \"$dir/.SRCINFO\"; echo \"::endgroup::\"\n            su builder -c \"cd '$dir' && PACKAGER='mmogr <172192206+mmogr@users.noreply.github.com>' PKGDEST='$PWD/arch' makepkg --nodeps --noconfirm\"\n          done\n\n      # Two artifacts, so each job downloads only what it uses. Seven days,\n      # as for the .deb and .rpm ones: the jobs that read them wait for an\n      # approval.\n      - name: Upload the PKGBUILDs for the AUR\n        uses: actions/upload-artifact@v7\n        with:\n          name: aur-pkgbuilds\n          path: |\n            aur/*/PKGBUILD\n            aur/*/.SRCINFO\n          include-hidden-files: true\n          retention-days: 7\n\n      - name: Upload the packages for the pacman repository\n        uses: actions/upload-artifact@v7\n        with:\n          name: arch-packages\n          path: arch/*.pkg.tar.zst\n          retention-days: 7\n\n  # Everything past the GitHub release that a user's package manager reads\n  # waits for a person. Each channel is its own environment with required\n  # reviewers (Settings > Environments): `apt`, `aur` and `homebrew`. `apt`\n  # holds the one signing key the apt, dnf and pacman repositories share, so\n  # it guards all three. They wait together, so one \"Review deployments\"\n  # dialog shows a box per channel; tick them all and approve once, or hold\n  # one back. Each environment's url is what the repository's Deployments\n  # sidebar links to: the README's install section for the repositories and\n  # the AUR (the repository trees have no index page, and the AUR page exists\n  # only after the first push), the tap for Homebrew.\n  #\n  # Stable releases only. A release candidate gets its GitHub prerelease and\n  # stops; nothing it builds reaches the package repositories or the docs.\n  # That is what lets RCs be cut as often as wanted.\n  #\n  # A channel's secret belongs in its environment's secrets, so a job reads\n  # only its own key. A repository secret of the same name works too, but\n  # every job can read it, and an environment secret overrides it.\n  #\n  # An environment a job names is created on first use with no reviewers, so\n  # all three must exist, with reviewers, before a stable release runs.\n  # The apt, dnf and pacman repositories, served from the Pages site beside\n  # install.sh and the one key that signs them all. deploy-docs publishes\n  # what this uploads.\n  linux-repos:\n    name: Build Linux package repositories\n    runs-on: ubuntu-24.04\n    needs: [meta, arch-packages]\n    if: needs.meta.outputs.is-prerelease == 'false' && inputs.test_run != true\n    timeout-minutes: 30\n    permissions:\n      contents: read\n    environment:\n      name: apt\n      url: https://github.com/mmogr/gglib#linux-debian-ubuntu-arch-fedora\n    steps:\n      - name: Checkout repository\n        uses: actions/checkout@v7\n        with:\n          ref: ${{ needs.meta.outputs.sha }}\n          persist-credentials: false\n\n      - name: Install apt-ftparchive and createrepo_c\n        run: |\n          sudo apt-get update\n          sudo apt-get install -y apt-utils createrepo-c\n\n      - name: Collect .deb and .rpm packages\n        uses: actions/download-artifact@v8\n        with:\n          pattern: pkg-*\n          merge-multiple: true\n          path: pkgs\n\n      - name: Collect Arch packages\n        uses: actions/download-artifact@v8\n        with:\n          name: arch-packages\n          path: arch\n\n      # The key is generated once, off CI, and stored as the\n      # APT_GPG_PRIVATE_KEY secret (armored); APT_GPG_PASSPHRASE only if it\n      # has one. Its public half ships with the repositories on every build.\n      # The secrets keep the names they had when they signed apt alone.\n      - name: Import signing key\n        env:\n          APT_GPG_PRIVATE_KEY: ${{ secrets.APT_GPG_PRIVATE_KEY }}\n        run: |\n          if [ -z \"$APT_GPG_PRIVATE_KEY\" ]; then\n            echo \"::error::APT_GPG_PRIVATE_KEY is not set; the Linux repositories cannot be signed\"\n            exit 1\n          fi\n          printf '%s\\n' \"$APT_GPG_PRIVATE_KEY\" | gpg --batch --import\n\n      - name: Build and sign the repositories\n        env:\n          REPO_GPG_PASSPHRASE: ${{ secrets.APT_GPG_PASSPHRASE }}\n        run: scripts/build_linux_repos.sh pkgs arch site\n\n      # A broken repository or installer fails here, before deploy-docs\n      # publishes it.\n      - name: Install from them on Ubuntu, Arch and Fedora\n        run: scripts/verify_linux_repos.sh site\n\n      - name: Upload the repositories\n        uses: actions/upload-artifact@v7\n        with:\n          name: linux-repos\n          path: site\n          retention-days: 1\n\n  # Pushes the PKGBUILDs and .SRCINFO files `arch-packages` rendered and\n  # verified.\n  #\n  # Until AUR_SSH_PRIVATE_KEY is set (the private half of an SSH key whose\n  # public half is on the AUR account) this stops with a notice instead of\n  # failing the release. The first push of each package is what creates it\n  # on the AUR.\n  aur:\n    name: Publish to the AUR\n    runs-on: ubuntu-24.04\n    needs: [meta, arch-packages]\n    if: needs.meta.outputs.is-prerelease == 'false' && inputs.test_run != true\n    timeout-minutes: 20\n    permissions:\n      contents: read\n    environment:\n      name: aur\n      url: https://github.com/mmogr/gglib#linux-debian-ubuntu-arch-fedora\n    env:\n      VERSION: ${{ needs.meta.outputs.version }}\n    steps:\n      - name: Collect the PKGBUILDs\n        uses: actions/download-artifact@v8\n        with:\n          name: aur-pkgbuilds\n          path: aur\n\n      - name: Push to the AUR\n        env:\n          AUR_SSH_PRIVATE_KEY: ${{ secrets.AUR_SSH_PRIVATE_KEY }}\n        run: |\n          set -euo pipefail\n          if [ -z \"$AUR_SSH_PRIVATE_KEY\" ]; then\n            echo \"::notice::AUR_SSH_PRIVATE_KEY is not set; the AUR packages were rendered and verified but not pushed\"\n            exit 0\n          fi\n\n          mkdir -p ~/.ssh\n          chmod 700 ~/.ssh\n          printf '%s\\n' \"$AUR_SSH_PRIVATE_KEY\" > ~/.ssh/aur\n          chmod 600 ~/.ssh/aur\n          # Pinned, not trusted on first use: the Ed25519 host key fingerprint\n          # the AUR publishes in the wiki's AUR submission guidelines.\n          ssh-keyscan -t ed25519 aur.archlinux.org > ~/.ssh/known_hosts 2>/dev/null\n          if ! ssh-keygen -lf ~/.ssh/known_hosts | grep -q 'SHA256:RFzBCUItH9LZS0cKB5UE6ceAYhBD5C8GeOBip8Z11+4'; then\n            echo \"::error::aur.archlinux.org did not present the pinned host key; compare with the fingerprint in the Arch wiki's AUR submission guidelines\"\n            ssh-keygen -lf ~/.ssh/known_hosts\n            exit 1\n          fi\n          export GIT_SSH_COMMAND=\"ssh -i ~/.ssh/aur -o IdentitiesOnly=yes -o StrictHostKeyChecking=yes\"\n\n          for dir in aur/*/; do\n            pkg=\"$(basename \"$dir\")\"\n            git -c init.defaultBranch=master clone \"ssh://aur@aur.archlinux.org/${pkg}.git\" \"push-$pkg\"\n            cp \"$dir/PKGBUILD\" \"$dir/.SRCINFO\" \"push-$pkg/\"\n            cd \"push-$pkg\"\n            git config user.name \"mmogr\"\n            git config user.email \"172192206+mmogr@users.noreply.github.com\"\n            git add PKGBUILD .SRCINFO\n            if git diff --cached --quiet; then\n              echo \"$pkg is already at $VERSION\"\n            else\n              git commit -m \"Update to $VERSION\"\n              git push origin HEAD:master\n              echo \"::notice::pushed $pkg $VERSION to the AUR\"\n            fi\n            cd ..\n          done\n\n  # The gglib formula and gglib-gui cask, rendered from packaging/homebrew\n  # with the release's own SHA256SUMS and pushed to mmogr/homebrew-tap, so\n  # `brew install mmogr/tap/gglib` and `brew install --cask\n  # mmogr/tap/gglib-gui` work.\n  #\n  # The tap is shared: other projects' formulae and casks live there too, so\n  # this job writes only gglib's two files and leaves the rest alone.\n  #\n  # HOMEBREW_TAP_DEPLOY_KEY is the private half of a deploy key with write\n  # access on the tap repository. Until it is set this renders, then stops\n  # with a notice instead of failing the release.\n  homebrew:\n    name: Publish to the Homebrew tap\n    runs-on: ubuntu-24.04\n    needs: [meta, publish]\n    if: needs.meta.outputs.is-prerelease == 'false' && inputs.test_run != true\n    timeout-minutes: 20\n    permissions:\n      contents: read\n    environment:\n      name: homebrew\n      url: https://github.com/mmogr/homebrew-tap\n    env:\n      VERSION: ${{ needs.meta.outputs.version }}\n    steps:\n      - name: Checkout repository\n        uses: actions/checkout@v7\n        with:\n          ref: ${{ needs.meta.outputs.sha }}\n          persist-credentials: false\n\n      # From the release, for the reason the `aur` job gives.\n      - name: Fetch SHA256SUMS\n        run: curl -fsSL -o SHA256SUMS \"https://github.com/${{ github.repository }}/releases/download/v${VERSION}/SHA256SUMS\"\n\n      - name: Render the formula and cask\n        run: |\n          set -euo pipefail\n          scripts/render_homebrew.sh \"$VERSION\" SHA256SUMS tap\n          for f in tap/*/*.rb; do ruby -c \"$f\"; done\n\n      - name: Push to the tap\n        env:\n          HOMEBREW_TAP_DEPLOY_KEY: ${{ secrets.HOMEBREW_TAP_DEPLOY_KEY }}\n        run: |\n          set -euo pipefail\n          if [ -z \"$HOMEBREW_TAP_DEPLOY_KEY\" ]; then\n            echo \"::notice::HOMEBREW_TAP_DEPLOY_KEY is not set; the formula and cask were rendered but not pushed\"\n            exit 0\n          fi\n\n          mkdir -p ~/.ssh\n          chmod 700 ~/.ssh\n          printf '%s\\n' \"$HOMEBREW_TAP_DEPLOY_KEY\" > ~/.ssh/tap\n          chmod 600 ~/.ssh/tap\n          # GitHub's published Ed25519 host key.\n          echo 'github.com ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIOMqqnkVzrm0SdG6UOoqKLsabgH5C9okWi0dh2l9GKJl' > ~/.ssh/known_hosts\n          export GIT_SSH_COMMAND=\"ssh -i ~/.ssh/tap -o IdentitiesOnly=yes -o StrictHostKeyChecking=yes\"\n\n          git clone git@github.com:${{ github.repository_owner }}/homebrew-tap.git push-tap\n          mkdir -p push-tap/Formula push-tap/Casks\n          cp tap/Formula/*.rb push-tap/Formula/\n          cp tap/Casks/*.rb push-tap/Casks/\n          cd push-tap\n          git config user.name \"mmogr\"\n          git config user.email \"172192206+mmogr@users.noreply.github.com\"\n          git add Formula Casks\n          if git diff --cached --quiet; then\n            echo \"The tap is already at $VERSION\"\n          else\n            git commit -m \"gglib $VERSION\"\n            git push origin HEAD\n            echo \"::notice::pushed gglib $VERSION to the tap\"\n          fi\n\n  deploy-docs:\n    name: Deploy Documentation\n    runs-on: ubuntu-24.04\n    # The apt, dnf and pacman repositories and install.sh are served from the\n    # same Pages site, and a Pages deploy replaces the whole site. So this job\n    # publishes them all and waits for `linux-repos`, which waits for the\n    # `apt` approval: a stable release reaches the docs and the repositories\n    # together or not at all.\n    needs: [meta, linux-repos]\n    if: needs.meta.outputs.is-prerelease == 'false' && inputs.test_run != true\n    timeout-minutes: 20\n    permissions:\n      contents: read\n      pages: write\n      id-token: write\n    # Declared so deploy-pages records the deployment, and so the\n    # environment's rule that only main deploys applies: github.ref is main\n    # for the dispatches release-tag.yml and promote.yml make.\n    environment:\n      name: github-pages\n      url: ${{ steps.deployment.outputs.page_url }}\n    # Allow one concurrent deployment\n    concurrency:\n      group: \"pages\"\n      cancel-in-progress: true\n    steps:\n      - name: Checkout repository\n        uses: actions/checkout@v7\n        with:\n          ref: ${{ needs.meta.outputs.sha }}\n          persist-credentials: false\n\n      # Restores the Rust cache only, as in the `build` job. The docs build\n      # fits the runner's disk as it comes.\n      - name: Rust prelude\n        uses: ./.github/actions/rust-prelude\n        with:\n          free-disk: \"false\"\n          apt-packages: >-\n            libgtk-3-dev\n            libwebkit2gtk-4.1-dev\n            libayatana-appindicator3-dev\n            librsvg2-dev\n            libasound2-dev\n          shared-key: \"docs-ubuntu\"\n          save-if: \"false\"\n\n      # No Node or Web UI steps: with gglib-app excluded below, nothing this\n      # job builds needs web_ui/ (see the `allow_missing` note in gglib-axum's\n      # ui.rs).\n      - name: Build documentation\n        # Exclude gglib-app (Tauri desktop): the one member whose build can need the Web UI\n        # (its `tauri::generate_context!()` embeds `frontendDist` when `custom-protocol` is on).\n        # gglib-app has minimal API documentation (6 items) and is not the primary doc target.\n        # gglib-core (119 items) is the comprehensive library documentation.\n        #\n        # `-D warnings` so a broken intra-doc link cannot be published. This is\n        # the backstop, not the gate: ci.yml's `rustdoc` job runs the same build\n        # on every PR, which is where a regression should be caught.\n        env:\n          RUSTDOCFLAGS: -D warnings\n        run: ./scripts/doc_workspace.py -- --document-private-items --exclude gglib-app\n\n      - name: Create index.html redirect\n        run: |\n          cat > target/doc/index.html << 'EOF'\n          <!DOCTYPE html>\n          <html>\n          <head>\n            <meta charset=\"utf-8\">\n            <title>gglib Documentation</title>\n            <meta http-equiv=\"refresh\" content=\"0; url=gglib_core/index.html\">\n            <link rel=\"canonical\" href=\"gglib_core/index.html\">\n            <style>\n              body { \n                font-family: -apple-system, BlinkMacSystemFont, \"Segoe UI\", Roboto, sans-serif;\n                text-align: center;\n                padding: 50px;\n                background: #f5f5f5;\n              }\n              .container {\n                max-width: 600px;\n                margin: 0 auto;\n                background: white;\n                padding: 40px;\n                border-radius: 8px;\n                box-shadow: 0 2px 10px rgba(0,0,0,0.1);\n              }\n              a { color: #0366d6; text-decoration: none; }\n              a:hover { text-decoration: underline; }\n            </style>\n          </head>\n          <body>\n            <div class=\"container\">\n              <h1>🦀 gglib Documentation</h1>\n              <p>Redirecting to the <a href=\"gglib_core/index.html\">gglib-core documentation</a>...</p>\n              <p><small>If you're not redirected automatically, <a href=\"gglib_core/index.html\">click here</a>.</small></p>\n            </div>\n          </body>\n          </html>\n          EOF\n\n      - name: Collect the Linux repositories\n        uses: actions/download-artifact@v8\n        with:\n          name: linux-repos\n          path: target/doc\n\n      - name: Setup Pages\n        uses: actions/configure-pages@v6\n\n      - name: Upload artifact\n        uses: actions/upload-pages-artifact@v5\n        with:\n          path: './target/doc'\n\n      - name: Deploy to GitHub Pages\n        id: deployment\n        uses: actions/deploy-pages@v5\n"
+ },
+ "jobs": [
+  {
+   "id": 124794798123,
+   "run_id": 41288556179,
+   "name": "Read the version",
+   "status": "completed",
+   "conclusion": "success",
+   "labels": [
+    "ubuntu-24.04"
+   ],
+   "runner_name": "GitHub Actions 1000072533",
+   "html_url": "https://github.com/mmogr/gglib/actions/runs/41288556179/job/124794798123",
+   "created_at": "2026-11-01T09:21:58Z",
+   "started_at": "2026-11-01T09:22:00Z",
+   "completed_at": "2026-11-01T09:22:07Z",
+   "steps": [
+    {
+     "number": 1,
+     "name": "Set up job",
+     "status": "completed",
+     "conclusion": "success"
+    },
+    {
+     "number": 2,
+     "name": "Require a tag or a test run",
+     "status": "completed",
+     "conclusion": "success"
+    },
+    {
+     "number": 3,
+     "name": "Checkout repository",
+     "status": "completed",
+     "conclusion": "success"
+    },
+    {
+     "number": 4,
+     "name": "Get the version",
+     "status": "completed",
+     "conclusion": "success"
+    },
+    {
+     "number": 5,
+     "name": "Require the release to exist",
+     "status": "completed",
+     "conclusion": "success"
+    },
+    {
+     "number": 10,
+     "name": "Post Checkout repository",
+     "status": "completed",
+     "conclusion": "success"
+    },
+    {
+     "number": 11,
+     "name": "Complete job",
+     "status": "completed",
+     "conclusion": "success"
+    }
+   ]
+  },
+  {
+   "id": 124794830441,
+   "run_id": 41288556179,
+   "name": "Build Swift framework",
+   "status": "completed",
+   "conclusion": "success",
+   "labels": [
+    "macos-26"
+   ],
+   "runner_name": "GitHub Actions 1000072543",
+   "html_url": "https://github.com/mmogr/gglib/actions/runs/41288556179/job/124794830441",
+   "created_at": "2026-11-01T09:22:07Z",
+   "started_at": "2026-11-01T09:23:14Z",
+   "completed_at": "2026-11-01T09:38:29Z",
+   "steps": [
+    {
+     "number": 1,
+     "name": "Set up job",
+     "status": "completed",
+     "conclusion": "success"
+    },
+    {
+     "number": 2,
+     "name": "Checkout repository",
+     "status": "completed",
+     "conclusion": "success"
+    },
+    {
+     "number": 3,
+     "name": "Rust prelude",
+     "status": "completed",
+     "conclusion": "success"
+    },
+    {
+     "number": 4,
+     "name": "Build or restore llama.xcframework at the pin",
+     "status": "completed",
+     "conclusion": "success"
+    },
+    {
+     "number": 5,
+     "name": "Xcode and Swift",
+     "status": "completed",
+     "conclusion": "success"
+    },
+    {
+     "number": 6,
+     "name": "Fetch the test models",
+     "status": "completed",
+     "conclusion": "success"
+    },
+    {
+     "number": 7,
+     "name": "Build the XCFramework and check each slice",
+     "status": "completed",
+     "conclusion": "success"
+    },
+    {
+     "number": 8,
+     "name": "The Swift binding links and calls the macOS slice, and its engine streams a reply",
+     "status": "completed",
+     "conclusion": "success"
+    },
+    {
+     "number": 9,
+     "name": "Package the frameworks and the Swift binding",
+     "status": "completed",
+     "conclusion": "success"
+    },
+    {
+     "number": 10,
+     "name": "Attest build provenance",
+     "status": "completed",
+     "conclusion": "success"
+    },
+    {
+     "number": 11,
+     "name": "Upload the assets",
+     "status": "completed",
+     "conclusion": "success"
+    },
+    {
+     "number": 21,
+     "name": "Post Rust prelude",
+     "status": "completed",
+     "conclusion": "success"
+    },
+    {
+     "number": 22,
+     "name": "Post Checkout repository",
+     "status": "completed",
+     "conclusion": "success"
+    },
+    {
+     "number": 23,
+     "name": "Complete job",
+     "status": "completed",
+     "conclusion": "success"
+    }
+   ]
+  },
+  {
+   "id": 124794830461,
+   "run_id": 41288556179,
+   "name": "Build GUI x86_64-unknown-linux-gnu",
+   "status": "completed",
+   "conclusion": "success",
+   "labels": [
+    "ubuntu-24.04"
+   ],
+   "runner_name": "GitHub Actions 1000072536",
+   "html_url": "https://github.com/mmogr/gglib/actions/runs/41288556179/job/124794830461",
+   "created_at": "2026-11-01T09:22:07Z",
+   "started_at": "2026-11-01T09:22:09Z",
+   "completed_at": "2026-11-01T09:52:28Z",
+   "steps": [
+    {
+     "number": 1,
+     "name": "Set up job",
+     "status": "completed",
+     "conclusion": "success"
+    },
+    {
+     "number": 2,
+     "name": "Checkout repository",
+     "status": "completed",
+     "conclusion": "success"
+    },
+    {
+     "number": 3,
+     "name": "Rust prelude",
+     "status": "completed",
+     "conclusion": "success"
+    },
+    {
+     "number": 4,
+     "name": "Install Node.js",
+     "status": "completed",
+     "conclusion": "success"
+    },
+    {
+     "number": 5,
+     "name": "Install frontend dependencies",
+     "status": "completed",
+     "conclusion": "success"
+    },
+    {
+     "number": 6,
+     "name": "Build the CLI the app carries",
+     "status": "completed",
+     "conclusion": "success"
+    },
+    {
+     "number": 7,
+     "name": "Package the CLI (macOS)",
+     "status": "completed",
+     "conclusion": "skipped"
+    },
+    {
+     "number": 8,
+     "name": "Build Tauri app",
+     "status": "completed",
+     "conclusion": "success"
+    },
+    {
+     "number": 9,
+     "name": "Check the app carries its CLI (Unix)",
+     "status": "completed",
+     "conclusion": "success"
+    },
+    {
+     "number": 10,
+     "name": "Debug build output (Windows)",
+     "status": "completed",
+     "conclusion": "skipped"
+    },
+    {
+     "number": 11,
+     "name": "Debug build output (Unix)",
+     "status": "completed",
+     "conclusion": "success"
+    },
+    {
+     "number": 12,
+     "name": "Prepare GUI binary for packaging (Linux)",
+     "status": "completed",
+     "conclusion": "success"
+    },
+    {
+     "number": 13,
+     "name": "Prepare GUI binary for packaging (macOS)",
+     "status": "completed",
+     "conclusion": "skipped"
+    },
+    {
+     "number": 14,
+     "name": "Prepare GUI binary for packaging (Windows)",
+     "status": "completed",
+     "conclusion": "skipped"
+    },
+    {
+     "number": 15,
+     "name": "Stage GUI installers (Unix)",
+     "status": "completed",
+     "conclusion": "success"
+    },
+    {
+     "number": 16,
+     "name": "Upload .deb and .rpm for the Linux repositories",
+     "status": "completed",
+     "conclusion": "success"
+    },
+    {
+     "number": 17,
+     "name": "Stage GUI installers (Windows)",
+     "status": "completed",
+     "conclusion": "skipped"
+    },
+    {
+     "number": 18,
+     "name": "Package GUI archive (Unix)",
+     "status": "completed",
+     "conclusion": "success"
+    },
+    {
+     "number": 19,
+     "name": "Package GUI archive (Windows)",
+     "status": "completed",
+     "conclusion": "skipped"
+    },
+    {
+     "number": 20,
+     "name": "Attest build provenance",
+     "status": "completed",
+     "conclusion": "success"
+    },
+    {
+     "number": 21,
+     "name": "Upload the assets",
+     "status": "completed",
+     "conclusion": "success"
+    },
+    {
+     "number": 40,
+     "name": "Post Install Node.js",
+     "status": "completed",
+     "conclusion": "success"
+    },
+    {
+     "number": 41,
+     "name": "Post Rust prelude",
+     "status": "completed",
+     "conclusion": "success"
+    },
+    {
+     "number": 42,
+     "name": "Post Checkout repository",
+     "status": "completed",
+     "conclusion": "success"
+    },
+    {
+     "number": 43,
+     "name": "Complete job",
+     "status": "completed",
+     "conclusion": "success"
+    }
+   ]
+  },
+  {
+   "id": 124794830488,
+   "run_id": 41288556179,
+   "name": "Build GUI aarch64-apple-darwin",
+   "status": "completed",
+   "conclusion": "success",
+   "labels": [
+    "macos-26"
+   ],
+   "runner_name": "GitHub Actions 1000072548",
+   "html_url": "https://github.com/mmogr/gglib/actions/runs/41288556179/job/124794830488",
+   "created_at": "2026-11-01T09:22:07Z",
+   "started_at": "2026-11-01T09:33:34Z",
+   "completed_at": "2026-11-01T09:57:23Z",
+   "steps": [
+    {
+     "number": 1,
+     "name": "Set up job",
+     "status": "completed",
+     "conclusion": "success"
+    },
+    {
+     "number": 2,
+     "name": "Checkout repository",
+     "status": "completed",
+     "conclusion": "success"
+    },
+    {
+     "number": 3,
+     "name": "Rust prelude",
+     "status": "completed",
+     "conclusion": "success"
+    },
+    {
+     "number": 4,
+     "name": "Install Node.js",
+     "status": "completed",
+     "conclusion": "success"
+    },
+    {
+     "number": 5,
+     "name": "Install frontend dependencies",
+     "status": "completed",
+     "conclusion": "success"
+    },
+    {
+     "number": 6,
+     "name": "Build the CLI the app carries",
+     "status": "completed",
+     "conclusion": "success"
+    },
+    {
+     "number": 7,
+     "name": "Package the CLI (macOS)",
+     "status": "completed",
+     "conclusion": "success"
+    },
+    {
+     "number": 8,
+     "name": "Build Tauri app",
+     "status": "completed",
+     "conclusion": "success"
+    },
+    {
+     "number": 9,
+     "name": "Check the app carries its CLI (Unix)",
+     "status": "completed",
+     "conclusion": "success"
+    },
+    {
+     "number": 10,
+     "name": "Debug build output (Windows)",
+     "status": "completed",
+     "conclusion": "skipped"
+    },
+    {
+     "number": 11,
+     "name": "Debug build output (Unix)",
+     "status": "completed",
+     "conclusion": "success"
+    },
+    {
+     "number": 12,
+     "name": "Prepare GUI binary for packaging (Linux)",
+     "status": "completed",
+     "conclusion": "skipped"
+    },
+    {
+     "number": 13,
+     "name": "Prepare GUI binary for packaging (macOS)",
+     "status": "completed",
+     "conclusion": "success"
+    },
+    {
+     "number": 14,
+     "name": "Prepare GUI binary for packaging (Windows)",
+     "status": "completed",
+     "conclusion": "skipped"
+    },
+    {
+     "number": 15,
+     "name": "Stage GUI installers (Unix)",
+     "status": "completed",
+     "conclusion": "success"
+    },
+    {
+     "number": 16,
+     "name": "Upload .deb and .rpm for the Linux repositories",
+     "status": "completed",
+     "conclusion": "skipped"
+    },
+    {
+     "number": 17,
+     "name": "Stage GUI installers (Windows)",
+     "status": "completed",
+     "conclusion": "skipped"
+    },
+    {
+     "number": 18,
+     "name": "Package GUI archive (Unix)",
+     "status": "completed",
+     "conclusion": "success"
+    },
+    {
+     "number": 19,
+     "name": "Package GUI archive (Windows)",
+     "status": "completed",
+     "conclusion": "skipped"
+    },
+    {
+     "number": 20,
+     "name": "Attest build provenance",
+     "status": "completed",
+     "conclusion": "success"
+    },
+    {
+     "number": 21,
+     "name": "Upload the assets",
+     "status": "completed",
+     "conclusion": "success"
+    },
+    {
+     "number": 40,
+     "name": "Post Install Node.js",
+     "status": "completed",
+     "conclusion": "success"
+    },
+    {
+     "number": 41,
+     "name": "Post Rust prelude",
+     "status": "completed",
+     "conclusion": "success"
+    },
+    {
+     "number": 42,
+     "name": "Post Checkout repository",
+     "status": "completed",
+     "conclusion": "success"
+    },
+    {
+     "number": 43,
+     "name": "Complete job",
+     "status": "completed",
+     "conclusion": "success"
+    }
+   ]
+  },
+  {
+   "id": 124794830526,
+   "run_id": 41288556179,
+   "name": "Build x86_64-unknown-linux-gnu",
+   "status": "completed",
+   "conclusion": "success",
+   "labels": [
+    "ubuntu-24.04"
+   ],
+   "runner_name": "GitHub Actions 1000072537",
+   "html_url": "https://github.com/mmogr/gglib/actions/runs/41288556179/job/124794830526",
+   "created_at": "2026-11-01T09:22:07Z",
+   "started_at": "2026-11-01T09:22:09Z",
+   "completed_at": "2026-11-01T09:34:46Z",
+   "steps": [
+    {
+     "number": 1,
+     "name": "Set up job",
+     "status": "completed",
+     "conclusion": "success"
+    },
+    {
+     "number": 2,
+     "name": "Checkout repository",
+     "status": "completed",
+     "conclusion": "success"
+    },
+    {
+     "number": 3,
+     "name": "Rust prelude",
+     "status": "completed",
+     "conclusion": "success"
+    },
+    {
+     "number": 4,
+     "name": "Cache node_modules",
+     "status": "completed",
+     "conclusion": "success"
+    },
+    {
+     "number": 5,
+     "name": "Cache Web UI",
+     "status": "completed",
+     "conclusion": "success"
+    },
+    {
+     "number": 6,
+     "name": "Setup Node.js",
+     "status": "completed",
+     "conclusion": "success"
+    },
+    {
+     "number": 7,
+     "name": "Build Web UI",
+     "status": "completed",
+     "conclusion": "success"
+    },
+    {
+     "number": 8,
+     "name": "Assert the dashboard is present before it is embedded",
+     "status": "completed",
+     "conclusion": "success"
+    },
+    {
+     "number": 9,
+     "name": "Build binary",
+     "status": "completed",
+     "conclusion": "success"
+    },
+    {
+     "number": 10,
+     "name": "Package binary (Unix)",
+     "status": "completed",
+     "conclusion": "success"
+    },
+    {
+     "number": 11,
+     "name": "Package CLI .deb (Linux)",
+     "status": "completed",
+     "conclusion": "success"
+    },
+    {
+     "number": 12,
+     "name": "Upload .deb for the Linux repositories",
+     "status": "completed",
+     "conclusion": "success"
+    },
+    {
+     "number": 13,
+     "name": "Package binary (Windows)",
+     "status": "completed",
+     "conclusion": "skipped"
+    },
+    {
+     "number": 14,
+     "name": "Attest build provenance",
+     "status": "completed",
+     "conclusion": "success"
+    },
+    {
+     "number": 15,
+     "name": "Upload the assets",
+     "status": "completed",
+     "conclusion": "success"
+    },
+    {
+     "number": 26,
+     "name": "Post Setup Node.js",
+     "status": "completed",
+     "conclusion": "success"
+    },
+    {
+     "number": 27,
+     "name": "Post Cache Web UI",
+     "status": "completed",
+     "conclusion": "success"
+    },
+    {
+     "number": 28,
+     "name": "Post Cache node_modules",
+     "status": "completed",
+     "conclusion": "success"
+    },
+    {
+     "number": 29,
+     "name": "Post Rust prelude",
+     "status": "completed",
+     "conclusion": "success"
+    },
+    {
+     "number": 30,
+     "name": "Post Checkout repository",
+     "status": "completed",
+     "conclusion": "success"
+    },
+    {
+     "number": 31,
+     "name": "Complete job",
+     "status": "completed",
+     "conclusion": "success"
+    }
+   ]
+  },
+  {
+   "id": 124794830579,
+   "run_id": 41288556179,
+   "name": "Build GUI x86_64-pc-windows-msvc",
+   "status": "completed",
+   "conclusion": "success",
+   "labels": [
+    "windows-2022"
+   ],
+   "runner_name": "GitHub Actions 1000072538",
+   "html_url": "https://github.com/mmogr/gglib/actions/runs/41288556179/job/124794830579",
+   "created_at": "2026-11-01T09:22:07Z",
+   "started_at": "2026-11-01T09:22:10Z",
+   "completed_at": "2026-11-01T09:44:26Z",
+   "steps": [
+    {
+     "number": 1,
+     "name": "Set up job",
+     "status": "completed",
+     "conclusion": "success"
+    },
+    {
+     "number": 2,
+     "name": "Checkout repository",
+     "status": "completed",
+     "conclusion": "success"
+    },
+    {
+     "number": 3,
+     "name": "Rust prelude",
+     "status": "completed",
+     "conclusion": "success"
+    },
+    {
+     "number": 4,
+     "name": "Install Node.js",
+     "status": "completed",
+     "conclusion": "success"
+    },
+    {
+     "number": 5,
+     "name": "Install frontend dependencies",
+     "status": "completed",
+     "conclusion": "success"
+    },
+    {
+     "number": 6,
+     "name": "Build the CLI the app carries",
+     "status": "completed",
+     "conclusion": "success"
+    },
+    {
+     "number": 7,
+     "name": "Package the CLI (macOS)",
+     "status": "completed",
+     "conclusion": "skipped"
+    },
+    {
+     "number": 8,
+     "name": "Build Tauri app",
+     "status": "completed",
+     "conclusion": "success"
+    },
+    {
+     "number": 9,
+     "name": "Check the app carries its CLI (Unix)",
+     "status": "completed",
+     "conclusion": "skipped"
+    },
+    {
+     "number": 10,
+     "name": "Debug build output (Windows)",
+     "status": "completed",
+     "conclusion": "success"
+    },
+    {
+     "number": 11,
+     "name": "Debug build output (Unix)",
+     "status": "completed",
+     "conclusion": "skipped"
+    },
+    {
+     "number": 12,
+     "name": "Prepare GUI binary for packaging (Linux)",
+     "status": "completed",
+     "conclusion": "skipped"
+    },
+    {
+     "number": 13,
+     "name": "Prepare GUI binary for packaging (macOS)",
+     "status": "completed",
+     "conclusion": "skipped"
+    },
+    {
+     "number": 14,
+     "name": "Prepare GUI binary for packaging (Windows)",
+     "status": "completed",
+     "conclusion": "success"
+    },
+    {
+     "number": 15,
+     "name": "Stage GUI installers (Unix)",
+     "status": "completed",
+     "conclusion": "skipped"
+    },
+    {
+     "number": 16,
+     "name": "Upload .deb and .rpm for the Linux repositories",
+     "status": "completed",
+     "conclusion": "skipped"
+    },
+    {
+     "number": 17,
+     "name": "Stage GUI installers (Windows)",
+     "status": "completed",
+     "conclusion": "success"
+    },
+    {
+     "number": 18,
+     "name": "Package GUI archive (Unix)",
+     "status": "completed",
+     "conclusion": "skipped"
+    },
+    {
+     "number": 19,
+     "name": "Package GUI archive (Windows)",
+     "status": "completed",
+     "conclusion": "success"
+    },
+    {
+     "number": 20,
+     "name": "Attest build provenance",
+     "status": "completed",
+     "conclusion": "success"
+    },
+    {
+     "number": 21,
+     "name": "Upload the assets",
+     "status": "completed",
+     "conclusion": "success"
+    },
+    {
+     "number": 40,
+     "name": "Post Install Node.js",
+     "status": "completed",
+     "conclusion": "success"
+    },
+    {
+     "number": 41,
+     "name": "Post Rust prelude",
+     "status": "completed",
+     "conclusion": "success"
+    },
+    {
+     "number": 42,
+     "name": "Post Checkout repository",
+     "status": "completed",
+     "conclusion": "success"
+    },
+    {
+     "number": 43,
+     "name": "Complete job",
+     "status": "completed",
+     "conclusion": "success"
+    }
+   ]
+  },
+  {
+   "id": 124794830669,
+   "run_id": 41288556179,
+   "name": "Build x86_64-pc-windows-msvc",
+   "status": "completed",
+   "conclusion": "success",
+   "labels": [
+    "windows-2022"
+   ],
+   "runner_name": "GitHub Actions 1000072539",
+   "html_url": "https://github.com/mmogr/gglib/actions/runs/41288556179/job/124794830669",
+   "created_at": "2026-11-01T09:22:07Z",
+   "started_at": "2026-11-01T09:22:09Z",
+   "completed_at": "2026-11-01T09:34:50Z",
+   "steps": [
+    {
+     "number": 1,
+     "name": "Set up job",
+     "status": "completed",
+     "conclusion": "success"
+    },
+    {
+     "number": 2,
+     "name": "Checkout repository",
+     "status": "completed",
+     "conclusion": "success"
+    },
+    {
+     "number": 3,
+     "name": "Rust prelude",
+     "status": "completed",
+     "conclusion": "success"
+    },
+    {
+     "number": 4,
+     "name": "Cache node_modules",
+     "status": "completed",
+     "conclusion": "success"
+    },
+    {
+     "number": 5,
+     "name": "Cache Web UI",
+     "status": "completed",
+     "conclusion": "success"
+    },
+    {
+     "number": 6,
+     "name": "Setup Node.js",
+     "status": "completed",
+     "conclusion": "success"
+    },
+    {
+     "number": 7,
+     "name": "Build Web UI",
+     "status": "completed",
+     "conclusion": "success"
+    },
+    {
+     "number": 8,
+     "name": "Assert the dashboard is present before it is embedded",
+     "status": "completed",
+     "conclusion": "success"
+    },
+    {
+     "number": 9,
+     "name": "Build binary",
+     "status": "completed",
+     "conclusion": "success"
+    },
+    {
+     "number": 10,
+     "name": "Package binary (Unix)",
+     "status": "completed",
+     "conclusion": "skipped"
+    },
+    {
+     "number": 11,
+     "name": "Package CLI .deb (Linux)",
+     "status": "completed",
+     "conclusion": "skipped"
+    },
+    {
+     "number": 12,
+     "name": "Upload .deb for the Linux repositories",
+     "status": "completed",
+     "conclusion": "skipped"
+    },
+    {
+     "number": 13,
+     "name": "Package binary (Windows)",
+     "status": "completed",
+     "conclusion": "success"
+    },
+    {
+     "number": 14,
+     "name": "Attest build provenance",
+     "status": "completed",
+     "conclusion": "success"
+    },
+    {
+     "number": 15,
+     "name": "Upload the assets",
+     "status": "completed",
+     "conclusion": "success"
+    },
+    {
+     "number": 26,
+     "name": "Post Setup Node.js",
+     "status": "completed",
+     "conclusion": "success"
+    },
+    {
+     "number": 27,
+     "name": "Post Cache Web UI",
+     "status": "completed",
+     "conclusion": "success"
+    },
+    {
+     "number": 28,
+     "name": "Post Cache node_modules",
+     "status": "completed",
+     "conclusion": "success"
+    },
+    {
+     "number": 29,
+     "name": "Post Rust prelude",
+     "status": "completed",
+     "conclusion": "success"
+    },
+    {
+     "number": 30,
+     "name": "Post Checkout repository",
+     "status": "completed",
+     "conclusion": "success"
+    },
+    {
+     "number": 31,
+     "name": "Complete job",
+     "status": "completed",
+     "conclusion": "success"
+    }
+   ]
+  },
+  {
+   "id": 124802023293,
+   "run_id": 41288556179,
+   "name": "Publish the release",
+   "status": "completed",
+   "conclusion": "success",
+   "labels": [
+    "ubuntu-24.04"
+   ],
+   "runner_name": "GitHub Actions 1000072615",
+   "html_url": "https://github.com/mmogr/gglib/actions/runs/41288556179/job/124802023293",
+   "created_at": "2026-11-01T09:57:23Z",
+   "started_at": "2026-11-01T09:57:25Z",
+   "completed_at": "2026-11-01T09:57:48Z",
+   "steps": [
+    {
+     "number": 1,
+     "name": "Set up job",
+     "status": "completed",
+     "conclusion": "success"
+    },
+    {
+     "number": 2,
+     "name": "Collect the assets",
+     "status": "completed",
+     "conclusion": "success"
+    },
+    {
+     "number": 3,
+     "name": "Build SHA256SUMS",
+     "status": "completed",
+     "conclusion": "success"
+    },
+    {
+     "number": 4,
+     "name": "Upload the assets, SHA256SUMS last",
+     "status": "completed",
+     "conclusion": "success"
+    },
+    {
+     "number": 5,
+     "name": "Complete job",
+     "status": "completed",
+     "conclusion": "success"
+    }
+   ]
+  },
+  {
+   "id": 124802110237,
+   "run_id": 41288556179,
+   "name": "Publish to the Homebrew tap",
+   "status": "completed",
+   "conclusion": "skipped",
+   "labels": [
+    "ubuntu-24.04"
+   ],
+   "runner_name": null,
+   "html_url": "https://github.com/mmogr/gglib/actions/runs/41288556179/job/124802110237",
+   "created_at": "2026-11-01T09:57:49Z",
+   "started_at": "2026-11-01T09:57:49Z",
+   "completed_at": "2026-11-01T09:57:48Z",
+   "steps": []
+  },
+  {
+   "id": 124802110511,
+   "run_id": 41288556179,
+   "name": "Build Linux package repositories",
+   "status": "completed",
+   "conclusion": "skipped",
+   "labels": [
+    "ubuntu-24.04"
+   ],
+   "runner_name": null,
+   "html_url": "https://github.com/mmogr/gglib/actions/runs/41288556179/job/124802110511",
+   "created_at": "2026-11-01T09:57:49Z",
+   "started_at": "2026-11-01T09:57:49Z",
+   "completed_at": "2026-11-01T09:57:48Z",
+   "steps": []
+  },
+  {
+   "id": 124802110792,
+   "run_id": 41288556179,
+   "name": "Publish to the AUR",
+   "status": "completed",
+   "conclusion": "skipped",
+   "labels": [
+    "ubuntu-24.04"
+   ],
+   "runner_name": null,
+   "html_url": "https://github.com/mmogr/gglib/actions/runs/41288556179/job/124802110792",
+   "created_at": "2026-11-01T09:57:49Z",
+   "started_at": "2026-11-01T09:57:49Z",
+   "completed_at": "2026-11-01T09:57:48Z",
+   "steps": []
+  },
+  {
+   "id": 124802110827,
+   "run_id": 41288556179,
+   "name": "Deploy Documentation",
+   "status": "completed",
+   "conclusion": "skipped",
+   "labels": [
+    "ubuntu-24.04"
+   ],
+   "runner_name": null,
+   "html_url": "https://github.com/mmogr/gglib/actions/runs/41288556179/job/124802110827",
+   "created_at": "2026-11-01T09:57:49Z",
+   "started_at": "2026-11-01T09:57:49Z",
+   "completed_at": "2026-11-01T09:57:48Z",
+   "steps": []
+  },
+  {
+   "id": 124802110946,
+   "run_id": 41288556179,
+   "name": "Build Arch packages",
+   "status": "completed",
+   "conclusion": "skipped",
+   "labels": [
+    "ubuntu-24.04"
+   ],
+   "runner_name": null,
+   "html_url": "https://github.com/mmogr/gglib/actions/runs/41288556179/job/124802110946",
+   "created_at": "2026-11-01T09:57:49Z",
+   "started_at": "2026-11-01T09:57:49Z",
+   "completed_at": "2026-11-01T09:57:48Z",
+   "steps": []
+  }
+ ]
+}

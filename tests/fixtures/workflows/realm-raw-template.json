@@ -1,0 +1,313 @@
+{
+ "source": "realm/realm-swift run 36285088791, captured 2026-11-01",
+ "run": {
+  "id": 36285088791,
+  "name": "Publish release",
+  "run_number": 74,
+  "event": "workflow_dispatch",
+  "path": ".github/workflows/publish-release.yml",
+  "head_sha": "a40ced79265b644a896e393b0f3a37e7916e7de3",
+  "head_branch": "community",
+  "status": "completed",
+  "conclusion": "failure",
+  "run_attempt": 1,
+  "workflow_url": "https://api.github.com/repos/realm/realm-swift/actions/workflows/77867892",
+  "created_at": "2026-09-27T01:17:36Z",
+  "run_started_at": "2026-09-27T01:17:36Z",
+  "repoOwner": "realm",
+  "repoName": "realm-swift",
+  "referenced_workflows": []
+ },
+ "files": {
+  "realm/realm-swift/.github/workflows/publish-release.yml@a40ced79265b644a896e393b0f3a37e7916e7de3": "name: Publish release\non: workflow_dispatch\nenv:\n  XCODE_VERSION: \"['26.1', '26.2', '26.3', '26.4', '26.5', '27.0']\"\n  TEST_XCODE_VERSION: '27.0'\njobs:\n  prepare:\n    runs-on: ubuntu-latest\n    name: Prepare outputs\n    outputs:\n      XCODE_VERSIONS_MATRIX: ${{ env.XCODE_VERSION }}\n      VERSION: ${{ steps.get-version.outputs.VERSION }}\n    steps:\n      - uses: actions/checkout@v4\n      - name: Compute outputs\n        run: |\n          echo \"XCODE_VERSIONS_MATRIX=${{ env.XCODE_VERSION }}\" >> $GITHUB_OUTPUT\n      - name: Read SDK version\n        id: get-version\n        run: |\n          version=\"$(sed -n 's/^VERSION=\\(.*\\)$/\\1/p' \"${GITHUB_WORKSPACE}/dependencies.list\")\"\n          echo \"VERSION=$version\" >> $GITHUB_OUTPUT\n  tag-release:\n      runs-on: ubuntu-latest\n      name: Tag Release\n      needs: prepare\n      steps:\n        - uses: actions/checkout@v4\n        - uses: rickstaa/action-create-tag@v1\n          id: \"tag_create\"\n          with:\n            tag: \"v${{ needs.prepare.outputs.VERSION }}\"\n            tag_exists_error: false\n            message: \"\"\n  create-release:\n      runs-on: macos-26\n      name: Create github release\n      needs: [tag-release, prepare]\n      env:\n        GITHUB_ACCESS_TOKEN: ${{ secrets.GITHUB_TOKEN }}\n      steps:\n        - uses: actions/checkout@v4\n        - uses: ruby/setup-ruby@v1\n          with:\n            bundler-cache: true\n        - name: Create Github release\n          run: bundle exec ./build.sh publish-github ${{ github.sha }}\n  publish-cocoapods:\n      runs-on: macos-26\n      name: Publish Cocoapods specs\n      needs: [tag-release, prepare]\n      env:\n        COCOAPODS_TRUNK_TOKEN: ${{ secrets.COCOAPODS_TRUNK_TOKEN }}\n      steps:\n        - uses: actions/checkout@v4\n        - uses: ruby/setup-ruby@v1\n          with:\n            bundler-cache: true\n        - name: Publish\n          run: bundle exec ./build.sh publish-cocoapods v${{ needs.prepare.outputs.VERSION }}\n  update-checker:\n      runs-on: macos-26\n      name: Update to latest version update checker file\n      needs: tag-release\n      env:\n        AWS_ACCESS_KEY_ID: ${{ secrets.UPDATE_CHECKER_ACCESS_KEY }}\n        AWS_SECRET_ACCESS_KEY: ${{ secrets.UPDATE_CHECKER_SECRET_KEY }}\n      steps:\n        - uses: actions/checkout@v4\n        - uses: ruby/setup-ruby@v1\n          with:\n            bundler-cache: true\n        - run: brew install s3cmd\n        - run: bundle exec ./build.sh publish-update-checker\n  test-installation:\n      runs-on: xcode-27\n      name: Run installation test for ${{ matrix.platform }}, ${{ matrix.installation }} and ${{ matrix.linkage }}\n      needs: [create-release, prepare, publish-cocoapods]\n      strategy:\n        fail-fast: false\n        matrix:\n          platform: [ios, osx, watchos, tvos, catalyst, visionos]\n          installation: [cocoapods, spm, carthage, xcframework]\n          linkage: [static, dynamic]\n          exclude:\n            - installation: carthage\n              linkage: static\n            - platform: catalyst\n              installation: carthage\n            - platform: osx\n              installation: xcframework\n              linkage: static\n            - platform: watchos\n              installation: xcframework\n              linkage: static\n            - platform: tvos\n              installation: xcframework\n              linkage: static\n            - platform: catalyst\n              installation: xcframework\n              linkage: static\n            - platform: visionos\n              installation: xcframework\n              linkage: static\n            - platform: catalyst\n              installation: carthage\n              linkage: static\n            - platform: visionos\n              installation: carthage\n            - platform: visionos\n              installation: cocoapods\n      steps:\n        - uses: actions/checkout@v4\n        - uses: ruby/setup-ruby@v1\n          with:\n            bundler-cache: true\n        - uses: maxim-lobanov/setup-xcode@v1\n          with:\n            xcode-version: ${{ env.TEST_XCODE_VERSION }}\n        - name: Run installation test\n          uses: nick-fields/retry@v3\n          env:\n            REALM_TEST_RELEASE: ${{ needs.prepare.outputs.VERSION }}\n          with:\n            command: |\n              cd examples/installation\n              bundle exec ./build.rb ${{ matrix.platform }} ${{ matrix.installation }} ${{ matrix.linkage }}\n            timeout_minutes: 30\n            max_attempts: 10\n            retry_wait_seconds: 60\n            retry_on: error\n"
+ },
+ "jobs": [
+  {
+   "id": 108524204400,
+   "run_id": 36285088791,
+   "name": "Prepare outputs",
+   "status": "completed",
+   "conclusion": "success",
+   "labels": [
+    "ubuntu-latest"
+   ],
+   "runner_name": "GitHub Actions 1003622528",
+   "html_url": "https://github.com/realm/realm-swift/actions/runs/36285088791/job/108524204400",
+   "created_at": "2026-09-27T01:17:38Z",
+   "started_at": "2026-09-27T01:17:39Z",
+   "completed_at": "2026-09-27T01:17:44Z",
+   "steps": [
+    {
+     "number": 1,
+     "name": "Set up job",
+     "status": "completed",
+     "conclusion": "success"
+    },
+    {
+     "number": 2,
+     "name": "Run actions/checkout@v4",
+     "status": "completed",
+     "conclusion": "success"
+    },
+    {
+     "number": 3,
+     "name": "Compute outputs",
+     "status": "completed",
+     "conclusion": "success"
+    },
+    {
+     "number": 4,
+     "name": "Read SDK version",
+     "status": "completed",
+     "conclusion": "success"
+    },
+    {
+     "number": 8,
+     "name": "Post Run actions/checkout@v4",
+     "status": "completed",
+     "conclusion": "success"
+    },
+    {
+     "number": 9,
+     "name": "Complete job",
+     "status": "completed",
+     "conclusion": "success"
+    }
+   ]
+  },
+  {
+   "id": 108524226270,
+   "run_id": 36285088791,
+   "name": "Tag Release",
+   "status": "completed",
+   "conclusion": "success",
+   "labels": [
+    "ubuntu-latest"
+   ],
+   "runner_name": "GitHub Actions 1003622529",
+   "html_url": "https://github.com/realm/realm-swift/actions/runs/36285088791/job/108524226270",
+   "created_at": "2026-09-27T01:17:44Z",
+   "started_at": "2026-09-27T01:17:46Z",
+   "completed_at": "2026-09-27T01:17:59Z",
+   "steps": [
+    {
+     "number": 1,
+     "name": "Set up job",
+     "status": "completed",
+     "conclusion": "success"
+    },
+    {
+     "number": 2,
+     "name": "Build rickstaa/action-create-tag@v1",
+     "status": "completed",
+     "conclusion": "success"
+    },
+    {
+     "number": 3,
+     "name": "Run actions/checkout@v4",
+     "status": "completed",
+     "conclusion": "success"
+    },
+    {
+     "number": 4,
+     "name": "Run rickstaa/action-create-tag@v1",
+     "status": "completed",
+     "conclusion": "success"
+    },
+    {
+     "number": 8,
+     "name": "Post Run actions/checkout@v4",
+     "status": "completed",
+     "conclusion": "success"
+    },
+    {
+     "number": 9,
+     "name": "Complete job",
+     "status": "completed",
+     "conclusion": "success"
+    }
+   ]
+  },
+  {
+   "id": 108524271827,
+   "run_id": 36285088791,
+   "name": "Publish Cocoapods specs",
+   "status": "completed",
+   "conclusion": "failure",
+   "labels": [
+    "macos-26"
+   ],
+   "runner_name": "GitHub Actions 1003622530",
+   "html_url": "https://github.com/realm/realm-swift/actions/runs/36285088791/job/108524271827",
+   "created_at": "2026-09-27T01:18:00Z",
+   "started_at": "2026-09-27T01:18:05Z",
+   "completed_at": "2026-09-27T01:25:21Z",
+   "steps": [
+    {
+     "number": 1,
+     "name": "Set up job",
+     "status": "completed",
+     "conclusion": "success"
+    },
+    {
+     "number": 2,
+     "name": "Run actions/checkout@v4",
+     "status": "completed",
+     "conclusion": "success"
+    },
+    {
+     "number": 3,
+     "name": "Run ruby/setup-ruby@v1",
+     "status": "completed",
+     "conclusion": "success"
+    },
+    {
+     "number": 4,
+     "name": "Publish",
+     "status": "completed",
+     "conclusion": "failure"
+    },
+    {
+     "number": 8,
+     "name": "Post Run actions/checkout@v4",
+     "status": "completed",
+     "conclusion": "success"
+    },
+    {
+     "number": 9,
+     "name": "Complete job",
+     "status": "completed",
+     "conclusion": "success"
+    }
+   ]
+  },
+  {
+   "id": 108524271833,
+   "run_id": 36285088791,
+   "name": "Update to latest version update checker file",
+   "status": "completed",
+   "conclusion": "failure",
+   "labels": [
+    "macos-26"
+   ],
+   "runner_name": "GitHub Actions 1003622532",
+   "html_url": "https://github.com/realm/realm-swift/actions/runs/36285088791/job/108524271833",
+   "created_at": "2026-09-27T01:18:00Z",
+   "started_at": "2026-09-27T01:18:04Z",
+   "completed_at": "2026-09-27T01:19:07Z",
+   "steps": [
+    {
+     "number": 1,
+     "name": "Set up job",
+     "status": "completed",
+     "conclusion": "success"
+    },
+    {
+     "number": 2,
+     "name": "Run actions/checkout@v4",
+     "status": "completed",
+     "conclusion": "success"
+    },
+    {
+     "number": 3,
+     "name": "Run ruby/setup-ruby@v1",
+     "status": "completed",
+     "conclusion": "success"
+    },
+    {
+     "number": 4,
+     "name": "Run brew install s3cmd",
+     "status": "completed",
+     "conclusion": "success"
+    },
+    {
+     "number": 5,
+     "name": "Run bundle exec ./build.sh publish-update-checker",
+     "status": "completed",
+     "conclusion": "failure"
+    },
+    {
+     "number": 10,
+     "name": "Post Run actions/checkout@v4",
+     "status": "completed",
+     "conclusion": "success"
+    },
+    {
+     "number": 11,
+     "name": "Complete job",
+     "status": "completed",
+     "conclusion": "success"
+    }
+   ]
+  },
+  {
+   "id": 108524271834,
+   "run_id": 36285088791,
+   "name": "Create github release",
+   "status": "completed",
+   "conclusion": "success",
+   "labels": [
+    "macos-26"
+   ],
+   "runner_name": "GitHub Actions 1003622531",
+   "html_url": "https://github.com/realm/realm-swift/actions/runs/36285088791/job/108524271834",
+   "created_at": "2026-09-27T01:18:00Z",
+   "started_at": "2026-09-27T01:18:06Z",
+   "completed_at": "2026-09-27T01:20:11Z",
+   "steps": [
+    {
+     "number": 1,
+     "name": "Set up job",
+     "status": "completed",
+     "conclusion": "success"
+    },
+    {
+     "number": 2,
+     "name": "Run actions/checkout@v4",
+     "status": "completed",
+     "conclusion": "success"
+    },
+    {
+     "number": 3,
+     "name": "Run ruby/setup-ruby@v1",
+     "status": "completed",
+     "conclusion": "success"
+    },
+    {
+     "number": 4,
+     "name": "Create Github release",
+     "status": "completed",
+     "conclusion": "success"
+    },
+    {
+     "number": 8,
+     "name": "Post Run actions/checkout@v4",
+     "status": "completed",
+     "conclusion": "success"
+    },
+    {
+     "number": 9,
+     "name": "Complete job",
+     "status": "completed",
+     "conclusion": "success"
+    }
+   ]
+  },
+  {
+   "id": 108525316794,
+   "run_id": 36285088791,
+   "name": "Run installation test for ${{ matrix.platform }}, ${{ matrix.installation }} and ${{ matrix.linkage }}",
+   "status": "completed",
+   "conclusion": "skipped",
+   "labels": [
+    "xcode-27"
+   ],
+   "runner_name": null,
+   "html_url": "https://github.com/realm/realm-swift/actions/runs/36285088791/job/108525316794",
+   "created_at": "2026-09-27T01:25:22Z",
+   "started_at": "2026-09-27T01:25:22Z",
+   "completed_at": "2026-09-27T01:25:21Z",
+   "steps": []
+  }
+ ]
+}

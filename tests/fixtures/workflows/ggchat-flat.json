@@ -1,0 +1,1068 @@
+{
+ "source": "mmogr/ggchat run 41284593895, captured 2026-11-01",
+ "run": {
+  "id": 41284593895,
+  "name": "CI",
+  "run_number": 680,
+  "event": "push",
+  "path": ".github/workflows/ci.yml",
+  "head_sha": "56aac2df6bedb8e729b198c97bfe4f4415a3e089",
+  "head_branch": "main",
+  "status": "completed",
+  "conclusion": "success",
+  "run_attempt": 1,
+  "workflow_url": "https://api.github.com/repos/mmogr/ggchat/actions/workflows/350998242",
+  "created_at": "2026-11-01T07:23:27Z",
+  "run_started_at": "2026-11-01T07:23:27Z",
+  "repoOwner": "mmogr",
+  "repoName": "ggchat",
+  "referenced_workflows": []
+ },
+ "files": {
+  "mmogr/ggchat/.github/workflows/ci.yml@56aac2df6bedb8e729b198c97bfe4f4415a3e089": "name: CI\n\non:\n  push:\n    branches: [main]\n  pull_request:\n\nconcurrency:\n  group: ci-${{ github.ref }}\n  # Superseding a push to a branch is the point of this: the older run is\n  # testing a commit nobody will merge. A push to `main` is the opposite --\n  # it is the only run that tests two PRs together, each of which was green\n  # on its own, and there is no later run that repeats the reading, because\n  # the next push to main is a different tree again. Measured on\n  # 2026-09-07: six merges landed within minutes and cancelled each other,\n  # `a199ca3` was the first main run in that window allowed to finish, and\n  # it failed.\n  cancel-in-progress: ${{ github.ref != 'refs/heads/main' }}\n\npermissions:\n  contents: read\n\njobs:\n  format:\n    name: Format\n    runs-on: macos-26\n    steps:\n      - uses: actions/checkout@v7\n      - name: Toolchain\n        run: swift --version\n      - name: Check formatting\n        run: make fmt-check\n\n  lint:\n    name: Lint\n    runs-on: macos-26\n    steps:\n      - uses: actions/checkout@v7\n      - name: Install linters\n        run: brew install swiftlint actionlint\n      - name: Lint Swift and workflows\n        run: make lint\n\n  # `swiftlint lint` cannot run the rules under `analyzer_rules`: they need\n  # the arguments the compiler was given, so they need a build. Nothing ran\n  # them, which made that block in .swiftlint.yml a list of rules that had\n  # never once been applied.\n  analyze:\n    name: Analyze\n    runs-on: macos-26\n    steps:\n      - uses: actions/checkout@v7\n      - name: Install swiftlint\n        run: brew install swiftlint\n      # No .build cache here on purpose: the analyzer reads the compile\n      # commands a build prints, and a cache warm enough to skip compiling\n      # would leave it with nothing to read.\n      - name: Run the analyzer rules\n        run: make analyze\n\n  boundaries:\n    name: Check Boundaries\n    runs-on: ubuntu-26.04\n    steps:\n      - uses: actions/checkout@v7\n      - name: Check module boundaries\n        run: make boundaries\n\n  enforcement:\n    name: Enforce Architecture\n    runs-on: ubuntu-26.04\n    steps:\n      - uses: actions/checkout@v7\n      - name: Glass sites\n        run: scripts/check_glass_sites.sh\n      - name: No hand-drawn glass\n        run: scripts/check_no_hand_drawn_glass.sh\n      - name: Time is an argument\n        run: scripts/check_time_is_an_argument.sh\n      - name: One writer for the pipe status\n        run: scripts/check_one_status_writer.sh\n      - name: No print\n        run: scripts/check_no_print.sh\n      - name: No credential in a log call\n        run: scripts/check_log_calls.sh\n      - name: File size\n        run: scripts/check_file_size.sh\n      - name: README claims name their tests\n        run: scripts/check_readme_claims.sh\n      - name: Test and marker counts have not fallen\n        run: scripts/check_test_counts.sh\n      - name: make phone picks one iPhone or refuses\n        run: scripts/check_phone_device.sh\n      # Last, because it needs the network and refuses a tree that pins no\n      # release, which every check above can still be read on.\n      - name: The vendored gglib binding is the pinned release's\n        run: scripts/check_gglib_take.sh\n\n  build:\n    name: Build\n    runs-on: macos-26\n    steps:\n      - uses: actions/checkout@v7\n      # Every package cache is keyed on Package.swift as well: gglib's\n      # frameworks are root binary targets pinned there, which Package.resolved\n      # never records, so a new pin is a new key and its downloads are saved.\n      - uses: actions/cache@v6\n        with:\n          path: .build\n          key: spm-${{ runner.os }}-${{ hashFiles('Package.resolved', 'Package.swift') }}\n          restore-keys: spm-${{ runner.os }}-\n      - name: Toolchain\n        run: xcodebuild -version && swift --version\n      - name: Build the package with warnings as errors\n        run: make build\n      # The package in its Release configuration. The app build below also\n      # links it in Release, but writes to DerivedData; this is the only one\n      # that leaves package objects where the checker looks, and so\n      # the only one that can ask whether the DEBUG-only mock pipe is absent\n      # from a shipped binary rather than merely unchosen by the factory. Not\n      # in the enforcement job: that one runs on Linux and this needs a Swift\n      # toolchain and the macOS SDK.\n      - name: Build for release and check the mock pipe is not in it\n        run: make build-release\n      # The xcodebuild invocations live in the Makefile so `make ci` compiles\n      # what this job compiles instead of an approximation of it.\n      - name: Build the app for macOS and the iOS simulator\n        if: hashFiles('App/ggchat.xcodeproj/project.pbxproj') != ''\n        run: make build-app\n      # Debug is the only configuration anything here had ever compiled: the\n      # scheme's run and test actions are Debug, `xcodebuild build` with no\n      # -configuration takes the run action's, and the Release archive action\n      # is never invoked. So the `#else` arm of every `#if DEBUG` -- the code\n      # that decides what a shipped app does -- reached no compiler at all.\n      - name: Compile the Release configuration\n        if: hashFiles('App/ggchat.xcodeproj/project.pbxproj') != ''\n        run: make build-app-release\n\n  test:\n    name: Test\n    runs-on: macos-26\n    steps:\n      - uses: actions/checkout@v7\n      - uses: actions/cache@v6\n        with:\n          path: .build\n          key: spm-${{ runner.os }}-${{ hashFiles('Package.resolved', 'Package.swift') }}\n          restore-keys: spm-${{ runner.os }}-\n      - name: Lockfile guard\n        run: |\n          swift package resolve\n          git diff --exit-code Package.resolved\n      - name: Run tests with coverage\n        run: |\n          swift test --parallel --enable-code-coverage --xunit-output test-results.xml\n      - name: Export coverage\n        run: |\n          profdata=\"$(dirname \"$(swift test --show-codecov-path)\")/default.profdata\"\n          binary=.build/debug/ggchatPackageTests.xctest/Contents/MacOS/ggchatPackageTests\n          xcrun llvm-cov export -format=lcov -instr-profile \"$profdata\" \"$binary\" \\\n            -ignore-filename-regex='\\.build|Tests/' > coverage.lcov\n          xcrun llvm-cov report -instr-profile \"$profdata\" \"$binary\" \\\n            -ignore-filename-regex='\\.build|Tests/' | tee coverage-summary.txt\n      - name: Upload test results\n        if: always()\n        uses: actions/upload-artifact@v7\n        with:\n          name: test-results\n          path: |\n            test-results*.xml\n            coverage.lcov\n            coverage-summary.txt\n\n  uitest:\n    name: UI Test (${{ matrix.name }})\n    runs-on: macos-26\n    strategy:\n      fail-fast: false\n      matrix:\n        # The whole walk, then the display settings that only change how it is\n        # drawn, over the gallery that photographs every screen. A setting\n        # belongs here only when `simctl ui` can both set it and read it back.\n        # Reduce Transparency it cannot, so that run carries no setting: the\n        # test sets it and measures the consequence itself.\n        include:\n          - name: iPhone\n            slug: iphone\n            device: iPhone\n            tests: ggchatUITests\n            # Skipped here because it has a leg of its own below. Running it\n            # in both means running it twice on one device family, and the\n            # second one inherits whatever the eighteen tests before it left\n            # the simulator in: measured on a199ca3, the dedicated leg passed\n            # and this one failed the same test with `Failed to launch\n            # com.apple.Preferences: Timed out`. That is not a reading about\n            # the app. The iPad leg below skips it too, for an unrelated\n            # reason it states there.\n            skip: ggchatUITests/ReduceTransparencyUITests\n            option: \"\"\n            value: \"\"\n            warm: \"\"\n          - name: iPhone dark\n            slug: iphone-dark\n            device: iPhone\n            tests: ggchatUITests/ScreenGalleryUITests\n            skip: \"\"\n            option: appearance\n            value: dark\n            warm: \"\"\n          - name: iPhone contrast\n            slug: iphone-contrast\n            device: iPhone\n            tests: ggchatUITests/ScreenGalleryUITests\n            skip: \"\"\n            option: increase_contrast\n            value: enabled\n            warm: \"\"\n          - name: iPhone reduce transparency\n            slug: iphone-reduce-transparency\n            device: iPhone\n            tests: ggchatUITests/ReduceTransparencyUITests\n            skip: \"\"\n            option: \"\"\n            value: \"\"\n            warm: com.apple.Preferences\n          # The walk again on the other device family this app ships for.\n          # TARGETED_DEVICE_FAMILY is \"1,2\" and the root is a\n          # NavigationSplitView, which is a stack on an iPhone and two\n          # columns on an iPad: every leg above ran the compact layout, so\n          # nothing had ever driven the one an iPad user sees.\n          #\n          # It skips the Reduce Transparency reading, which is a measurement\n          # rather than a walk. Its bands were fractions of an iPhone's\n          # screenshot, 0.83-0.94 of the height against a band above it; on\n          # an iPad Pro 13-inch both were mostly background and the ratio\n          # moved 0.0026 where the test wanted 0.01, a failure about the\n          # shape of the screen rather than the app. The bands now come from\n          # the composer's own frame (#129), but the reading has been\n          # measured on iPhones only, so it stays off this leg until it has\n          # been measured here. The iPhone leg above still runs it.\n          - name: iPad\n            slug: ipad\n            device: iPad\n            tests: ggchatUITests\n            skip: ggchatUITests/ReduceTransparencyUITests\n            option: \"\"\n            value: \"\"\n            warm: \"\"\n    env:\n      BUNDLE: uitest-${{ matrix.slug }}.xcresult\n    steps:\n      - uses: actions/checkout@v7\n      # Not the `.build` the other jobs cache: xcodebuild resolves the package\n      # into its own cloned-source-packages directory and never reads .build,\n      # so caching that here would restore something this job cannot use.\n      # This saves the clone, not the compile.\n      - uses: actions/cache@v6\n        with:\n          path: .build/xcode-spm\n          key: xcode-spm-${{ runner.os }}-${{ hashFiles('Package.resolved', 'Package.swift') }}\n          restore-keys: xcode-spm-${{ runner.os }}-\n      - name: Pick a booted simulator\n        id: sim\n        env:\n          DEVICE: ${{ matrix.device }}\n        run: |\n          # Newest runtime first, sorted on a tuple of integers. Sorting the\n          # keys as strings would put iOS-9-3 above iOS-18-4, and iOS-26-5\n          # above iOS-26-10, which could hand an older runtime's device to an\n          # app that needs 26 and draws with .glassEffect.\n          # The family is the matrix's, not a constant: with it hard-coded to\n          # iPhone the iPad leg would boot an iPhone and pass as a fifth copy\n          # of the run above it.\n          #\n          # An empty family is that same bug wearing a different hat, and it\n          # is the one thing here nothing downstream can catch: it matches\n          # every name, so a leg added without a `device:` key takes whatever\n          # the newest runtime lists first -- an iPhone on this image -- and\n          # the name check below, comparing against the same empty string,\n          # waves it through. Refused here instead.\n          if [ -z \"$DEVICE\" ]; then\n            echo \"::error::this leg names no device family\"\n            exit 1\n          fi\n          read -r udid name <<<\"$(xcrun simctl list devices available --json \\\n            | python3 -c \"import json,os,re,sys;p=os.environ['DEVICE'];d=json.load(sys.stdin)['devices'];v=lambda k:tuple(map(int,re.findall(r'\\d+',k)));x=next(x for k in sorted((k for k in d if 'iOS' in k),key=v,reverse=True) for x in d[k] if x['name'].startswith(p));print(x['udid'],x['name'])\")\"\n          # A family the image has no device for: `next` raises, the traceback\n          # goes to the log and stdout comes back empty. Named here rather\n          # than left to the check below, which would report a leg that \"got\"\n          # a blank device, or to xcodebuild an hour later.\n          if [ -z \"$udid\" ]; then\n            echo \"::error::no $DEVICE simulator on this runner image\"\n            exit 1\n          fi\n          echo \"this leg runs on $name ($udid)\"\n          # The name is read back and checked against the family the leg is\n          # named for. This is a check on the picker rather than on the\n          # simulator, and it cannot fire for a device the picker could pick\n          # today: the same $DEVICE filters the list above. What it catches\n          # is an edit to that filter -- hard-code the family to iPhone and\n          # the iPad leg fails here instead of going green on a layout it\n          # never drew.\n          case \"$name\" in\n            \"$DEVICE\"*) ;;\n            *) echo \"::error::the $DEVICE leg got $name\"; exit 1 ;;\n          esac\n          echo \"udid=$udid\" >> \"$GITHUB_OUTPUT\"\n          # Booting a booted device is an error by design, so that stays\n          # tolerant. bootstatus is the gate: a simulator that never comes up\n          # should fail here, by name, not twenty minutes later inside\n          # xcodebuild.\n          xcrun simctl boot \"$udid\" || true\n          xcrun simctl bootstatus \"$udid\" -b\n      - name: Set the display setting this run is for\n        if: matrix.option != ''\n        env:\n          UDID: ${{ steps.sim.outputs.udid }}\n          OPTION: ${{ matrix.option }}\n          VALUE: ${{ matrix.value }}\n        run: |\n          # simctl exits 117 on an option it does not have and prints what it\n          # reads back, so the setting is checked rather than assumed. A\n          # runtime that does not support it reads \"unsupported\", and a bad\n          # value for increase_contrast exits 0, so the read-back is the only\n          # thing that actually says the mode took.\n          xcrun simctl ui \"$UDID\" \"$OPTION\" \"$VALUE\"\n          got=$(xcrun simctl ui \"$UDID\" \"$OPTION\")\n          if [ \"$got\" != \"$VALUE\" ]; then\n            echo \"::error::$OPTION did not take: the simulator reads $got\"\n            exit 1\n          fi\n      # Settings' first launch on a simulator that has just booted can take\n      # longer than the half minute XCUIApplication.launch() waits for it,\n      # and the reduce transparency leg's first act is to open it: on\n      # 7faa31b it failed twice running, both times on that first launch,\n      # before the app was ever opened. Opened once here, through simctl,\n      # which waits for as long as it takes, the test's launch is a warm one.\n      - name: Open the app the test drives first, so its launch is warm\n        if: matrix.warm != ''\n        env:\n          UDID: ${{ steps.sim.outputs.udid }}\n          WARM: ${{ matrix.warm }}\n        run: |\n          xcrun simctl launch \"$UDID\" \"$WARM\"\n          xcrun simctl terminate \"$UDID\" \"$WARM\"\n      - name: Drive the first-run flow on a simulator\n        env:\n          UDID: ${{ steps.sim.outputs.udid }}\n          TESTS: ${{ matrix.tests }}\n          SKIP: ${{ matrix.skip }}\n        run: |\n          set -o pipefail\n          # xcodebuild refuses to write a result bundle that already exists,\n          # and a re-run on a warm runner has one.\n          rm -rf \"$BUNDLE\"\n          # The legs that skip nothing must pass no -skip-testing: at all,\n          # so the flag is built as an array rather than interpolated into\n          # the command: an empty `-skip-testing:` is an argument, not the\n          # absence of one.\n          skip=()\n          if [ -n \"$SKIP\" ]; then skip=(-skip-testing:\"$SKIP\"); fi\n          xcodebuild test -project App/ggchat.xcodeproj -scheme ggchat \\\n            -destination \"id=$UDID\" \\\n            -resultBundlePath \"$BUNDLE\" \\\n            -clonedSourcePackagesDirPath .build/xcode-spm \\\n            -only-testing:\"$TESTS\" \"${skip[@]}\" \\\n            CODE_SIGN_IDENTITY=- CODE_SIGNING_REQUIRED=NO CODE_SIGNING_ALLOWED=YES -quiet\n      - name: Say which tests ran and why any failed\n        if: always()\n        run: |\n          xcrun xcresulttool get test-results tests --path \"$BUNDLE\" --format json \\\n            | python3 -c \"\n          import json, sys\n          cases, failures = [], []\n          def walk(nodes, case=None, failing=False):\n              for n in nodes:\n                  if n.get('nodeType') == 'Test Case':\n                      case, result = n.get('name'), n.get('result')\n                      failing = result == 'Failed'\n                      cases.append((result, case))\n                  # A skipped test carries a message too, and the live tests\n                  # skip on CI; only a failing one is worth an annotation.\n                  if n.get('nodeType') == 'Failure Message' and failing:\n                      failures.append((case, n.get('name')))\n                  walk(n.get('children', []), case, failing)\n          walk(json.load(sys.stdin).get('testNodes', []))\n          for result, name in cases:\n              print(f'{result}\\t{name}')\n          for case, message in failures:\n              print(f'::error::{case}: {message}')\n          if not cases:\n              print('::error::no tests ran; the Xcode project is probably stale, run make project')\n              sys.exit(1)\n          \"\n      - name: Upload the screenshots it took\n        if: always()\n        uses: actions/upload-artifact@v7\n        with:\n          name: ui-test-screenshots-${{ matrix.slug }}\n          path: ${{ env.BUNDLE }}\n\n  unused:\n    name: Unused Code\n    runs-on: macos-26\n    steps:\n      - uses: actions/checkout@v7\n      - uses: actions/cache@v6\n        with:\n          path: .build\n          key: spm-${{ runner.os }}-${{ hashFiles('Package.resolved', 'Package.swift') }}\n          restore-keys: spm-${{ runner.os }}-\n      - name: Install periphery\n        run: brew install periphery\n      - name: Scan\n        run: make unused\n\n  docs:\n    name: Docs\n    runs-on: macos-26\n    steps:\n      - uses: actions/checkout@v7\n      - uses: actions/cache@v6\n        with:\n          path: .build\n          key: spm-${{ runner.os }}-${{ hashFiles('Package.resolved', 'Package.swift') }}\n          restore-keys: spm-${{ runner.os }}-\n      - name: Build DocC with warnings as errors\n        run: make docs\n"
+ },
+ "jobs": [
+  {
+   "id": 124783213628,
+   "run_id": 41284593895,
+   "name": "Analyze",
+   "status": "completed",
+   "conclusion": "success",
+   "labels": [
+    "macos-26"
+   ],
+   "runner_name": "GitHub Actions 1000072426",
+   "html_url": "https://github.com/mmogr/ggchat/actions/runs/41284593895/job/124783213628",
+   "created_at": "2026-11-01T07:23:27Z",
+   "started_at": "2026-11-01T07:38:51Z",
+   "completed_at": "2026-11-01T09:18:08Z",
+   "steps": [
+    {
+     "number": 1,
+     "name": "Set up job",
+     "status": "completed",
+     "conclusion": "success"
+    },
+    {
+     "number": 2,
+     "name": "Run actions/checkout@v7",
+     "status": "completed",
+     "conclusion": "success"
+    },
+    {
+     "number": 3,
+     "name": "Install swiftlint",
+     "status": "completed",
+     "conclusion": "success"
+    },
+    {
+     "number": 4,
+     "name": "Run the analyzer rules",
+     "status": "completed",
+     "conclusion": "success"
+    },
+    {
+     "number": 8,
+     "name": "Post Run actions/checkout@v7",
+     "status": "completed",
+     "conclusion": "success"
+    },
+    {
+     "number": 9,
+     "name": "Complete job",
+     "status": "completed",
+     "conclusion": "success"
+    }
+   ]
+  },
+  {
+   "id": 124783213714,
+   "run_id": 41284593895,
+   "name": "Enforce Architecture",
+   "status": "completed",
+   "conclusion": "success",
+   "labels": [
+    "ubuntu-26.04"
+   ],
+   "runner_name": "GitHub Actions 1000072411",
+   "html_url": "https://github.com/mmogr/ggchat/actions/runs/41284593895/job/124783213714",
+   "created_at": "2026-11-01T07:23:27Z",
+   "started_at": "2026-11-01T07:23:29Z",
+   "completed_at": "2026-11-01T07:23:34Z",
+   "steps": [
+    {
+     "number": 1,
+     "name": "Set up job",
+     "status": "completed",
+     "conclusion": "success"
+    },
+    {
+     "number": 2,
+     "name": "Run actions/checkout@v7",
+     "status": "completed",
+     "conclusion": "success"
+    },
+    {
+     "number": 3,
+     "name": "Glass sites",
+     "status": "completed",
+     "conclusion": "success"
+    },
+    {
+     "number": 4,
+     "name": "No hand-drawn glass",
+     "status": "completed",
+     "conclusion": "success"
+    },
+    {
+     "number": 5,
+     "name": "Time is an argument",
+     "status": "completed",
+     "conclusion": "success"
+    },
+    {
+     "number": 6,
+     "name": "One writer for the pipe status",
+     "status": "completed",
+     "conclusion": "success"
+    },
+    {
+     "number": 7,
+     "name": "No print",
+     "status": "completed",
+     "conclusion": "success"
+    },
+    {
+     "number": 8,
+     "name": "No credential in a log call",
+     "status": "completed",
+     "conclusion": "success"
+    },
+    {
+     "number": 9,
+     "name": "File size",
+     "status": "completed",
+     "conclusion": "success"
+    },
+    {
+     "number": 10,
+     "name": "README claims name their tests",
+     "status": "completed",
+     "conclusion": "success"
+    },
+    {
+     "number": 11,
+     "name": "Test and marker counts have not fallen",
+     "status": "completed",
+     "conclusion": "success"
+    },
+    {
+     "number": 12,
+     "name": "make phone picks one iPhone or refuses",
+     "status": "completed",
+     "conclusion": "success"
+    },
+    {
+     "number": 13,
+     "name": "The vendored gglib binding is the pinned release's",
+     "status": "completed",
+     "conclusion": "success"
+    },
+    {
+     "number": 26,
+     "name": "Post Run actions/checkout@v7",
+     "status": "completed",
+     "conclusion": "success"
+    },
+    {
+     "number": 27,
+     "name": "Complete job",
+     "status": "completed",
+     "conclusion": "success"
+    }
+   ]
+  },
+  {
+   "id": 124783213724,
+   "run_id": 41284593895,
+   "name": "Test",
+   "status": "completed",
+   "conclusion": "success",
+   "labels": [
+    "macos-26"
+   ],
+   "runner_name": "GitHub Actions 1000072430",
+   "html_url": "https://github.com/mmogr/ggchat/actions/runs/41284593895/job/124783213724",
+   "created_at": "2026-11-01T07:23:27Z",
+   "started_at": "2026-11-01T07:54:04Z",
+   "completed_at": "2026-11-01T07:59:02Z",
+   "steps": [
+    {
+     "number": 1,
+     "name": "Set up job",
+     "status": "completed",
+     "conclusion": "success"
+    },
+    {
+     "number": 2,
+     "name": "Run actions/checkout@v7",
+     "status": "completed",
+     "conclusion": "success"
+    },
+    {
+     "number": 3,
+     "name": "Run actions/cache@v6",
+     "status": "completed",
+     "conclusion": "success"
+    },
+    {
+     "number": 4,
+     "name": "Lockfile guard",
+     "status": "completed",
+     "conclusion": "success"
+    },
+    {
+     "number": 5,
+     "name": "Run tests with coverage",
+     "status": "completed",
+     "conclusion": "success"
+    },
+    {
+     "number": 6,
+     "name": "Export coverage",
+     "status": "completed",
+     "conclusion": "success"
+    },
+    {
+     "number": 7,
+     "name": "Upload test results",
+     "status": "completed",
+     "conclusion": "success"
+    },
+    {
+     "number": 13,
+     "name": "Post Run actions/cache@v6",
+     "status": "completed",
+     "conclusion": "success"
+    },
+    {
+     "number": 14,
+     "name": "Post Run actions/checkout@v7",
+     "status": "completed",
+     "conclusion": "success"
+    },
+    {
+     "number": 15,
+     "name": "Complete job",
+     "status": "completed",
+     "conclusion": "success"
+    }
+   ]
+  },
+  {
+   "id": 124783213761,
+   "run_id": 41284593895,
+   "name": "Format",
+   "status": "completed",
+   "conclusion": "success",
+   "labels": [
+    "macos-26"
+   ],
+   "runner_name": "GitHub Actions 1000072447",
+   "html_url": "https://github.com/mmogr/ggchat/actions/runs/41284593895/job/124783213761",
+   "created_at": "2026-11-01T07:23:27Z",
+   "started_at": "2026-11-01T09:14:00Z",
+   "completed_at": "2026-11-01T09:14:17Z",
+   "steps": [
+    {
+     "number": 1,
+     "name": "Set up job",
+     "status": "completed",
+     "conclusion": "success"
+    },
+    {
+     "number": 2,
+     "name": "Run actions/checkout@v7",
+     "status": "completed",
+     "conclusion": "success"
+    },
+    {
+     "number": 3,
+     "name": "Toolchain",
+     "status": "completed",
+     "conclusion": "success"
+    },
+    {
+     "number": 4,
+     "name": "Check formatting",
+     "status": "completed",
+     "conclusion": "success"
+    },
+    {
+     "number": 8,
+     "name": "Post Run actions/checkout@v7",
+     "status": "completed",
+     "conclusion": "success"
+    },
+    {
+     "number": 9,
+     "name": "Complete job",
+     "status": "completed",
+     "conclusion": "success"
+    }
+   ]
+  },
+  {
+   "id": 124783213764,
+   "run_id": 41284593895,
+   "name": "UI Test (iPhone dark)",
+   "status": "completed",
+   "conclusion": "success",
+   "labels": [
+    "macos-26"
+   ],
+   "runner_name": "GitHub Actions 1000072431",
+   "html_url": "https://github.com/mmogr/ggchat/actions/runs/41284593895/job/124783213764",
+   "created_at": "2026-11-01T07:23:27Z",
+   "started_at": "2026-11-01T07:54:08Z",
+   "completed_at": "2026-11-01T09:08:24Z",
+   "steps": [
+    {
+     "number": 1,
+     "name": "Set up job",
+     "status": "completed",
+     "conclusion": "success"
+    },
+    {
+     "number": 2,
+     "name": "Run actions/checkout@v7",
+     "status": "completed",
+     "conclusion": "success"
+    },
+    {
+     "number": 3,
+     "name": "Run actions/cache@v6",
+     "status": "completed",
+     "conclusion": "success"
+    },
+    {
+     "number": 4,
+     "name": "Pick a booted simulator",
+     "status": "completed",
+     "conclusion": "success"
+    },
+    {
+     "number": 5,
+     "name": "Set the display setting this run is for",
+     "status": "completed",
+     "conclusion": "success"
+    },
+    {
+     "number": 6,
+     "name": "Open the app the test drives first, so its launch is warm",
+     "status": "completed",
+     "conclusion": "skipped"
+    },
+    {
+     "number": 7,
+     "name": "Drive the first-run flow on a simulator",
+     "status": "completed",
+     "conclusion": "success"
+    },
+    {
+     "number": 8,
+     "name": "Say which tests ran and why any failed",
+     "status": "completed",
+     "conclusion": "success"
+    },
+    {
+     "number": 9,
+     "name": "Upload the screenshots it took",
+     "status": "completed",
+     "conclusion": "success"
+    },
+    {
+     "number": 17,
+     "name": "Post Run actions/cache@v6",
+     "status": "completed",
+     "conclusion": "success"
+    },
+    {
+     "number": 18,
+     "name": "Post Run actions/checkout@v7",
+     "status": "completed",
+     "conclusion": "success"
+    },
+    {
+     "number": 19,
+     "name": "Complete job",
+     "status": "completed",
+     "conclusion": "success"
+    }
+   ]
+  },
+  {
+   "id": 124783213775,
+   "run_id": 41284593895,
+   "name": "UI Test (iPad)",
+   "status": "completed",
+   "conclusion": "success",
+   "labels": [
+    "macos-26"
+   ],
+   "runner_name": "GitHub Actions 1000072428",
+   "html_url": "https://github.com/mmogr/ggchat/actions/runs/41284593895/job/124783213775",
+   "created_at": "2026-11-01T07:23:27Z",
+   "started_at": "2026-11-01T07:48:26Z",
+   "completed_at": "2026-11-01T09:19:38Z",
+   "steps": [
+    {
+     "number": 1,
+     "name": "Set up job",
+     "status": "completed",
+     "conclusion": "success"
+    },
+    {
+     "number": 2,
+     "name": "Run actions/checkout@v7",
+     "status": "completed",
+     "conclusion": "success"
+    },
+    {
+     "number": 3,
+     "name": "Run actions/cache@v6",
+     "status": "completed",
+     "conclusion": "success"
+    },
+    {
+     "number": 4,
+     "name": "Pick a booted simulator",
+     "status": "completed",
+     "conclusion": "success"
+    },
+    {
+     "number": 5,
+     "name": "Set the display setting this run is for",
+     "status": "completed",
+     "conclusion": "skipped"
+    },
+    {
+     "number": 6,
+     "name": "Open the app the test drives first, so its launch is warm",
+     "status": "completed",
+     "conclusion": "skipped"
+    },
+    {
+     "number": 7,
+     "name": "Drive the first-run flow on a simulator",
+     "status": "completed",
+     "conclusion": "success"
+    },
+    {
+     "number": 8,
+     "name": "Say which tests ran and why any failed",
+     "status": "completed",
+     "conclusion": "success"
+    },
+    {
+     "number": 9,
+     "name": "Upload the screenshots it took",
+     "status": "completed",
+     "conclusion": "success"
+    },
+    {
+     "number": 17,
+     "name": "Post Run actions/cache@v6",
+     "status": "completed",
+     "conclusion": "success"
+    },
+    {
+     "number": 18,
+     "name": "Post Run actions/checkout@v7",
+     "status": "completed",
+     "conclusion": "success"
+    },
+    {
+     "number": 19,
+     "name": "Complete job",
+     "status": "completed",
+     "conclusion": "success"
+    }
+   ]
+  },
+  {
+   "id": 124783213782,
+   "run_id": 41284593895,
+   "name": "Build",
+   "status": "completed",
+   "conclusion": "success",
+   "labels": [
+    "macos-26"
+   ],
+   "runner_name": "GitHub Actions 1000072544",
+   "html_url": "https://github.com/mmogr/ggchat/actions/runs/41284593895/job/124783213782",
+   "created_at": "2026-11-01T07:23:27Z",
+   "started_at": "2026-11-01T09:24:20Z",
+   "completed_at": "2026-11-01T09:33:33Z",
+   "steps": [
+    {
+     "number": 1,
+     "name": "Set up job",
+     "status": "completed",
+     "conclusion": "success"
+    },
+    {
+     "number": 2,
+     "name": "Run actions/checkout@v7",
+     "status": "completed",
+     "conclusion": "success"
+    },
+    {
+     "number": 3,
+     "name": "Run actions/cache@v6",
+     "status": "completed",
+     "conclusion": "success"
+    },
+    {
+     "number": 4,
+     "name": "Toolchain",
+     "status": "completed",
+     "conclusion": "success"
+    },
+    {
+     "number": 5,
+     "name": "Build the package with warnings as errors",
+     "status": "completed",
+     "conclusion": "success"
+    },
+    {
+     "number": 6,
+     "name": "Build for release and check the mock pipe is not in it",
+     "status": "completed",
+     "conclusion": "success"
+    },
+    {
+     "number": 7,
+     "name": "Build the app for macOS and the iOS simulator",
+     "status": "completed",
+     "conclusion": "success"
+    },
+    {
+     "number": 8,
+     "name": "Compile the Release configuration",
+     "status": "completed",
+     "conclusion": "success"
+    },
+    {
+     "number": 15,
+     "name": "Post Run actions/cache@v6",
+     "status": "completed",
+     "conclusion": "success"
+    },
+    {
+     "number": 16,
+     "name": "Post Run actions/checkout@v7",
+     "status": "completed",
+     "conclusion": "success"
+    },
+    {
+     "number": 17,
+     "name": "Complete job",
+     "status": "completed",
+     "conclusion": "success"
+    }
+   ]
+  },
+  {
+   "id": 124783213789,
+   "run_id": 41284593895,
+   "name": "Lint",
+   "status": "completed",
+   "conclusion": "success",
+   "labels": [
+    "macos-26"
+   ],
+   "runner_name": "GitHub Actions 1000072541",
+   "html_url": "https://github.com/mmogr/ggchat/actions/runs/41284593895/job/124783213789",
+   "created_at": "2026-11-01T07:23:27Z",
+   "started_at": "2026-11-01T09:22:39Z",
+   "completed_at": "2026-11-01T09:23:12Z",
+   "steps": [
+    {
+     "number": 1,
+     "name": "Set up job",
+     "status": "completed",
+     "conclusion": "success"
+    },
+    {
+     "number": 2,
+     "name": "Run actions/checkout@v7",
+     "status": "completed",
+     "conclusion": "success"
+    },
+    {
+     "number": 3,
+     "name": "Install linters",
+     "status": "completed",
+     "conclusion": "success"
+    },
+    {
+     "number": 4,
+     "name": "Lint Swift and workflows",
+     "status": "completed",
+     "conclusion": "success"
+    },
+    {
+     "number": 8,
+     "name": "Post Run actions/checkout@v7",
+     "status": "completed",
+     "conclusion": "success"
+    },
+    {
+     "number": 9,
+     "name": "Complete job",
+     "status": "completed",
+     "conclusion": "success"
+    }
+   ]
+  },
+  {
+   "id": 124783213791,
+   "run_id": 41284593895,
+   "name": "Unused Code",
+   "status": "completed",
+   "conclusion": "success",
+   "labels": [
+    "macos-26"
+   ],
+   "runner_name": "GitHub Actions 1000072465",
+   "html_url": "https://github.com/mmogr/ggchat/actions/runs/41284593895/job/124783213791",
+   "created_at": "2026-11-01T07:23:27Z",
+   "started_at": "2026-11-01T09:19:40Z",
+   "completed_at": "2026-11-01T09:22:45Z",
+   "steps": [
+    {
+     "number": 1,
+     "name": "Set up job",
+     "status": "completed",
+     "conclusion": "success"
+    },
+    {
+     "number": 2,
+     "name": "Run actions/checkout@v7",
+     "status": "completed",
+     "conclusion": "success"
+    },
+    {
+     "number": 3,
+     "name": "Run actions/cache@v6",
+     "status": "completed",
+     "conclusion": "success"
+    },
+    {
+     "number": 4,
+     "name": "Install periphery",
+     "status": "completed",
+     "conclusion": "success"
+    },
+    {
+     "number": 5,
+     "name": "Scan",
+     "status": "completed",
+     "conclusion": "success"
+    },
+    {
+     "number": 9,
+     "name": "Post Run actions/cache@v6",
+     "status": "completed",
+     "conclusion": "success"
+    },
+    {
+     "number": 10,
+     "name": "Post Run actions/checkout@v7",
+     "status": "completed",
+     "conclusion": "success"
+    },
+    {
+     "number": 11,
+     "name": "Complete job",
+     "status": "completed",
+     "conclusion": "success"
+    }
+   ]
+  },
+  {
+   "id": 124783213801,
+   "run_id": 41284593895,
+   "name": "UI Test (iPhone)",
+   "status": "completed",
+   "conclusion": "success",
+   "labels": [
+    "macos-26"
+   ],
+   "runner_name": "GitHub Actions 1000072449",
+   "html_url": "https://github.com/mmogr/ggchat/actions/runs/41284593895/job/124783213801",
+   "created_at": "2026-11-01T07:23:27Z",
+   "started_at": "2026-11-01T09:17:27Z",
+   "completed_at": "2026-11-01T09:49:19Z",
+   "steps": [
+    {
+     "number": 1,
+     "name": "Set up job",
+     "status": "completed",
+     "conclusion": "success"
+    },
+    {
+     "number": 2,
+     "name": "Run actions/checkout@v7",
+     "status": "completed",
+     "conclusion": "success"
+    },
+    {
+     "number": 3,
+     "name": "Run actions/cache@v6",
+     "status": "completed",
+     "conclusion": "success"
+    },
+    {
+     "number": 4,
+     "name": "Pick a booted simulator",
+     "status": "completed",
+     "conclusion": "success"
+    },
+    {
+     "number": 5,
+     "name": "Set the display setting this run is for",
+     "status": "completed",
+     "conclusion": "skipped"
+    },
+    {
+     "number": 6,
+     "name": "Open the app the test drives first, so its launch is warm",
+     "status": "completed",
+     "conclusion": "skipped"
+    },
+    {
+     "number": 7,
+     "name": "Drive the first-run flow on a simulator",
+     "status": "completed",
+     "conclusion": "success"
+    },
+    {
+     "number": 8,
+     "name": "Say which tests ran and why any failed",
+     "status": "completed",
+     "conclusion": "success"
+    },
+    {
+     "number": 9,
+     "name": "Upload the screenshots it took",
+     "status": "completed",
+     "conclusion": "success"
+    },
+    {
+     "number": 17,
+     "name": "Post Run actions/cache@v6",
+     "status": "completed",
+     "conclusion": "success"
+    },
+    {
+     "number": 18,
+     "name": "Post Run actions/checkout@v7",
+     "status": "completed",
+     "conclusion": "success"
+    },
+    {
+     "number": 19,
+     "name": "Complete job",
+     "status": "completed",
+     "conclusion": "success"
+    }
+   ]
+  },
+  {
+   "id": 124783213811,
+   "run_id": 41284593895,
+   "name": "UI Test (iPhone reduce transparency)",
+   "status": "completed",
+   "conclusion": "success",
+   "labels": [
+    "macos-26"
+   ],
+   "runner_name": "GitHub Actions 1000072445",
+   "html_url": "https://github.com/mmogr/ggchat/actions/runs/41284593895/job/124783213811",
+   "created_at": "2026-11-01T07:23:27Z",
+   "started_at": "2026-11-01T09:03:57Z",
+   "completed_at": "2026-11-01T09:17:25Z",
+   "steps": [
+    {
+     "number": 1,
+     "name": "Set up job",
+     "status": "completed",
+     "conclusion": "success"
+    },
+    {
+     "number": 2,
+     "name": "Run actions/checkout@v7",
+     "status": "completed",
+     "conclusion": "success"
+    },
+    {
+     "number": 3,
+     "name": "Run actions/cache@v6",
+     "status": "completed",
+     "conclusion": "success"
+    },
+    {
+     "number": 4,
+     "name": "Pick a booted simulator",
+     "status": "completed",
+     "conclusion": "success"
+    },
+    {
+     "number": 5,
+     "name": "Set the display setting this run is for",
+     "status": "completed",
+     "conclusion": "skipped"
+    },
+    {
+     "number": 6,
+     "name": "Open the app the test drives first, so its launch is warm",
+     "status": "completed",
+     "conclusion": "success"
+    },
+    {
+     "number": 7,
+     "name": "Drive the first-run flow on a simulator",
+     "status": "completed",
+     "conclusion": "success"
+    },
+    {
+     "number": 8,
+     "name": "Say which tests ran and why any failed",
+     "status": "completed",
+     "conclusion": "success"
+    },
+    {
+     "number": 9,
+     "name": "Upload the screenshots it took",
+     "status": "completed",
+     "conclusion": "success"
+    },
+    {
+     "number": 17,
+     "name": "Post Run actions/cache@v6",
+     "status": "completed",
+     "conclusion": "success"
+    },
+    {
+     "number": 18,
+     "name": "Post Run actions/checkout@v7",
+     "status": "completed",
+     "conclusion": "success"
+    },
+    {
+     "number": 19,
+     "name": "Complete job",
+     "status": "completed",
+     "conclusion": "success"
+    }
+   ]
+  },
+  {
+   "id": 124783213824,
+   "run_id": 41284593895,
+   "name": "UI Test (iPhone contrast)",
+   "status": "completed",
+   "conclusion": "success",
+   "labels": [
+    "macos-26"
+   ],
+   "runner_name": "GitHub Actions 1000072446",
+   "html_url": "https://github.com/mmogr/ggchat/actions/runs/41284593895/job/124783213824",
+   "created_at": "2026-11-01T07:23:27Z",
+   "started_at": "2026-11-01T09:08:26Z",
+   "completed_at": "2026-11-01T09:24:18Z",
+   "steps": [
+    {
+     "number": 1,
+     "name": "Set up job",
+     "status": "completed",
+     "conclusion": "success"
+    },
+    {
+     "number": 2,
+     "name": "Run actions/checkout@v7",
+     "status": "completed",
+     "conclusion": "success"
+    },
+    {
+     "number": 3,
+     "name": "Run actions/cache@v6",
+     "status": "completed",
+     "conclusion": "success"
+    },
+    {
+     "number": 4,
+     "name": "Pick a booted simulator",
+     "status": "completed",
+     "conclusion": "success"
+    },
+    {
+     "number": 5,
+     "name": "Set the display setting this run is for",
+     "status": "completed",
+     "conclusion": "success"
+    },
+    {
+     "number": 6,
+     "name": "Open the app the test drives first, so its launch is warm",
+     "status": "completed",
+     "conclusion": "skipped"
+    },
+    {
+     "number": 7,
+     "name": "Drive the first-run flow on a simulator",
+     "status": "completed",
+     "conclusion": "success"
+    },
+    {
+     "number": 8,
+     "name": "Say which tests ran and why any failed",
+     "status": "completed",
+     "conclusion": "success"
+    },
+    {
+     "number": 9,
+     "name": "Upload the screenshots it took",
+     "status": "completed",
+     "conclusion": "success"
+    },
+    {
+     "number": 17,
+     "name": "Post Run actions/cache@v6",
+     "status": "completed",
+     "conclusion": "success"
+    },
+    {
+     "number": 18,
+     "name": "Post Run actions/checkout@v7",
+     "status": "completed",
+     "conclusion": "success"
+    },
+    {
+     "number": 19,
+     "name": "Complete job",
+     "status": "completed",
+     "conclusion": "success"
+    }
+   ]
+  },
+  {
+   "id": 124783213829,
+   "run_id": 41284593895,
+   "name": "Check Boundaries",
+   "status": "completed",
+   "conclusion": "success",
+   "labels": [
+    "ubuntu-26.04"
+   ],
+   "runner_name": "GitHub Actions 1000072412",
+   "html_url": "https://github.com/mmogr/ggchat/actions/runs/41284593895/job/124783213829",
+   "created_at": "2026-11-01T07:23:27Z",
+   "started_at": "2026-11-01T07:23:30Z",
+   "completed_at": "2026-11-01T07:23:36Z",
+   "steps": [
+    {
+     "number": 1,
+     "name": "Set up job",
+     "status": "completed",
+     "conclusion": "success"
+    },
+    {
+     "number": 2,
+     "name": "Run actions/checkout@v7",
+     "status": "completed",
+     "conclusion": "success"
+    },
+    {
+     "number": 3,
+     "name": "Check module boundaries",
+     "status": "completed",
+     "conclusion": "success"
+    },
+    {
+     "number": 6,
+     "name": "Post Run actions/checkout@v7",
+     "status": "completed",
+     "conclusion": "success"
+    },
+    {
+     "number": 7,
+     "name": "Complete job",
+     "status": "completed",
+     "conclusion": "success"
+    }
+   ]
+  },
+  {
+   "id": 124783213836,
+   "run_id": 41284593895,
+   "name": "Docs",
+   "status": "completed",
+   "conclusion": "success",
+   "labels": [
+    "macos-26"
+   ],
+   "runner_name": "GitHub Actions 1000072448",
+   "html_url": "https://github.com/mmogr/ggchat/actions/runs/41284593895/job/124783213836",
+   "created_at": "2026-11-01T07:23:27Z",
+   "started_at": "2026-11-01T09:14:20Z",
+   "completed_at": "2026-11-01T09:22:37Z",
+   "steps": [
+    {
+     "number": 1,
+     "name": "Set up job",
+     "status": "completed",
+     "conclusion": "success"
+    },
+    {
+     "number": 2,
+     "name": "Run actions/checkout@v7",
+     "status": "completed",
+     "conclusion": "success"
+    },
+    {
+     "number": 3,
+     "name": "Run actions/cache@v6",
+     "status": "completed",
+     "conclusion": "success"
+    },
+    {
+     "number": 4,
+     "name": "Build DocC with warnings as errors",
+     "status": "completed",
+     "conclusion": "success"
+    },
+    {
+     "number": 7,
+     "name": "Post Run actions/cache@v6",
+     "status": "completed",
+     "conclusion": "success"
+    },
+    {
+     "number": 8,
+     "name": "Post Run actions/checkout@v7",
+     "status": "completed",
+     "conclusion": "success"
+    },
+    {
+     "number": 9,
+     "name": "Complete job",
+     "status": "completed",
+     "conclusion": "success"
+    }
+   ]
+  }
+ ]
+}
