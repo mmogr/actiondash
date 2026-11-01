@@ -5,7 +5,6 @@ import {
   calledKey,
   evaluate,
   expandGraph,
-  extractWorkflow,
   isCheckRunEntry,
   isRunGraph,
   matchJobs,
@@ -19,6 +18,7 @@ import {
   type RunGraph,
   type WorkflowDef,
 } from '../src/model/workflow'
+import { extractWorkflow } from '../src/model/workflowParse'
 
 /**
  * Real runs, captured with their workflow files at the exact commits they ran

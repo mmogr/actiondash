@@ -1,15 +1,28 @@
-import { useState } from 'preact/hooks'
+import { useEffect, useState } from 'preact/hooks'
 import type { WorkflowJob } from '../github/types'
 import { runOutlook, type BucketForecast, type JobForecast } from '../model/forecast'
 import { isCancelRequested } from '../model/finished'
 import { isMine } from '../model/mine'
 import { jobStep, runProgress, type RunGroup as Group } from '../model/queue'
-import { RUNNER_CLASS_LABEL } from '../model/runnerClass'
-import { cancelRequested, forecasts, frozenAt, jobsByRun, now, runsAsOf } from '../state/store'
+import { RUNNER_CLASS_LABEL, RUNNER_CLASS_ORDER } from '../model/runnerClass'
+import { isRunGraph } from '../model/workflow'
+import {
+  aheadOfSelected,
+  buckets,
+  cancelRequested,
+  forecasts,
+  frozenAt,
+  graphOutlooks,
+  graphs,
+  jobsByRun,
+  now,
+  runsAsOf,
+} from '../state/store'
 import { settings } from '../state/settings'
 import { age, duration, hedge, shortClock, shortSha } from './format'
 import { seriesClass } from './palette'
 import { useCancelRun } from './useCancelRun'
+import { RunGraph } from './RunGraph'
 
 interface Props {
   group: Group
@@ -69,6 +82,26 @@ export function RunGroup({ group, kind, defaultOpen, forecast }: Props) {
   const progress = runProgress(jobsByRun.value.get(run.id))
   const outlook = runOutlook(run.id, [...forecasts.value.values()].map((v) => v.forecast))
   const pool = RUNNER_CLASS_LABEL[first?.entry.cls ?? 'macos']
+
+  // A run with a graph is drawn once, in the first pool it appears in down
+  // the page; its rows in other pools point there.
+  const entry = graphs.value.get(run.id)
+  const graph = entry && isRunGraph(entry) ? entry : null
+  const whole = graph ? graphOutlooks.value.get(run.id) : undefined
+  const home = RUNNER_CLASS_ORDER.find((cls) =>
+    buckets.value.some((b) => b.cls === cls && [...b.running, ...b.queued].some((j) => j.run.id === run.id)),
+  )
+  const isHome = home === undefined || home === first?.entry.cls
+  const ahead = aheadOfSelected.value
+  const aheadHere = jobs.filter(({ entry }) => ahead.has(entry.job.id)).length
+
+  // The reader's own run opens to its graph when the graph arrives, which is
+  // usually a poll after the run itself: it is the run they are watching.
+  const showsGraph = graph !== null && isHome
+  const mine = isMine(run, settings.value.login)
+  useEffect(() => {
+    if (showsGraph && mine) setOpen(true)
+  }, [showsGraph, mine])
   const total = progress.done + progress.running + progress.queued
   // A cancel stops the whole run, so the question counts every job it stops,
   // in any pool, not only this row's.
@@ -89,12 +122,15 @@ export function RunGroup({ group, kind, defaultOpen, forecast }: Props) {
         : `positions ${first.position} to ${last.position}`
       : null
   const bucketOutlook = forecast?.runs.get(run.id)
-  const doneBy = outlook?.allDone ?? null
+  // With a graph, done means the whole run, jobs not created yet included.
+  const doneBy = whole ? whole.allDone : (outlook?.allDone ?? null)
+  const doneBasis = whole ? whole.basis : (outlook?.basis ?? 'learned')
+  const doneWord = whole ? 'done' : 'current jobs done'
   const eta =
     kind === 'queued' && bucketOutlook && bucketOutlook.firstStart !== null
       ? single
-        ? `starts ~${shortClock(bucketOutlook.firstStart)}${hedge(bucketOutlook.basis)}${doneBy === null ? '' : `, done ~${shortClock(doneBy)}${hedge(outlook?.basis ?? 'learned')}`}`
-        : `first job starts ~${shortClock(bucketOutlook.firstStart)}${hedge(bucketOutlook.basis)}${doneBy === null ? '' : `, all done ~${shortClock(doneBy)}${hedge(outlook?.basis ?? 'learned')}`}`
+        ? `starts ~${shortClock(bucketOutlook.firstStart)}${hedge(bucketOutlook.basis)}${doneBy === null ? '' : `, done ~${shortClock(doneBy)}${hedge(doneBasis)}`}`
+        : `first job starts ~${shortClock(bucketOutlook.firstStart)}${hedge(bucketOutlook.basis)}${doneBy === null ? '' : `, all done ~${shortClock(doneBy)}${hedge(doneBasis)}`}`
       : null
   const progressNote =
     kind !== 'running'
@@ -102,12 +138,12 @@ export function RunGroup({ group, kind, defaultOpen, forecast }: Props) {
       : total <= 1
         ? doneBy === null
           ? null
-          : `done ~${shortClock(doneBy)}${hedge(outlook?.basis ?? 'learned')}`
+          : `done ~${shortClock(doneBy)}${hedge(doneBasis)}`
         : [
             progress.done > 0 ? `${progress.done} done` : null,
             `${progress.running} running`,
             progress.queued > 0 ? `${progress.queued} waiting` : null,
-            doneBy === null ? null : `current jobs done ~${shortClock(doneBy)}${hedge(outlook?.basis ?? 'learned')}`,
+            doneBy === null ? null : `${doneWord} ~${shortClock(doneBy)}${hedge(doneBasis)}`,
           ]
             .filter(Boolean)
             .join(' · ')
@@ -170,6 +206,12 @@ export function RunGroup({ group, kind, defaultOpen, forecast }: Props) {
             </div>
           )}
           {positions && supersededBy && eta && <div class="group-note">{eta}</div>}
+          {graph && !isHome && home && <div class="group-note">Its graph is under {RUNNER_CLASS_LABEL[home]}.</div>}
+          {aheadHere > 0 && (
+            <div class="group-note ahead-note">
+              {aheadHere} {aheadHere === 1 ? 'job' : 'jobs'} ahead of the one you picked
+            </div>
+          )}
         </div>
 
         {/* One node for both texts, so focus survives the text changing. */}
@@ -211,7 +253,13 @@ export function RunGroup({ group, kind, defaultOpen, forecast }: Props) {
         </div>
       )}
 
-      {open && (!single || (kind === 'running' && forecast) || failed.length > 0) && (
+      {open && graph && isHome && (
+        <div class="graph-wrap">
+          <RunGraph run={run} graph={graph} ahead={ahead} />
+        </div>
+      )}
+
+      {open && !(graph && isHome) && (!single || (kind === 'running' && forecast) || failed.length > 0) && (
         <div class="jobs">
           {failed.map((job) => {
             const step = jobStep(job)
@@ -242,7 +290,7 @@ export function RunGroup({ group, kind, defaultOpen, forecast }: Props) {
               f && f.typical ? Math.min(100, Math.round((elapsed / f.typical) * 100)) : null
             const step = kind === 'running' ? jobStep(entry.job) : null
             return (
-              <div class="jobrow" key={entry.job.id}>
+              <div class={`jobrow${ahead.has(entry.job.id) ? ' ahead' : ''}`} key={entry.job.id}>
                 <div class="jobline">
                   {kind === 'queued' && <span class="pos">{position}</span>}
                   <span class="jobname" title={entry.job.name}>

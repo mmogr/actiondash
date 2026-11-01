@@ -5,7 +5,8 @@ import { forecastBucket } from '../src/model/forecast'
 import { forecastGraphs } from '../src/model/graphForecast'
 import { PLANS } from '../src/model/plans'
 import { buildBuckets } from '../src/model/queue'
-import { expandGraph, extractWorkflow, isRunGraph, placeJobs, type RunGraph } from '../src/model/workflow'
+import { expandGraph, isRunGraph, placeJobs, type RunGraph } from '../src/model/workflow'
+import { extractWorkflow } from '../src/model/workflowParse'
 import { makeJob, makeRun } from './helpers'
 
 const REPO = { owner: 'acme', name: 'app' }

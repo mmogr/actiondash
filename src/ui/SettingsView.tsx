@@ -2,8 +2,9 @@ import { PLANS, type PlanId } from '../model/plans'
 import { problemText } from '../model/health'
 import { joinList, keptList } from '../model/setup'
 import { repoKey } from '../github/types'
-import { clearJobCache, reschedule, stopPolling } from '../github/poller'
+import { clearJobCache, refreshNow, reschedule, stopPolling } from '../github/poller'
 import { durations } from '../state/durations'
+import { graphDenied } from '../state/graphs'
 import { history } from '../state/history'
 import { forgetEverything, settings, updateSettings } from '../state/settings'
 import { frozenAt, repoProblems, resetData, tab, view } from '../state/store'
@@ -31,6 +32,7 @@ export function SettingsView() {
       planLabel: PLANS[plan].label,
       learnedJobs: Object.keys(durations.value).length,
       hasHistory: history.value.samples.length > 0,
+      graphRepos: settings.value.graphRepos.length,
     }),
   ]
 
@@ -129,6 +131,8 @@ export function SettingsView() {
         </div>
       </div>
 
+      <GraphsCard />
+
       <div class="card">
         <h2>Alerts</h2>
         <p>
@@ -173,6 +177,63 @@ export function SettingsView() {
           </div>
         )}
       </div>
+    </div>
+  )
+}
+
+/**
+ * Which repositories are drawn as job graphs. Off until chosen, because a
+ * graph comes from the workflow file, and reading a private repository's
+ * files needs a permission that can read all of its code.
+ */
+function GraphsCard() {
+  const { repos, graphRepos } = settings.value
+  const on = new Set(graphRepos)
+  const denied = graphDenied.value
+
+  function toggle(key: string, value: boolean) {
+    const next = value ? [...on, key] : [...on].filter((k) => k !== key)
+    updateSettings({ graphRepos: repos.map(repoKey).filter((k) => next.includes(k)) })
+    // Within the pacer's limits; otherwise the next scheduled check reads it.
+    refreshNow()
+  }
+
+  return (
+    <div class="card">
+      <h2>Job graphs</h2>
+      <p>
+        Draws each run as a graph of its jobs, including the ones GitHub has not created yet, and
+        says when the whole run should finish. The graph comes from the run's workflow file.
+      </p>
+      <p class="hint">
+        Reading the workflow file of a private repository needs <b>Contents: read</b> on the token.
+        That permission can read all of the repository's code. The dashboard uses it only for the
+        files in <code>.github/workflows/</code>, and an unchanged file costs nothing to check again.
+      </p>
+      <ul class="watch-list">
+        {repos.map((repo) => {
+          const key = repoKey(repo)
+          const problem = denied.get(key)
+          return (
+            <li key={key}>
+              <label class="graph-toggle">
+                <input
+                  type="checkbox"
+                  checked={on.has(key)}
+                  onChange={(e) => toggle(key, (e.target as HTMLInputElement).checked)}
+                />
+                <span class={`swatch ${seriesClass(repo)}`} />
+                <span class="watch-name">{key}</span>
+              </label>
+              {on.has(key) && problem && (
+                <span class="watch-problem" title={problem}>
+                  cannot read its workflow files: the token needs Contents: read
+                </span>
+              )}
+            </li>
+          )
+        })}
+      </ul>
     </div>
   )
 }

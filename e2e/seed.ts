@@ -22,6 +22,7 @@ export const KEYS = {
   settings: 'actiondash.settings.v1',
   durations: 'actiondash.durations.v1',
   history: 'actiondash.history.v1',
+  workflows: 'actiondash.workflows.v1',
 } as const
 
 type StoredSettings = Partial<Settings> & { observedEpoch?: number }
@@ -30,6 +31,7 @@ export interface Seed {
   settings?: StoredSettings
   durations?: unknown
   history?: unknown
+  workflows?: unknown
 }
 
 /** A browser that has already been set up: a token, one repository, the Pro plan. */

@@ -20,7 +20,6 @@ import { refreshBlock, type PacingReason, type RefreshBlock } from '../model/sta
 import {
   calledKey,
   expandGraph,
-  extractWorkflow,
   isRunGraph,
   placeJobs,
   type JobGraph,
@@ -391,6 +390,9 @@ async function readWorkflow(repo: RepoRef, path: string, ref: string | null, sig
     touchFile(key, Date.now())
     return held.def
   }
+  // Loaded here, on the first file read, so the parser costs nothing to a
+  // reader who never turns graphs on.
+  const { extractWorkflow } = await import('../model/workflowParse')
   const def = res.text === null ? null : extractWorkflow(res.text)
   rememberFile(key, { etag: res.etag, def, usedAt: Date.now() })
   return def

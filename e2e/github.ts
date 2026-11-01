@@ -128,6 +128,22 @@ export class BrowserGitHub {
     )
   }
 
+  /**
+   * A workflow file through the contents API, served raw, at any ref unless
+   * one is given (null for the default branch, asked for with no ref). Answers
+   * 304 to the ETag it has, as GitHub does across commits that leave a file
+   * alone.
+   */
+  workflowFile(repo: RepoRef, path: string, text: string, options: { etag?: string; ref?: string | null } = {}): this {
+    const etag = options.etag ?? '"blob1"'
+    const query = options.ref === undefined ? '(\\?ref=[^&]+)?' : options.ref === null ? '' : `\\?ref=${literal(options.ref)}`
+    return this.on(new RegExp(`${repoPath(repo)}/contents/${literal(path)}${query}$`), (call) =>
+      call.headers.get('if-none-match') === etag
+        ? new Response(null, { status: 304, headers: { etag } })
+        : new Response(text, { status: 200, headers: { etag, 'content-type': 'text/plain; charset=utf-8' } }),
+    )
+  }
+
   /** A cancel or re-run, answered 202 with no body as GitHub does unless told otherwise. */
   write(path: RegExp, reply: Reply = empty(202)): this {
     return this.on(path, reply)

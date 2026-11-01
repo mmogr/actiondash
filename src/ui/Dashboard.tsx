@@ -32,6 +32,7 @@ import { Trends } from './trends/Trends'
 import { AlertsView } from './AlertsView'
 import { InstallBanner } from './InstallBanner'
 import { YourRuns } from './YourRuns'
+import { WhySheet } from './WhySheet'
 import { RecentlyFinished } from './RecentlyFinished'
 import { headlineIndex } from './lanes'
 
@@ -235,6 +236,7 @@ export function Dashboard() {
             </section>
           ) : null}
           <RecentlyFinished />
+          <WhySheet />
         </>
       )}
 

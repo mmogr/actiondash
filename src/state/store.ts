@@ -104,6 +104,9 @@ export const trendsRange = signal(1)
 /** The pool Trends is drawing, or null for the scarce one. */
 export const trendsPool = signal<RunnerClass | null>(null)
 
+/** The node of a run's graph the reader tapped, which the sheet explains. */
+export const selectedNode = signal<{ runId: number; nodeId: string } | null>(null)
+
 /** Ticks once a second so relative ages re-render without a re-poll. */
 export const now = signal(Date.now())
 
@@ -224,4 +227,24 @@ export function resetData(): void {
   trendsPool.value = null
   tab.value = 'now'
   filter.value = NO_FILTER
+  selectedNode.value = null
 }
+
+/**
+ * Jobs ahead in line of the selected node's first waiting job, so the runs
+ * they belong to can be marked wherever they are drawn.
+ */
+export const aheadOfSelected = computed((): Set<number> => {
+  const sel = selectedNode.value
+  if (!sel) return new Set()
+  const g = graphs.value.get(sel.runId)
+  if (!g || !isRunGraph(g)) return new Set()
+  const waiting = new Set(
+    (g.instances.get(sel.nodeId) ?? []).filter((j) => j.status !== 'completed' && j.status !== 'in_progress').map((j) => j.id),
+  )
+  for (const b of buckets.value) {
+    const i = b.queued.findIndex((e) => waiting.has(e.job.id))
+    if (i >= 0) return new Set(b.queued.slice(0, i).map((e) => e.job.id))
+  }
+  return new Set()
+})
