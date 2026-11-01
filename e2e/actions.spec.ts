@@ -275,12 +275,12 @@ test.describe('cancelling from the insight', () => {
   })
 })
 
-test('a run with jobs in two pools asks to cancel all its unfinished jobs, from either row', async ({
+test('a run with jobs in two pools is listed once, and its cancel stops all its jobs', async ({
   page,
   github,
 }) => {
-  // Run 12 builds on two macOS slots and waits for a Linux one: one row in
-  // each pool, and one cancel that stops all three jobs.
+  // Run 12 builds on two macOS slots and waits for a Linux one: one run in
+  // the list, each job named by its pool, and one cancel that stops all three.
   github.runs(REPO, [], [makeRun({ id: 1, run_number: 12, status: 'in_progress' })])
   github.jobs(1, [
     makeJob({ id: 11, run_id: 1, name: 'build', status: 'in_progress', started_at: '2026-09-09T10:01:00Z' }),
@@ -289,23 +289,20 @@ test('a run with jobs in two pools asks to cancel all its unfinished jobs, from 
   ])
 
   await page.goto('./')
-  const pool = (name: string) =>
-    page.locator('.section', { has: page.locator('.section-title', { hasText: new RegExp(`^${name}$`) }) })
-  const macosRow = pool('macOS').locator('[data-run="1"]')
-  const linuxRow = pool('Linux').locator('[data-run="1"]')
-  const macosCancel = macosRow.getByRole('button', { name: /^Cancel app run #12/ })
-  await expect(macosCancel).toHaveAccessibleName('Cancel app run #12 (3 unfinished jobs)')
-  await expect(linuxRow.getByRole('button', { name: /^Cancel app run #12/ })).toHaveAccessibleName(
-    'Cancel app run #12 (3 unfinished jobs)',
-  )
+  const row = page.locator('[data-run="1"]')
+  await expect(row).toHaveCount(1)
+  await expect(row.locator('.jobrow .jobpool')).toHaveText(['macOS', 'macOS', 'Linux'])
+  await expect(row.locator('.group-note')).toHaveText(['2 running · 1 waiting'])
+  const cancel = row.getByRole('button', { name: /^Cancel app run #12/ })
+  await expect(cancel).toHaveAccessibleName('Cancel app run #12 (3 unfinished jobs)')
 
   await github.expectNoNewCalls(async () => {
-    await macosCancel.click()
-    await expect(macosRow.getByRole('group', { name: 'Confirm cancel' })).toContainText(
+    await cancel.click()
+    await expect(row.getByRole('group', { name: 'Confirm cancel' })).toContainText(
       'Cancel run #12 and its 3 unfinished jobs?',
     )
     await page.keyboard.press('Escape')
-    await expect(macosCancel).toBeFocused()
+    await expect(cancel).toBeFocused()
   })
 })
 

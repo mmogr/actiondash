@@ -2,7 +2,7 @@ import { computed, signal } from '@preact/signals'
 import type { RunnerClass, RunWithRepo, WorkflowJob } from '../github/types'
 import type { RateLimit } from '../github/client'
 import { buildBuckets, staleJobs } from '../model/queue'
-import { forecastBucket, insightFor, type BucketForecast, type Insight } from '../model/forecast'
+import { forecastBucket, insightFor, type BucketForecast, type Insight, type JobForecast } from '../model/forecast'
 import { NO_FILTER, type ViewFilter } from '../model/filter'
 import { dataHealthOf, isComplete, type RepoProblem } from '../model/health'
 import { myRuns } from '../model/mine'
@@ -192,6 +192,15 @@ export const graphOutlooks = computed((): Map<number, GraphOutlook> => {
     nowMs: now.value,
   })
 })
+
+/** One job's forecast, whichever pool it is in. */
+export function jobForecast(jobId: number): JobForecast | undefined {
+  for (const { forecast } of forecasts.value.values()) {
+    const f = forecast.jobs.get(jobId)
+    if (f) return f
+  }
+  return undefined
+}
 
 /** The reader's own active runs, running first. */
 export const myRunsNow = computed(() =>

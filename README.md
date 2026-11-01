@@ -12,8 +12,10 @@ actiondash shows those three things in one page, across every repository you
 choose, and lets you cancel the runs that are wasting slots.
 
 ```
-macOS                 5/5 in use    7 queued    oldest waiting 16m
+macOS   ■■■■■ ▢▢▢▢▢▢▢   5/5 in use    7 queued    oldest waiting 16m
+  7 waiting for 5 busy macOS slots.
 
+RUNS                                        2 running   2 queued
   RUNNING
   ▾ app #412  CI  STALE                                    11m   cancel
     5 jobs · feat/parser · Add the parser benchmark
@@ -113,8 +115,12 @@ the way back from a mistaken cancel. Both ask first, and need only the
 Actions write access that cancelling already uses. The list is kept for the
 session only.
 
-Jobs are grouped by the run that owns them, because cancelling acts on a run.
-Cancel asks once before it acts, with focus on Keep, and Escape backs out.
+The pools come first, each with its gauge, its sentence and its timeline, and
+below them every active run is listed once, whichever pools its jobs use. A
+run belongs to the account, not to a pool: one that builds on macOS and lints
+on Linux is one run with one cancel, so it is one row, and each of its jobs
+says which pool it waits in and where in that pool's line. Cancel asks once
+before it acts, with focus on Keep, and Escape backs out.
 A cancelled run says "cancel requested" until GitHub reflects it, rather than
 offering the button again. Chips above the list narrow it to one repository,
 to your own runs, or to superseded runs only; the pool figures are never

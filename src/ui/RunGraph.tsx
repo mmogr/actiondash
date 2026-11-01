@@ -1,7 +1,6 @@
 import type { RunWithRepo } from '../github/types'
-import type { JobForecast } from '../model/forecast'
 import type { RunGraph as Graph } from '../model/workflow'
-import { buckets, forecasts, graphOutlooks, now, selectedNode } from '../state/store'
+import { buckets, graphOutlooks, jobForecast, now, selectedNode } from '../state/store'
 import { age, duration, hedge, shortClock } from './format'
 import { layoutGraph, ordinal, type NodeView } from './graphLayout'
 
@@ -39,14 +38,6 @@ interface Props {
   ahead: ReadonlySet<number>
 }
 
-function forecastOf(jobId: number): JobForecast | undefined {
-  for (const { forecast } of forecasts.value.values()) {
-    const f = forecast.jobs.get(jobId)
-    if (f) return f
-  }
-  return undefined
-}
-
 /** One-based places in line of waiting jobs, by job id. */
 function placesInLine(): Map<number, number> {
   const out = new Map<number, number>()
@@ -72,7 +63,7 @@ export function RunGraph({ run, graph, ahead }: Props) {
         if (jobs.length === 1) {
           const job = jobs[0]!
           const since = job.started_at ? Date.parse(job.started_at) : 0
-          const f = forecastOf(job.id)
+          const f = jobForecast(job.id)
           return f?.typical ? `${age(since, nowMs)} · usually ${f.guessed ? '~' : ''}${duration(f.typical)}` : age(since, nowMs)
         }
         const counts = { running: 0, waiting: 0 }
@@ -83,7 +74,7 @@ export function RunGraph({ run, graph, ahead }: Props) {
         const spots = jobs.map((j) => places.get(j.id)).filter((p): p is number => p !== undefined).sort((a, b) => a - b)
         if (spots.length === 0) return 'starting'
         const first = jobs.find((j) => places.get(j.id) === spots[0])!
-        const f = forecastOf(first.id)
+        const f = jobForecast(first.id)
         const where = spots.length > 1 ? `${ordinal(spots[0]!)}–${ordinal(spots[spots.length - 1]!)} in line` : `${ordinal(spots[0]!)} in line`
         return f && f.start > 0 ? `${where} · ~${shortClock(f.start)}${hedge(f.basis)}` : where
       }

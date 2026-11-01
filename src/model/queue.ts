@@ -172,6 +172,55 @@ export function groupByRun(jobs: readonly DashJob[]): RunGroup[] {
   return [...groups.values()]
 }
 
+/** One run, with every active job it has in any pool. The unit of the Now screen's list. */
+export interface RunEntry extends RunGroup {
+  /** Running once any of its jobs holds a slot; queued while every one waits. */
+  state: 'running' | 'queued'
+  /** The pools its active jobs use, in display order. */
+  pools: RunnerClass[]
+}
+
+/**
+ * Every active run once, across every pool, running ones first. A run that
+ * builds on macOS and lints on Linux is one run, and the reader cancels it
+ * once; listing it under each pool would show it twice. Each job keeps its
+ * place in its own pool's line, since that is where it waits.
+ *
+ * Within running and queued, oldest first, so a list does not reorder as
+ * forecasts move.
+ */
+export function gatherRuns(buckets: readonly ClassBucket[]): RunEntry[] {
+  const entries = new Map<number, RunEntry>()
+  for (const bucket of buckets) {
+    for (const [list, state] of [
+      [bucket.running, 'running'],
+      [bucket.queued, 'queued'],
+    ] as const) {
+      list.forEach((entry, i) => {
+        let run = entries.get(entry.run.id)
+        if (!run) {
+          run = { repo: entry.repo, run: entry.run, supersededBy: entry.supersededBy, jobs: [], since: 0, state: 'queued', pools: [] }
+          entries.set(entry.run.id, run)
+        }
+        run.jobs.push({ entry, position: i + 1 })
+        if (state === 'running') run.state = 'running'
+        if (!run.pools.includes(bucket.cls)) run.pools.push(bucket.cls)
+      })
+    }
+  }
+  for (const run of entries.values()) {
+    // Running jobs say how long the run has held a slot; while nothing runs,
+    // the wait is what counts.
+    const relevant = run.jobs.filter((j) => (RUNNING_STATUSES.has(j.entry.job.status)) === (run.state === 'running'))
+    run.since = relevant.reduce((first, j) => (j.entry.since > 0 && (first === 0 || j.entry.since < first) ? j.entry.since : first), 0)
+    run.pools.sort((a, b) => RUNNER_CLASS_ORDER.indexOf(a) - RUNNER_CLASS_ORDER.indexOf(b))
+  }
+  return [...entries.values()].sort((a, b) => {
+    if (a.state !== b.state) return a.state === 'running' ? -1 : 1
+    return a.since - b.since || a.run.created_at.localeCompare(b.run.created_at) || a.run.id - b.run.id
+  })
+}
+
 /** Conclusions that mean a job did not do its work. */
 const FAILED_CONCLUSIONS = new Set(['failure', 'timed_out'])
 

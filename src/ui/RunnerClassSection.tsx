@@ -1,14 +1,11 @@
 import type { ClassBucket } from '../model/queue'
-import { groupByRun } from '../model/queue'
-import { matchesFilter } from '../model/filter'
 import { RUNNER_CLASS_LABEL } from '../model/runnerClass'
-import { filter, forecasts, now } from '../state/store'
+import { forecasts, now } from '../state/store'
 import { settings } from '../state/settings'
 import { PLANS } from '../model/plans'
 import { InsightCard } from './InsightCard'
 import { PoolGauge } from './PoolGauge'
 import { QueueTimeline } from './QueueTimeline'
-import { RunGroup } from './RunGroup'
 import { SummaryTiles } from './SummaryTiles'
 import { oldestWait, shortClock } from './format'
 import { poolMode, wantsTimeline } from './lanes'
@@ -24,7 +21,6 @@ export function RunnerClassSection({ bucket, headline }: Props) {
   const nowMs = now.value
   const used = bucket.running.length
   const cap = bucket.cap
-  const atCapacity = cap !== null && used >= cap
   const wait = oldestWait(bucket.queued, nowMs)
   const outlook = forecasts.value.get(bucket.cls)
   const forecast = outlook?.forecast
@@ -53,14 +49,7 @@ export function RunnerClassSection({ bucket, headline }: Props) {
     shortClock,
   )
 
-  // Grouped before filtering so a hidden run still counts towards the queue
-  // positions of the runs behind it.
-  const current = filter.value
-  const login = settings.value.login
-  const running = groupByRun(bucket.running).filter((g) => matchesFilter(g, current, login))
-  const queued = groupByRun(bucket.queued).filter((g) => matchesFilter(g, current, login))
   const empty = used === 0 && bucket.queued.length === 0
-  const filteredOut = !empty && running.length === 0 && queued.length === 0
 
   return (
     <>
@@ -100,40 +89,7 @@ export function RunnerClassSection({ bucket, headline }: Props) {
       {/* Keyed, so a question left open cannot pass to another run after a check. */}
       {insight && <InsightCard key={insight.run.id} insight={insight} nowMs={nowMs} />}
 
-      {empty ? (
-        <div class="empty">Nothing running or queued.</div>
-      ) : filteredOut ? (
-        <div class="empty">Nothing here matches the filter.</div>
-      ) : (
-        <div class="rows">
-          {running.length > 0 && <div class="group-label">Running</div>}
-          {running.map((group) => (
-            <RunGroup
-              key={group.run.id}
-              group={group}
-              kind="running"
-              defaultOpen={true}
-              forecast={forecast}
-            />
-          ))}
-
-          {queued.length > 0 && (
-            <div class="group-label">
-              Queued
-              {atCapacity ? ' - waiting for a slot' : ''}
-            </div>
-          )}
-          {queued.map((group, i) => (
-            <RunGroup
-              key={group.run.id}
-              group={group}
-              kind="queued"
-              defaultOpen={i === 0}
-              forecast={forecast}
-            />
-          ))}
-        </div>
-      )}
+      {empty && <div class="empty">Nothing running or queued.</div>}
     </section>
     </>
   )
