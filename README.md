@@ -74,6 +74,23 @@ failed: `continue-on-error` can still let the run pass. Every running or
 failed job links to its log on GitHub, and a running job shows the step it
 is on. All of this comes from the job listings the dashboard already reads.
 
+With job graphs turned on for a repository in Settings, a run is drawn the way
+GitHub's run page draws it: its jobs in columns by stage, joined where one
+`needs:` another, with the stages that passed folded into one box. Unlike
+GitHub's page, it also draws the jobs that do not exist yet, dashed, with when
+each should start, and gives every waiting job its place in the line it shares
+with every other repository. Knowing the jobs still to come, the time a run
+gives is for the whole run, "done ~14:52" instead of "current jobs done", and a
+later macOS stage is placed behind everything already waiting, which is where
+GitHub will put it. A matrix is one box with a count; a workflow whose jobs
+need nothing is drawn as a set rather than a graph. Tap any box and a panel
+says why it waits: its place in line, which runs are ahead of it (marked where
+they are drawn), which job frees the next slot, and when each slot should free
+until it runs; for a job still to come, what it waits for. The graph is read
+from the run's workflow file and checked against what GitHub lists on every
+poll; a run the file does not explain keeps its plain job list. See
+[Job graphs](#job-graphs) for how, and what it needs from the token.
+
 The Trends screen draws what this browser has watched: slots in use and jobs
 queued over the last hour to week, with any time the page was closed hatched
 rather than smoothed over; today's slot time by repository; the last ten
@@ -156,7 +173,8 @@ All of these run in CI on every pull request and again before every deploy.
 
 The token is never written to the URL, never logged, and never rendered back
 into the page. "Forget token" clears it and everything else from local storage,
-including the learned job durations and the occupancy history.
+including the learned job durations, the occupancy history and any workflow
+files kept for job graphs.
 
 A small service worker, `public/sw.js`, exists only so that a phone can show
 a notification: it has no `fetch` handler and no cache, so it never sees a
@@ -196,11 +214,22 @@ Create a **fine-grained** personal access token at
 | Repository access | Only select repositories, the ones you want to watch |
 | Actions | Read and write |
 | Metadata | Read (GitHub adds this automatically) |
+| Contents | Leave unset, unless you want job graphs for a private repository |
 | Everything else | Leave unset |
 
-`Actions: Read and write` is the whole grant. Read covers listing runs and jobs;
-write is needed only to cancel or re-run a run. The dashboard never reads your
-code, so **do not grant Contents**. Set an expiry of 30 to 90 days.
+`Actions: Read and write` is the whole grant for everything but job graphs.
+Read covers listing runs and jobs; write is needed only to cancel or re-run a
+run. Set an expiry of 30 to 90 days.
+
+Job graphs are read from each run's workflow file, which for a private
+repository needs **Contents: read**. GitHub has no permission narrower than
+that: it can read all of the repository's code, not only its workflows. The
+dashboard reads only the files in `.github/workflows/` that runs name, and only
+for repositories you turn graphs on for in Settings, but the token could read
+more, so grant it only if the graphs are worth that to you. GitHub's
+documentation says a fine-grained token can always read public repositories,
+so a public repository needs nothing extra. Settings names any repository with
+graphs on whose files the token cannot read.
 
 A classic token also works but is a worse idea: its `repo` scope reaches every
 repository you can see. The setup screen warns if you paste one.
@@ -241,7 +270,9 @@ policy holds in a real browser. Beyond that they walk through what a reader
 does and sees: setting up and recovering from a rejected token, every state
 the Now tab can be in (never an all-clear while a repository is unchecked),
 checks that follow changes and reuse ETags, cancelling and re-running, links
-to a run, settings and forgetting, alerts, and trends. The smoke tests confirm
+to a run, settings and forgetting, alerts, trends, and job graphs: drawn,
+explained, refused by a token without Contents, and left out when a workflow
+file does not explain its run. The smoke tests confirm
 the policy refuses `fetch('https://example.com')` on every run, and
 `check:guards` proves they notice when it does not. To see it by hand, run
 `npm run preview` and try that line in the console; it must be blocked.
@@ -310,6 +341,14 @@ checked against a threshold, overrunning is not something the dashboard can do.
 The worst case is that it waits for the window to refill, which it will say it
 is doing. The footer always shows the live cost, for example
 `13/refresh, ~3,100/hr`, so the number is never a mystery.
+
+Job graphs cost one request the first time a workflow file is read and nothing
+after that while the file is unchanged. A contents ETag is the file's blob
+SHA, so the copy read for one run still matches at the next commit that left
+the file alone, and GitHub answers a 304, which it does not count. A file is
+read again only when it changes, a run is asked about at most twice (its own
+commit, then the default branch), and nothing is read below 200 requests left
+in the hour.
 
 The status at the top doubles as the refresh button. It refuses while the
 pacer is holding back, and within ten seconds of the last check, the fastest
@@ -405,6 +444,50 @@ newer run exists for the same repository, workflow and branch on a different
 commit. This needs no extra token permission. The trade-off is that a branch
 whose newest commit did not trigger that particular workflow will not be
 flagged, which is the safe direction: a run is never wrongly marked stale.
+
+### Job graphs
+
+GitHub's API never says which job needs which, and a job held back by
+`needs:` is not in the job listing until what it needs has finished. The
+workflow file says both, so for repositories with graphs on, the dashboard
+reads the file a run came from through the contents API, at the run's own
+commit, and builds the graph from it: reusable workflows are followed at the
+exact commits the run's `referenced_workflows` names, a fixed matrix is
+expanded the way GitHub expands it, and a matrix the run computes is one box
+whose size the run decides.
+
+A file is only used if it explains the run. Every job GitHub lists has to be
+one the file declares, and every job that waited on others has to have been
+created when the last of them finished. Both hold exactly in practice: across
+91 runs in 30 repositories, every listed job matched, and all 196 jobs that
+waited were created within two seconds of what they needed ending. A pull
+request runs from a merge commit and some events from the default branch, and
+neither is named in the run, so a copy at the run's commit that does not
+explain it is followed by the default branch's, and a run neither explains
+keeps its plain job list. The check runs again on every poll, so a graph that
+stops fitting is dropped rather than drawn wrong. Two jobs with one name are
+told apart by when each was created, and two nobody can tell apart, with the
+same needs and the same dependents, are drawn as one box.
+
+Some runs have no file to read and keep their job list: workflows GitHub
+writes itself, such as Dependabot's, have a `dynamic/` path, and a required
+workflow from an organisation's ruleset lives in another repository. A check
+run that a step creates appears in GitHub's job listing too; it holds no slot
+and is left out of the graph.
+
+When the jobs still to come should run is forecast after the pools are. Each
+is created after now, and each pool is first come first served, so each lands
+behind every job already waiting; the pool forecasts are left exactly as they
+were, and the jobs still to come take the slots from there, in the order they
+will be created, across pools, since a macOS job can be waiting on a Linux
+one. A job with an `if:`, or one whose count the run decides, gives a time
+marked as a guess. A job whose needs failed will be skipped, and takes no
+slot.
+
+The workflow files are kept in local storage, parsed, with their ETags: job
+ids, names, needs, matrices, `runs-on` and step names, and nothing else from
+the repository. The YAML parser, js-yaml, is loaded only when a file is first
+read, so a browser with graphs off never downloads it.
 
 ## Prevention beats cleanup
 
