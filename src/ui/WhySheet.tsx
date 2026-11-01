@@ -94,7 +94,8 @@ export function WhySheet() {
             moves as they finish.
           </div>
         </div>
-        {why.bars.length > 0 && <Strip lanes={why.lanes} bars={why.bars} nowMs={nowMs} />}
+        {/* One row per slot reads for macOS's five; a pool of 40 says it in words. */}
+        {why.bars.length > 0 && why.lanes <= 10 && <Strip lanes={why.lanes} bars={why.bars} nowMs={nowMs} />}
         {why.ahead.length > 0 ? (
           <div class="why-ahead">
             <div class="why-kicker">
