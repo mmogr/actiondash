@@ -43,6 +43,12 @@ export function sharedName(names: readonly string[]): string {
   if (names.length === 1) return names[0]!
   let prefix = names[0]!
   for (const n of names) while (!n.startsWith(prefix)) prefix = prefix.slice(0, -1)
+  // Stop at a word boundary: "UI Test (iPhone)" and "UI Test (iPad)" share
+  // "UI Test", not "UI Test (iP".
+  if (names.some((n) => n.length > prefix.length && !/[\s(/,:_-]/.test(n[prefix.length]!))) {
+    const cut = Math.max(...[' ', '(', '/', ',', ':', '-', '_'].map((c) => prefix.lastIndexOf(c)))
+    if (cut >= 0) prefix = prefix.slice(0, cut + 1)
+  }
   return prefix.replace(/[\s(/,:_-]+$/, '').trim()
 }
 
