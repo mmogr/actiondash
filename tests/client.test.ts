@@ -1,8 +1,10 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import {
   apiFetch,
+  apiFetchRaw,
   assertGitHubOrigin,
   clearCache,
+  getBilledCount,
   getRateLimit,
   GitHubError,
   OriginError,
@@ -193,5 +195,66 @@ describe('apiFetch', () => {
     vi.stubGlobal('fetch', vi.fn(async () => new Response(null, { status: 204 })))
 
     expect((await apiFetch('/anything', { method: 'POST', noCache: true })).data).toBeUndefined()
+  })
+})
+
+describe('apiFetchRaw', () => {
+  beforeEach(() => {
+    clearCache()
+    setTokenProvider(() => 'github_pat_secret')
+  })
+
+  afterEach(() => {
+    vi.unstubAllGlobals()
+    setTokenProvider(() => null)
+    clearCache()
+  })
+
+  const file = (text: string, etag = '"blob1"') =>
+    new Response(text, { status: 200, headers: { 'content-type': 'text/plain', etag } })
+
+  it('asks for the raw file and returns its text and ETag', async () => {
+    const fetchMock = vi.fn(async () => file('jobs: {}\n'))
+    vi.stubGlobal('fetch', fetchMock)
+
+    const res = await apiFetchRaw('/repos/a/b/contents/.github/workflows/ci.yml?ref=abc')
+
+    expect(res).toEqual({ status: 200, text: 'jobs: {}\n', etag: '"blob1"' })
+    const [url, init] = callArgs(fetchMock, 0)
+    expect(url).toBe('https://api.github.com/repos/a/b/contents/.github/workflows/ci.yml?ref=abc')
+    const headers = init.headers as Headers
+    expect(headers.get('Accept')).toBe('application/vnd.github.raw+json')
+    expect(headers.get('Authorization')).toBe('Bearer github_pat_secret')
+    expect(headers.has('If-None-Match')).toBe(false)
+  })
+
+  it('sends an ETag from another commit and counts the 304 as free', async () => {
+    const fetchMock = vi.fn(async () => new Response(null, { status: 304, headers: { etag: '"blob1"' } }))
+    vi.stubGlobal('fetch', fetchMock)
+    const before = getBilledCount()
+
+    const res = await apiFetchRaw('/repos/a/b/contents/.github/workflows/ci.yml?ref=later', { etag: '"blob1"' })
+
+    expect(res).toEqual({ status: 304, text: null, etag: '"blob1"' })
+    expect((callArgs(fetchMock, 0)[1].headers as Headers).get('If-None-Match')).toBe('"blob1"')
+    expect(getBilledCount()).toBe(before)
+  })
+
+  it('throws what GitHub said when the file cannot be read', async () => {
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async () => respond({ message: 'Resource not accessible by personal access token' }, { status: 403 })),
+    )
+    const err = await apiFetchRaw('/repos/a/b/contents/x.yml').catch((e: unknown) => e)
+    expect(err).toBeInstanceOf(GitHubError)
+    expect((err as GitHubError).status).toBe(403)
+    expect((err as GitHubError).message).toBe('Resource not accessible by personal access token')
+  })
+
+  it('never issues a request to a non-GitHub origin', async () => {
+    const fetchMock = vi.fn()
+    vi.stubGlobal('fetch', fetchMock)
+    await expect(apiFetchRaw('https://raw.githubusercontent.com/a/b/main/x.yml')).rejects.toThrow(OriginError)
+    expect(fetchMock).not.toHaveBeenCalled()
   })
 })

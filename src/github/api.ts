@@ -1,5 +1,5 @@
 /** Typed wrappers over the handful of GitHub endpoints this dashboard uses. */
-import { apiFetch, apiFetchAll, GitHubError, isRateLimitError, type ApiOptions } from './client'
+import { apiFetch, apiFetchAll, apiFetchRaw, GitHubError, isRateLimitError, type ApiOptions, type RawResponse } from './client'
 import { JOBS_QUERY, runsQuery, type RunStatus } from './queries'
 import type { Repo, RepoRef, RunWithRepo, User, WorkflowJob, WorkflowRun } from './types'
 
@@ -51,6 +51,21 @@ export async function listJobs(
     options,
   )
   return res.data.jobs ?? []
+}
+
+/**
+ * A workflow file, at a commit or, with no ref, on the default branch. Needs
+ * Contents: read on a private repository; see the README's security model.
+ */
+export async function getWorkflowFile(
+  repo: RepoRef,
+  path: string,
+  ref: string | null,
+  options: { etag?: string | null; signal?: AbortSignal } = {},
+): Promise<RawResponse> {
+  const file = path.split('/').map(encodeURIComponent).join('/')
+  const query = ref ? `?ref=${encodeURIComponent(ref)}` : ''
+  return apiFetchRaw(`${repoPath(repo)}/contents/${file}${query}`, options)
 }
 
 /**

@@ -7,8 +7,8 @@ import {
   isRateLimitError,
   resetRetryAfter,
 } from './client'
-import { listJobs, listRuns } from './api'
-import { repoKey, type RunWithRepo, type WorkflowJob } from './types'
+import { getWorkflowFile, listJobs, listRuns } from './api'
+import { repoKey, type RepoRef, type RunWithRepo, type WorkflowJob } from './types'
 import { settings, updateSettings } from '../state/settings'
 import { learnDurations } from '../state/durations'
 import { recordHistory } from '../state/history'
@@ -17,6 +17,16 @@ import { buildBuckets } from '../model/queue'
 import { classify, isComplete, snapshotUsable, type Problem, type RepoProblem } from '../model/health'
 import { addFinished, CANCEL_REQUEST_TTL_MS, classifyFinished, type FinishedRun } from '../model/finished'
 import { refreshBlock, type PacingReason, type RefreshBlock } from '../model/status'
+import {
+  calledKey,
+  expandGraph,
+  extractWorkflow,
+  isRunGraph,
+  placeJobs,
+  type JobGraph,
+  type WorkflowDef,
+} from '../model/workflow'
+import { cachedFile, fileKey, graphDenied, rememberFile, runGraphs, touchFile, type GraphEntry } from '../state/graphs'
 import {
   buckets,
   cancelRequested,
@@ -352,6 +362,143 @@ async function learnFinishedRuns(
   return finals
 }
 
+/** Rounds of called workflows followed for one run; deeper calls stand in unread. */
+const MAX_FILE_ROUNDS = 4
+
+/**
+ * The workflow file a run came from, or null when there is none to read:
+ * GitHub writes Dependabot, Pages and CodeQL's own workflows itself
+ * (`dynamic/…`), and a required workflow's file lives in another repository.
+ */
+export function workflowPath(run: RunWithRepo): string | null {
+  if (!run.path || run.path.startsWith('dynamic/')) return null
+  if (run.workflow_url?.includes('/required_workflows/')) return null
+  return run.path.split('@')[0] ?? null
+}
+
+/** Why a run has no graph, said the way Settings and the run card say it. */
+const NO_FILE = 'GitHub runs this workflow from a file the dashboard cannot read'
+
+/**
+ * Reads one workflow file, sending the ETag of the copy already held so an
+ * unchanged file costs a free 304, whatever commit it is asked for at.
+ */
+async function readWorkflow(repo: RepoRef, path: string, ref: string | null, signal: AbortSignal): Promise<WorkflowDef | null> {
+  const key = fileKey(repoKey(repo), path)
+  const held = cachedFile(key)
+  const res = await getWorkflowFile(repo, path, ref, { etag: held?.etag, signal })
+  if (res.status === 304 && held) {
+    touchFile(key, Date.now())
+    return held.def
+  }
+  const def = res.text === null ? null : extractWorkflow(res.text)
+  rememberFile(key, { etag: res.etag, def, usedAt: Date.now() })
+  return def
+}
+
+/** Expands a workflow, reading the reusable workflows it calls as it goes. */
+async function expandWithCalls(root: WorkflowDef, run: RunWithRepo, signal: AbortSignal): Promise<JobGraph> {
+  const read = new Map<string, WorkflowDef | null>()
+  const ctx = {
+    repo: repoKey({ owner: run.repoOwner, name: run.repoName }),
+    headSha: run.head_sha,
+    referenced: run.referenced_workflows ?? [],
+    lookup: (key: string) => (read.has(key) ? read.get(key) : undefined),
+  }
+  let result = expandGraph(root, ctx)
+  for (let round = 0; round < MAX_FILE_ROUNDS && result.pending.length > 0; round++) {
+    for (const called of result.pending) {
+      const [owner, name] = called.repo.split('/')
+      let def: WorkflowDef | null = null
+      try {
+        def = await readWorkflow({ owner: owner!, name: name! }, called.path, called.ref, signal)
+      } catch (err) {
+        if (err instanceof GitHubError && err.status === 401) throw err
+        if (isRateLimitError(err)) throw err
+        // A call into a repository the token cannot read is drawn as one
+        // node standing for everything it runs.
+      }
+      read.set(calledKey(called), def)
+    }
+    result = expandGraph(root, ctx)
+  }
+  return result.graph
+}
+
+/**
+ * Finds the file that explains a run. GitHub runs some events from the
+ * default branch's copy and pull requests from a merge commit, neither of
+ * which the run names, so the run's own commit is tried first and the
+ * default branch second, and a copy is only used if it explains every job
+ * GitHub lists. At most two reads per run, once.
+ */
+async function graphFor(
+  run: RunWithRepo,
+  jobs: readonly WorkflowJob[],
+  signal: AbortSignal,
+  denied: Map<string, string>,
+): Promise<GraphEntry> {
+  const path = workflowPath(run)
+  if (!path) return { reason: NO_FILE }
+  const repo = { owner: run.repoOwner, name: run.repoName }
+  let reason = 'the workflow file could not be found'
+  for (const ref of [run.head_sha, null]) {
+    let root: WorkflowDef | null
+    try {
+      root = await readWorkflow(repo, path, ref, signal)
+    } catch (err) {
+      if (err instanceof GitHubError && err.status === 401) throw err
+      if (isRateLimitError(err)) throw err
+      if (err instanceof GitHubError && err.status === 403) {
+        denied.set(repoKey(repo), err.message)
+        return { reason: 'the token cannot read this repository\'s workflow files' }
+      }
+      continue
+    }
+    if (!root) {
+      reason = 'the workflow file did not read as YAML'
+      continue
+    }
+    const graph = await expandWithCalls(root, run, signal)
+    const placed = placeJobs(graph, jobs)
+    if (isRunGraph(placed)) return { graph, ref: ref ?? 'default branch' }
+    reason = placed.ok ? reason : placed.reason
+  }
+  return { reason }
+}
+
+/**
+ * Reads the job graph of each active run in a repository the reader opted
+ * in. A request each at most, and usually a free 304: see readWorkflow. Held
+ * to the same floor as learning, since a graph is a convenience and the
+ * dashboard itself must keep polling.
+ */
+async function loadGraphs(listed: readonly RunWithRepo[], signal: AbortSignal, isCurrent: () => boolean): Promise<void> {
+  const opted = new Set(settings.value.graphRepos)
+  const known = runGraphs.peek()
+  // Runs still active in a repository still opted in; turning a repository
+  // off drops its graphs at once.
+  const eligible = new Set(
+    listed.filter((run) => opted.has(repoKey({ owner: run.repoOwner, name: run.repoName }))).map((r) => r.id),
+  )
+  const next = new Map([...known].filter(([id]) => eligible.has(id)))
+  const wanted = listed.filter((run) => eligible.has(run.id) && !next.has(run.id) && jobCache.has(run.id))
+  const remaining = getRateLimit()?.remaining
+  const denied = new Map(graphDenied.peek())
+  for (const key of denied.keys()) if (!opted.has(key)) denied.delete(key)
+  if (wanted.length > 0 && (remaining === undefined || remaining >= LEARNING_MIN_REMAINING)) {
+    await mapLimit(wanted, JOB_CONCURRENCY, async (run) => {
+      const entry = await graphFor(run, jobCache.get(run.id)?.jobs ?? [], signal, denied)
+      next.set(run.id, entry)
+    })
+  }
+  if (!isCurrent()) return
+  if (next.size !== known.size || [...next].some(([id, e]) => known.get(id) !== e)) runGraphs.value = next
+  if (denied.size !== graphDenied.peek().size || [...denied].some(([k, v]) => graphDenied.peek().get(k) !== v)) {
+    graphDenied.value = denied
+  }
+}
+
 export async function pollOnce(): Promise<void> {
   const { token, repos } = settings.value
   if (!token || repos.length === 0) return
@@ -541,6 +688,8 @@ export async function pollOnce(): Promise<void> {
       removed.filter((r) => r.unfinished).map((r) => previous.get(r.id)!),
       controller.signal,
     )
+    if (controller.signal.aborted || mine !== generation) return
+    await loadGraphs(listed, controller.signal, () => mine === generation)
     if (controller.signal.aborted || mine !== generation) return
     lastBilled = Math.max(1, getBilledCount() - billedBefore)
 

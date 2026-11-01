@@ -679,6 +679,6 @@ export function placeJobs(graph: JobGraph, jobs: readonly WorkflowJob[]): RunGra
   return { graph, instances, neverRuns, notJobs: match.notJobs }
 }
 
-export function isRunGraph(x: RunGraph | Verdict): x is RunGraph {
+export function isRunGraph(x: RunGraph | Verdict | { reason: string }): x is RunGraph {
   return 'graph' in x
 }

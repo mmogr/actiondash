@@ -6,11 +6,14 @@ import { forecastBucket, insightFor, type BucketForecast, type Insight } from '.
 import { NO_FILTER, type ViewFilter } from '../model/filter'
 import { dataHealthOf, isComplete, type RepoProblem } from '../model/health'
 import { myRuns } from '../model/mine'
+import { forecastGraphs, type GraphOutlook } from '../model/graphForecast'
+import { isRunGraph, placeJobs, type RunGraph } from '../model/workflow'
 import type { FinishedRun } from '../model/finished'
 import type { PacingReason } from '../model/status'
 import { PLANS } from '../model/plans'
 import { settings } from './settings'
 import { durations } from './durations'
+import { runGraphs } from './graphs'
 
 export type View = 'setup' | 'dashboard'
 
@@ -154,9 +157,42 @@ export const forecasts = computed(() => {
   return map
 })
 
+/**
+ * Each run's job graph, held to its latest job listing on every poll, or why
+ * it has none. A graph that stops explaining its run is dropped rather than
+ * drawn wrong; the run falls back to its plain job list.
+ */
+export const graphs = computed(() => {
+  const out = new Map<number, RunGraph | { reason: string }>()
+  for (const [id, entry] of runGraphs.value) {
+    if ('reason' in entry) {
+      out.set(id, entry)
+      continue
+    }
+    const placed = placeJobs(entry.graph, jobsByRun.value.get(id) ?? [])
+    out.set(id, isRunGraph(placed) ? placed : { reason: placed.ok ? 'the graph no longer fits' : placed.reason })
+  }
+  return out
+})
+
+/** For runs with a graph: when every job, including those not created yet, should run. */
+export const graphOutlooks = computed((): Map<number, GraphOutlook> => {
+  const placed = new Map<number, RunGraph>()
+  for (const [id, g] of graphs.value) if (isRunGraph(g)) placed.set(id, g)
+  if (placed.size === 0) return new Map()
+  return forecastGraphs({
+    graphs: placed,
+    runs: new Map(runs.value.map((r) => [r.id, r])),
+    forecasts: new Map([...forecasts.value].map(([cls, v]) => [cls, { forecast: v.forecast }])),
+    durations: durations.value,
+    plan: PLANS[settings.value.plan],
+    nowMs: now.value,
+  })
+})
+
 /** The reader's own active runs, running first. */
 export const myRunsNow = computed(() =>
-  myRuns(buckets.value, forecasts.value, jobsByRun.value, settings.value.login),
+  myRuns(buckets.value, forecasts.value, jobsByRun.value, settings.value.login, graphOutlooks.value),
 )
 
 export const totalQueued = computed(() =>

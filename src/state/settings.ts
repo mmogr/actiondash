@@ -4,6 +4,7 @@ import type { ObservedMax, PlanId } from '../model/plans'
 import { NO_ALERTS, type AlertPrefs } from '../model/alerts'
 import { clearCache, setTokenProvider } from '../github/client'
 import { clearDurations } from './durations'
+import { clearWorkflowCache } from './graphs'
 import { clearHistory } from './history'
 
 /**
@@ -56,6 +57,13 @@ export interface Settings {
    * cannot poll.
    */
   tokenRejectedAt: number | null
+  /**
+   * Repositories, as owner/name, whose runs are drawn as job graphs. Reading
+   * the workflow file a graph comes from needs Contents: read on a private
+   * repository, which can read all of its code, so nothing is read until the
+   * reader turns a repository on.
+   */
+  graphRepos: string[]
 }
 
 /** What actually sits in storage: the settings, plus the observation epoch. */
@@ -71,6 +79,7 @@ export const DEFAULT_SETTINGS: Settings = {
   installDismissed: false,
   login: null,
   tokenRejectedAt: null,
+  graphRepos: [],
 }
 const DEFAULTS = DEFAULT_SETTINGS
 
@@ -100,6 +109,9 @@ function load(): Settings {
         typeof parsed.tokenRejectedAt === 'number' && Number.isFinite(parsed.tokenRejectedAt)
           ? parsed.tokenRejectedAt
           : null,
+      graphRepos: Array.isArray(parsed.graphRepos)
+        ? [...new Set(parsed.graphRepos.filter((k): k is string => typeof k === 'string' && k.includes('/')))]
+        : [],
     }
   } catch {
     // Private browsing, disabled site data, or corrupt JSON. Start clean.
@@ -179,6 +191,7 @@ export function forgetEverything(): void {
   clearCache()
   clearDurations()
   clearHistory()
+  clearWorkflowCache()
 }
 
 // The API client reads the token through this provider so that it never has to
