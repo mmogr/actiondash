@@ -87,7 +87,7 @@ Tests in `tests/workflow.test.ts`, with fixtures taken from real runs found by t
 | Case | Source | Expect |
 | --- | --- | --- |
 | Matrix computed at run time | rust-lang/rust `ci.yml` | 1 node, 11 instances, all edges explained |
-| Nested reusable workflows | electron `build.yml`, 13 files | 48 of 49 matched, the skipped caller by its bare name |
+| Nested reusable workflows | electron `build.yml`, 13 files | 49 of 49 matched, the skipped caller by its bare name |
 | `include`-only matrix | Alamofire `ci.yml` | 56 of 56 by exact name |
 | Two interchangeable jobs | home-assistant `ci.yaml` | `pytest-mariadb \| pytest-postgres` merged |
 | Skipped job with its raw `${{ }}` name | grafana, realm | matched by raw name |
@@ -95,7 +95,7 @@ Tests in `tests/workflow.test.ts`, with fixtures taken from real runs found by t
 | File GitHub accepts, `yaml` rejects | WordPress-iOS `validate-issues.yml` | parses |
 | Cancelled run | actiondash `deploy.yml` | validation passes (cancelled dependents excluded) |
 | Bad YAML, missing file, required workflow, `dynamic/` workflow | constructed | no graph, reason given |
-| Timestamps skewed | gglib runs of 1 Nov | validation fails, reason "times don't fit" |
+| Timestamps skewed | gglib runs of 1 Nov | validation passes: the skew moves a job and its dependencies together |
 
 **Done when:** these pass; `js-yaml` is in the bundle and `check:csp` still passes; the model has no network access, which `check:fetch` confirms.
 
@@ -248,6 +248,6 @@ Running and finished nodes open the same sheet, with elapsed time against the us
 - **GitHub's clock can be wrong.** On 1 November at 09:14 UTC, by GitHub's own `Date` header (and a rate-limit reset that agrees with it):
   - gglib runs reported `created_at` 09:19 and 09:43, both in the future.
   - Some jobs reported `completed_at` before `started_at`.
-  - The graph's validation rejects such runs.
-  - Separately, today's "11m running" compares `started_at` with the browser clock and would show wrong times during a skew. It could measure against the `Date` header instead.
+  - The graph is unaffected: those runs still passed validation, because the skew moved each job and its dependencies together.
+  - Every time measured against the browser clock is wrong during a skew: "11m running", "waiting 4m", and forecasts anchored to now. Measuring against the response's `Date` header instead would fix all of them.
 - **Arrows between repositories.** The mockup shows the jobs ahead with outlines and the sheet rather than edges between cards. Edges across cards were rejected as unreadable. Revisit only with a reason.
