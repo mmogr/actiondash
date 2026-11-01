@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest'
 import {
   buildBuckets,
   distinctRuns,
+  gatherRuns,
   groupByRun,
   isFailedJob,
   jobStep,
@@ -219,6 +220,47 @@ describe('groupByRun', () => {
 
     expect(group?.since).toBe(Date.parse('2026-09-09T10:02:00Z'))
     expect(group?.jobs).toHaveLength(3)
+  })
+})
+
+describe('gatherRuns', () => {
+  it('lists a run once across pools, running first, with each job\'s place in its own line', () => {
+    const both = makeRun({ id: 1, run_number: 1, created_at: '2026-09-09T10:00:00Z' })
+    const waiting = makeRun({ id: 2, run_number: 2, created_at: '2026-09-09T09:50:00Z' })
+    const jobs = [
+      makeJob({ id: 10, run_id: 1, status: 'in_progress', started_at: '2026-09-09T10:01:00Z' }),
+      makeJob({ id: 11, run_id: 1, status: 'queued', labels: ['ubuntu-latest'], created_at: '2026-09-09T10:01:00Z' }),
+      makeJob({ id: 20, run_id: 2, status: 'queued', created_at: '2026-09-09T09:50:00Z' }),
+      makeJob({ id: 21, run_id: 2, status: 'queued', labels: ['ubuntu-latest'], created_at: '2026-09-09T09:50:00Z' }),
+    ]
+    const entries = gatherRuns(buildBuckets([both, waiting], index(jobs), FREE))
+
+    expect(entries.map((e) => [e.run.id, e.state, e.pools])).toEqual([
+      [1, 'running', ['macos', 'linux']],
+      [2, 'queued', ['macos', 'linux']],
+    ])
+    // Run 2's Linux job is first in the Linux line; run 1's is second.
+    expect(entries[0]?.jobs.map((j) => [j.entry.job.id, j.entry.cls, j.position])).toEqual([
+      [10, 'macos', 1],
+      [11, 'linux', 2],
+    ])
+    expect(entries[1]?.jobs.map((j) => [j.entry.job.id, j.position])).toEqual([
+      [20, 1],
+      [21, 1],
+    ])
+    // A running run's age is how long it has held a slot; a waiting run's, how long it has waited.
+    expect(entries[0]?.since).toBe(Date.parse('2026-09-09T10:01:00Z'))
+    expect(entries[1]?.since).toBe(Date.parse('2026-09-09T09:50:00Z'))
+  })
+
+  it('orders waiting runs oldest first, whatever pool each waits in', () => {
+    const linux = makeRun({ id: 1, created_at: '2026-09-09T09:55:00Z' })
+    const macos = makeRun({ id: 2, created_at: '2026-09-09T09:50:00Z' })
+    const jobs = [
+      makeJob({ id: 10, run_id: 1, status: 'queued', labels: ['ubuntu-latest'], created_at: '2026-09-09T09:55:00Z' }),
+      makeJob({ id: 20, run_id: 2, status: 'queued', created_at: '2026-09-09T09:50:00Z' }),
+    ]
+    expect(gatherRuns(buildBuckets([linux, macos], index(jobs), FREE)).map((e) => e.run.id)).toEqual([2, 1])
   })
 })
 

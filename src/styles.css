@@ -2346,3 +2346,12 @@ code,
   min-width: 0;
   cursor: pointer;
 }
+
+.jobpool {
+  flex-shrink: 0;
+  font-size: 11px;
+  color: var(--text-faint);
+  border: 1px solid var(--border);
+  border-radius: 3px;
+  padding: 0 4px;
+}

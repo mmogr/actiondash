@@ -24,6 +24,7 @@ import { CantCheck } from './CantCheck'
 import { HealthStrip } from './HealthStrip'
 import { StatusPill } from './StatusPill'
 import { RunnerClassSection } from './RunnerClassSection'
+import { RunList } from './RunList'
 import { FilterChips } from './FilterChips'
 import { Footer } from './Footer'
 import { SettingsView } from './SettingsView'
@@ -200,7 +201,6 @@ export function Dashboard() {
             <>
               <InstallBanner />
               <YourRuns />
-              <FilterChips />
               {list.map((bucket, i) =>
                 // Mid-check, an empty pool has only not heard from every
                 // repository yet, so it is left out rather than called quiet.
@@ -208,6 +208,8 @@ export function Dashboard() {
                   <RunnerClassSection key={bucket.cls} bucket={bucket} headline={i === headline} />
                 ),
               )}
+              <FilterChips />
+              <RunList />
             </>
           ) : health === 'ok' ? (
             // The only place the page says the pools are clear, and only when
