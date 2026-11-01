@@ -1,5 +1,6 @@
 import type { RunnerClass, RunWithRepo, WorkflowJob } from '../github/types'
-import { runOutlook, type Basis, type BucketForecast } from './forecast'
+import { runOutlook, worstBasis, type Basis, type BucketForecast } from './forecast'
+import type { GraphOutlook } from './graphForecast'
 import { runProgress, type ClassBucket, type DashJob } from './queue'
 
 /**
@@ -20,8 +21,13 @@ export interface MyRun {
   stale: boolean
   /** When its first job should start, for a run with nothing running yet. */
   startsAt: number | null
-  /** When the jobs it has now should be done. */
+  /**
+   * When it should be done: the whole run, jobs not created yet included, when
+   * its graph is known; otherwise only the jobs it has now.
+   */
   doneAt: number | null
+  /** doneAt covers the whole run, not only the jobs it has now. */
+  wholeRun: boolean
   /** What startsAt and doneAt rest on: a floor behind an overrunning job, a guess, or learned times. */
   basis: Basis
   /** How long it has been waiting, or running. */
@@ -52,6 +58,7 @@ export function myRuns(
   forecasts: ReadonlyMap<string, { forecast: BucketForecast }>,
   jobsByRun: ReadonlyMap<number, readonly WorkflowJob[]>,
   login: string | null,
+  graphs: ReadonlyMap<number, GraphOutlook> = new Map(),
 ): MyRun[] {
   if (!login) return []
   const running = new Map<number, DashJob[]>()
@@ -79,13 +86,15 @@ export function myRuns(
   for (const [id, run] of runsById) {
     const isRunning = running.has(id)
     const outlook = runOutlook(id, outlooks)
+    const whole = graphs.get(id)
     out.push({
       run,
       state: isRunning ? 'running' : 'queued',
       stale: stale.has(id),
       startsAt: isRunning ? null : (outlook?.firstStart ?? null),
-      doneAt: outlook?.allDone ?? null,
-      basis: outlook?.basis ?? 'learned',
+      doneAt: whole ? whole.allDone : (outlook?.allDone ?? null),
+      wholeRun: whole !== undefined,
+      basis: whole ? worstBasis(whole.basis, outlook?.basis ?? 'learned') : (outlook?.basis ?? 'learned'),
       since: earliest((isRunning ? running.get(id) : queued.get(id)) ?? []),
       position: isRunning ? null : positionOf(id, buckets),
       failed: runProgress(jobsByRun.get(id)).failed,

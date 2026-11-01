@@ -57,8 +57,10 @@ function YourRun({ m, nowMs }: { m: MyRun; nowMs: number }) {
       ? m.doneAt === null
         ? `running ${age(m.since, nowMs)} so far`
         : due(m.doneAt)
-          ? 'current jobs finishing now'
-          : `current jobs done ${at(m.doneAt)}`
+          ? m.wholeRun
+            ? 'finishing now'
+            : 'current jobs finishing now'
+          : `${m.wholeRun ? 'done' : 'current jobs done'} ${at(m.doneAt)}`
       : m.startsAt === null
         ? `waiting ${age(m.since, nowMs)} so far`
         : due(m.startsAt)

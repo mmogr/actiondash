@@ -27,7 +27,16 @@ const history: HistoryState = {
   days: {},
 }
 
-test.use({ seed: { ...dashboardSeed(), durations, history } })
+/** A workflow file kept for job graphs, which forgetting must remove too. */
+const workflows = {
+  'acme/app::.github/workflows/ci.yml': {
+    etag: '"blob1"',
+    def: { jobs: [{ id: 'build', name: null, needs: [], conditional: false, uses: null, matrix: null, runsOn: 'macos-15', steps: [] }] },
+    usedAt: FIXED_NOW.getTime(),
+  },
+}
+
+test.use({ seed: { ...dashboardSeed(), durations, history, workflows } })
 
 function stored(page: Page, key: string): Promise<string | null> {
   return page.evaluate((k) => localStorage.getItem(k), key)

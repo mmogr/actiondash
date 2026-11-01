@@ -53,6 +53,19 @@ export interface WorkflowRun {
   /** Who set this attempt going, when it differs, such as someone re-running it. */
   triggering_actor?: { login: string } | null
   run_attempt?: number
+  /**
+   * The workflow file, such as `.github/workflows/ci.yml`, or a `dynamic/…`
+   * path for workflows GitHub writes itself (Dependabot, Pages, CodeQL), which
+   * have no file to read. Optional so older fixtures still type-check.
+   */
+  path?: string
+  /** Every reusable workflow the run called, each at the exact commit it used. */
+  referenced_workflows?: { path: string; sha: string; ref?: string }[] | null
+  /**
+   * The workflow's API address. A required workflow from a ruleset points at
+   * `/actions/required_workflows/`, and its file lives in another repository.
+   */
+  workflow_url?: string
 }
 
 /** A run annotated with the repository it was fetched from. */

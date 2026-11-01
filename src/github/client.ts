@@ -1,7 +1,7 @@
 /**
  * The single point in the application that performs network I/O.
  *
- * Everything else goes through `apiFetch`. Two properties are enforced here:
+ * Everything else goes through `apiFetch`, or `apiFetchRaw` for files. Two properties are enforced here:
  *
  *  1. Origin guard. The bearer token is never attached to a request whose
  *     resolved origin is not https://api.github.com, and such a request is not
@@ -178,6 +178,19 @@ export interface ApiOptions {
   signal?: AbortSignal
 }
 
+async function errorFrom(res: Response, url: string): Promise<GitHubError> {
+  let message = `${res.status} ${res.statusText}`
+  let docs: string | undefined
+  try {
+    const body = (await res.json()) as { message?: string; documentation_url?: string }
+    if (body.message) message = body.message
+    docs = body.documentation_url
+  } catch {
+    // Non-JSON error body; the status line is the best available message.
+  }
+  return new GitHubError(res.status, message, url, docs)
+}
+
 export async function apiFetch<T>(
   pathOrUrl: string,
   options: ApiOptions = {},
@@ -206,18 +219,7 @@ export async function apiFetch<T>(
     return { data: cached.body as T, status: 304, nextUrl, cached: true }
   }
 
-  if (!res.ok) {
-    let message = `${res.status} ${res.statusText}`
-    let docs: string | undefined
-    try {
-      const body = (await res.json()) as { message?: string; documentation_url?: string }
-      if (body.message) message = body.message
-      docs = body.documentation_url
-    } catch {
-      // Non-JSON error body; the status line is the best available message.
-    }
-    throw new GitHubError(res.status, message, key, docs)
-  }
+  if (!res.ok) throw await errorFrom(res, key)
 
   // A write can answer 201 or 202 with no body at all, which res.json() would
   // reject, so only a body that is there is parsed.
@@ -244,4 +246,44 @@ export async function apiFetchAll<T>(
     next = res.nextUrl
   }
   return out
+}
+
+export interface RawResponse {
+  /** 304 when the ETag sent still describes the file, which costs nothing. */
+  status: 200 | 304
+  /** The file, on a 200. */
+  text: string | null
+  /** The file's ETag, which for the contents API is its blob SHA. */
+  etag: string | null
+}
+
+/**
+ * A file's raw text, for the workflow files a job graph is read from.
+ *
+ * Separate from apiFetch because the cache there is keyed by URL, and the
+ * saving here comes from another URL: a contents ETag is the file's blob SHA,
+ * so the ETag of a workflow file at one commit still matches at the next
+ * commit that left the file alone. Sent explicitly, it turns a new run of an
+ * unchanged workflow into a 304, which the hourly allowance does not count.
+ * The caller keeps the ETag and the file it describes.
+ */
+export async function apiFetchRaw(
+  path: string,
+  options: { etag?: string | null; signal?: AbortSignal } = {},
+): Promise<RawResponse> {
+  const url = assertGitHubOrigin(path)
+  const key = url.toString()
+  const headers = new Headers({
+    Accept: 'application/vnd.github.raw+json',
+    'X-GitHub-Api-Version': '2022-11-28',
+  })
+  const token = tokenProvider()
+  if (token) headers.set('Authorization', `Bearer ${token}`)
+  if (options.etag) headers.set('If-None-Match', options.etag)
+
+  const res = await fetch(key, { headers, signal: options.signal })
+  captureRateLimit(res)
+  if (res.status === 304) return { status: 304, text: null, etag: options.etag ?? null }
+  if (!res.ok) throw await errorFrom(res, key)
+  return { status: 200, text: await res.text(), etag: res.headers.get('etag') }
 }

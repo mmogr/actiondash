@@ -1,0 +1,75 @@
+{
+ "source": "vercel/next.js run 41289772852, captured 2026-11-01",
+ "run": {
+  "id": 41289772852,
+  "name": "Pull Request Auto-Labeler",
+  "run_number": 5279,
+  "event": "pull_request_target",
+  "path": ".github/workflows/pull_request_auto_label.yml",
+  "head_sha": "789395bff20642239786eeb366290e28d9ec53d0",
+  "head_branch": "fleet/auto-set-benches",
+  "status": "completed",
+  "conclusion": "success",
+  "run_attempt": 1,
+  "workflow_url": "https://api.github.com/repos/vercel/next.js/actions/workflows/266005875",
+  "created_at": "2026-11-01T09:39:23Z",
+  "run_started_at": "2026-11-01T09:39:23Z",
+  "repoOwner": "vercel",
+  "repoName": "next.js",
+  "referenced_workflows": []
+ },
+ "files": {
+  "vercel/next.js/.github/workflows/pull_request_auto_label.yml@789395bff20642239786eeb366290e28d9ec53d0": "name: Pull Request Auto-Labeler\n\n# Runs on pull_request_target so the workflow has the permissions of the\n# base repository and can write labels on PRs opened from forks.\n#\n# `pull_request_target` is only risky when a workflow holding a\n# write-scoped token also executes PR-controlled content — e.g. checking\n# out the PR head and running its build/install scripts, or interpolating\n# PR text (titles, bodies, branch names) directly into shell commands.\n# This workflow does neither:\n#\n#   1. The action is referenced as `vercel/next.js/.github/actions/\n#      pr-auto-label@canary`, so GitHub Actions fetches the action bundle\n#      (with the labeler config inlined into it at build time) directly\n#      from the `canary` ref of this repo — independent of the PR's\n#      source or target branch. A fork PR cannot influence which code\n#      runs here. Pinning to `canary` (rather than the PR's base ref)\n#      also preserves the original `next-labeler-webhook` semantics:\n#      PRs targeting release branches are still labeled using the\n#      current canary rules.\n#   2. No PR-controlled code executes on the runner. We don't check out\n#      the PR, run `pnpm install` / `npm install`, or execute any script\n#      defined by the PR's `package.json`.\n#   3. No PR-controlled text is interpolated into `run:` scripts. The\n#      action reads `pull_request.user.login` and the list of changed\n#      files via the GitHub API — both authenticated by GitHub and not\n#      forgeable by the PR author — and passes them to the `octokit`\n#      client, not to a shell.\n#   4. `permissions` is scoped to the minimum needed: `pull-requests:\n#      write` to apply labels.\n#   5. `if: github.repository_owner == 'vercel'` prevents the workflow\n#      from running in unrelated forks of this repo.\n#\n# If you ever change this workflow to check out the PR head, install\n# dependencies from the PR, or interpolate PR-provided strings into a\n# shell command, revisit this threat model.\non:\n  pull_request_target:\n    # `opened` covers new PRs (including drafts) and `synchronize` covers\n    # every subsequent push. Other lifecycle events (`reopened`,\n    # `ready_for_review`, `edited`) don't change the file list or the\n    # author, so there's nothing new to label.\n    types: [opened, synchronize]\n\n# Deny-by-default at the workflow level. The job below opts back in to\n# `pull-requests: write` — the minimum needed to apply labels.\npermissions: {}\n\nconcurrency:\n  # `github.event.pull_request.number` is always set for\n  # `pull_request_target`, but fall back to the run ID if this workflow is\n  # ever extended to run on other events, to avoid collapsing unrelated\n  # runs into the same group.\n  group: pr-auto-label-${{ github.event.pull_request.number || github.run_id }}\n  cancel-in-progress: true\n\njobs:\n  label:\n    if: github.repository_owner == 'vercel'\n    runs-on: ubuntu-latest\n    permissions:\n      # To add labels\n      pull-requests: write\n    steps:\n      - uses: vercel/next.js/.github/actions/pr-auto-label@canary\n        env:\n          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}\n"
+ },
+ "jobs": [
+  {
+   "id": 124798404822,
+   "run_id": 41289772852,
+   "name": "label",
+   "status": "completed",
+   "conclusion": "success",
+   "labels": [
+    "ubuntu-latest"
+   ],
+   "runner_name": "GitHub Actions 1052348999",
+   "html_url": "https://github.com/vercel/next.js/actions/runs/41289772852/job/124798404822",
+   "created_at": "2026-11-01T09:39:24Z",
+   "started_at": "2026-11-01T09:39:26Z",
+   "completed_at": "2026-11-01T09:39:41Z",
+   "steps": [
+    {
+     "number": 1,
+     "name": "Set up job",
+     "status": "completed",
+     "conclusion": "success"
+    },
+    {
+     "number": 2,
+     "name": "Run vercel/next.js/.github/actions/pr-auto-label@canary",
+     "status": "completed",
+     "conclusion": "success"
+    },
+    {
+     "number": 3,
+     "name": "Complete job",
+     "status": "completed",
+     "conclusion": "success"
+    }
+   ]
+  },
+  {
+   "id": 124798518081,
+   "run_id": 41289772852,
+   "name": "Docs Link Validation",
+   "status": "completed",
+   "conclusion": "success",
+   "labels": [],
+   "runner_name": null,
+   "html_url": "https://github.com/vercel/next.js/runs/124798518081",
+   "created_at": "2026-11-01T09:39:58Z",
+   "started_at": "2026-11-01T09:39:58Z",
+   "completed_at": "2026-11-01T09:39:58Z",
+   "steps": []
+  }
+ ]
+}

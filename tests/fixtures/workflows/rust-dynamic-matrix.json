@@ -1,0 +1,2724 @@
+{
+ "source": "rust-lang/rust run 41283296665, captured 2026-11-01",
+ "run": {
+  "id": 41283296665,
+  "name": "CI",
+  "run_number": 237577,
+  "event": "pull_request",
+  "path": ".github/workflows/ci.yml",
+  "head_sha": "78496e5ba3061551d169d60688c8f0e53f71e256",
+  "head_branch": "issue-165263",
+  "status": "completed",
+  "conclusion": "success",
+  "run_attempt": 1,
+  "workflow_url": "https://api.github.com/repos/rust-lang/rust/actions/workflows/817415",
+  "created_at": "2026-11-01T07:04:22Z",
+  "run_started_at": "2026-11-01T07:04:22Z",
+  "repoOwner": "rust-lang",
+  "repoName": "rust",
+  "referenced_workflows": []
+ },
+ "files": {
+  "rust-lang/rust/.github/workflows/ci.yml@78496e5ba3061551d169d60688c8f0e53f71e256": "# This file defines our primary CI workflow that runs on pull requests\n# and also on pushes to special branches (auto, try).\n#\n# The actual definition of the executed jobs is calculated by the\n# `src/ci/citool` crate, which\n# uses job definition data from src/ci/github-actions/jobs.yml.\n# You should primarily modify the `jobs.yml` file if you want to modify\n# what jobs are executed in CI.\n\nname: CI\non:\n  push:\n    branches:\n      - automation/bors/auto\n      - automation/bors/try\n      - automation/bors/try-perf\n  pull_request:\n    branches:\n      - \"**\"\n\npermissions:\n  contents: read\n  packages: write\n\ndefaults:\n  run:\n    # On Linux, macOS, and Windows, use the system-provided bash as the default\n    # shell. (This should only make a difference on Windows, where the default\n    # shell is PowerShell.)\n    shell: bash\n\nconcurrency:\n  # For a given workflow, if we push to the same branch, cancel all previous builds on that branch.\n  # We add an exception for try builds (automation/bors/try branch) and unrolled rollup builds\n  # (automation/bors/try-perf), which are all triggered on the same branch, but which should be able\n  # to run concurrently.\n  group: ${{ github.workflow }}-${{ ((github.ref == 'refs/heads/automation/bors/try-perf' || github.ref == 'refs/heads/automation/bors/try') && github.sha) || github.ref }}\n  cancel-in-progress: true\nenv:\n  TOOLSTATE_REPO: \"https://github.com/rust-lang-nursery/rust-toolstate\"\n  # This will be empty in PR jobs.\n  TOOLSTATE_REPO_ACCESS_TOKEN: ${{ secrets.TOOLSTATE_REPO_ACCESS_TOKEN }}\njobs:\n  # The job matrix for `calculate_matrix` is defined in src/ci/github-actions/jobs.yml.\n  # It calculates which jobs should be executed, based on the data of the ${{ github }} context.\n  # If you want to modify CI jobs, take a look at src/ci/github-actions/jobs.yml.\n  calculate_matrix:\n    name: Calculate job matrix\n    runs-on: ubuntu-26.04-arm\n    outputs:\n      jobs: ${{ steps.jobs.outputs.jobs }}\n      run_type: ${{ steps.jobs.outputs.run_type }}\n    steps:\n      - name: Checkout the source code\n        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1\n      - name: Test citool\n        # Only test citool on the auto branch, to reduce latency of the calculate matrix job\n        # on PR/try builds.\n        if: ${{ github.ref == 'refs/heads/automation/bors/auto' }}\n        run: |\n          cd src/ci/citool\n          CARGO_INCREMENTAL=0 cargo test --locked\n      - name: Calculate the CI job matrix\n        env:\n          COMMIT_MESSAGE: ${{ github.event.head_commit.message }}\n        run: |\n          cd src/ci/citool\n          CARGO_INCREMENTAL=0 cargo run --locked calculate-job-matrix >> $GITHUB_OUTPUT\n        id: jobs\n  job:\n    name: ${{ matrix.full_name }}\n    needs: [ calculate_matrix ]\n    runs-on: \"${{ matrix.os }}\"\n    timeout-minutes: 360\n    # The bors environment contains secrets required for elevated workflows (try and auto builds),\n    # which need to access e.g. S3 and upload artifacts. We want to provide access to that\n    # environment only on the try/auto branches, which are only accessible to bors.\n    # This also ensures that PR CI (which doesn't get write access to S3) works, as it cannot\n    # access the environment.\n    #\n    # We only enable the environment for the rust-lang/rust repository, so that CI works on forks.\n    environment: ${{ ((github.repository == 'rust-lang/rust' && (github.ref == 'refs/heads/automation/bors/try' || github.ref == 'refs/heads/automation/bors/try-perf' || github.ref == 'refs/heads/automation/bors/auto')) && 'bors') || '' }}\n    env:\n      CI_JOB_NAME: ${{ matrix.name }}\n      CI_JOB_DOC_URL: ${{ matrix.doc_url }}\n      GITHUB_WORKFLOW_RUN_ID: ${{ github.run_id }}\n      GITHUB_REPOSITORY: ${{ github.repository }}\n      CARGO_REGISTRIES_CRATES_IO_PROTOCOL: sparse\n      # commit of PR sha or commit sha. `GITHUB_SHA` is not accurate for PRs.\n      HEAD_SHA: ${{ github.event.pull_request.head.sha || github.sha }}\n      DOCKER_TOKEN: ${{ secrets.GITHUB_TOKEN }}\n      SCCACHE_BUCKET: rust-lang-ci-sccache2\n      SCCACHE_REGION: us-west-1\n      CACHE_DOMAIN: ci-caches.rust-lang.org\n    continue-on-error: ${{ matrix.continue_on_error || false }}\n    strategy:\n      # If the user starts multiple jobs in a try build, let them all finish.\n      # Try builds are sometimes used to test several jobs at once, and it is useful to know which\n      # of them would succeed or not.\n      fail-fast: ${{ needs.calculate_matrix.outputs.run_type != 'try' }}\n      matrix:\n        # Check the `calculate_matrix` job to see how is the matrix defined.\n        include: ${{ fromJSON(needs.calculate_matrix.outputs.jobs) }}\n    steps:\n      - name: Install cargo in AWS CodeBuild\n        if: matrix.codebuild\n        run: |\n          # Check if cargo is installed\n          if ! command -v cargo &> /dev/null; then\n            echo \"Cargo not found, installing Rust...\"\n            curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y --profile=minimal\n            # Make cargo available in PATH\n            echo \"$HOME/.cargo/bin\" >> $GITHUB_PATH\n          fi\n\n      - name: disable git crlf conversion\n        run: git config --global core.autocrlf false\n\n      - name: checkout the source code\n        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1\n        with:\n          fetch-depth: 2\n\n      # Free up disk space on Linux by removing preinstalled components that\n      # we do not need. We do this to enable some of the less resource\n      # intensive jobs to run on free runners, which however also have\n      # less disk space.\n      - name: free up disk space\n        run: src/ci/scripts/free-disk-space-linux.sh\n        if: matrix.free_disk\n\n      # If we don't need to free up disk space then just report how much space we have\n      - name: print disk usage\n        run: |\n          echo \"disk usage:\"\n          df -h\n        if: matrix.free_disk == false\n\n      # Rust Log Analyzer can't currently detect the PR number of a GitHub\n      # Actions build on its own, so a hint in the log message is needed to\n      # point it in the right direction.\n      - name: configure the PR in which the error message will be posted\n        run: echo \"[CI_PR_NUMBER=$num]\"\n        env:\n          num: ${{ github.event.number }}\n        if: needs.calculate_matrix.outputs.run_type == 'pr'\n\n      - name: add extra environment variables\n        run: src/ci/scripts/setup-environment.sh\n        env:\n          # Since it's not possible to merge `${{ matrix.env }}` with the other\n          # variables in `job.<name>.env`, the variables defined in the matrix\n          # are passed to the `setup-environment.sh` script encoded in JSON,\n          # which then uses log commands to actually set them.\n          EXTRA_VARIABLES: ${{ toJson(matrix.env) }}\n\n      - name: ensure the channel matches the target branch\n        run: src/ci/scripts/verify-channel.sh\n\n      - name: collect CPU statistics\n        run: src/ci/scripts/collect-cpu-stats.sh\n\n      - name: show the current environment\n        run: src/ci/scripts/dump-environment.sh\n\n      - name: install awscli\n        run: src/ci/scripts/install-awscli.sh\n\n      - name: install sccache\n        run: src/ci/scripts/install-sccache.sh\n\n      - name: install clang\n        run: src/ci/scripts/install-clang.sh\n\n      - name: install tidy\n        run: src/ci/scripts/install-tidy.sh\n\n      - name: install WIX\n        run: src/ci/scripts/install-wix.sh\n\n      - name: disable git crlf conversion\n        run: src/ci/scripts/disable-git-crlf-conversion.sh\n\n      - name: checkout submodules\n        run: src/ci/scripts/checkout-submodules.sh\n\n      - name: install MinGW\n        run: src/ci/scripts/install-mingw.sh\n\n      - name: install ninja\n        run: src/ci/scripts/install-ninja.sh\n\n      - name: install required Python version\n        # LLDB on Windows requires the same Python version it was built against to be the first\n        # discoverable Python in $env:PATH. Only install if we're actually running Windows tests\n        # that use LLDB\n        if: ${{ startsWith(matrix.os, 'windows') && matrix.required_python_version}}\n        uses: actions/setup-python@6d4fd22b20465ccc0f7354476588e8df7c9ca0e0 # v7.1.0\n        with:\n          python-version: ${{ matrix.required_python_version }}\n\n      - name: enable ipv6 on Docker\n        # Don't run on codebuild because systemctl is not available\n        if: ${{ !matrix.codebuild }}\n        run: src/ci/scripts/enable-docker-ipv6.sh\n\n      # Disable automatic line ending conversion (again). On Windows, when we're\n      # installing dependencies, something switches the git configuration directory or\n      # re-enables autocrlf. We've not tracked down the exact cause -- and there may\n      # be multiple -- but this should ensure submodules are checked out with the\n      # appropriate line endings.\n      - name: disable git crlf conversion\n        run: src/ci/scripts/disable-git-crlf-conversion.sh\n\n      - name: ensure line endings are correct\n        run: src/ci/scripts/verify-line-endings.sh\n\n      - name: ensure backported commits are in upstream branches\n        run: src/ci/scripts/verify-backported-commits.sh\n\n      - name: ensure the stable version number is correct\n        run: src/ci/scripts/verify-stable-version-number.sh\n\n      # Show the environment just before we run the build\n      # This makes it easier to diagnose problems with the above install scripts.\n      - name: show the current environment\n        run: src/ci/scripts/dump-environment.sh\n\n      # Pre-build citool before the following step uninstalls rustup\n      # Build it into the build directory, to avoid modifying sources\n      - name: build citool\n        run: |\n          cd src/ci/citool\n          CARGO_INCREMENTAL=0 CARGO_TARGET_DIR=../../../build/citool cargo build --locked\n\n      - name: run the build\n        run: |\n          set +e\n          # Redirect stderr to stdout to avoid reordering the two streams in the GHA logs.\n          src/ci/scripts/run-build-from-ci.sh 2>&1\n          STATUS=$?\n          set -e\n\n          if [[ \"$STATUS\" -ne 0 && -n \"$CI_JOB_DOC_URL\" ]]; then\n            echo \"****************************************************************************\"\n            echo \"To find more information about this job, visit the following URL:\"\n            echo \"$CI_JOB_DOC_URL\"\n            echo \"****************************************************************************\"\n          fi\n          exit ${STATUS}\n        env:\n          AWS_ACCESS_KEY_ID: ${{ secrets.CACHES_AWS_ACCESS_KEY_ID }}\n          AWS_SECRET_ACCESS_KEY: ${{ secrets.CACHES_AWS_SECRET_ACCESS_KEY }}\n\n      - name: create github artifacts\n        run: src/ci/scripts/create-doc-artifacts.sh\n\n      - name: print disk usage\n        # We also want to know the disk usage when the job fails.\n        if: always()\n        run: |\n          echo \"disk usage:\"\n          df -h\n\n      - name: upload artifacts to github\n        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2\n        with:\n          # name is set in previous step\n          name: ${{ env.DOC_ARTIFACT_NAME }}\n          path: obj/artifacts/doc\n          if-no-files-found: ignore\n          retention-days: 5\n\n      - name: upload artifacts to S3\n        run: src/ci/scripts/upload-artifacts.sh\n        env:\n          AWS_ACCESS_KEY_ID: ${{ secrets.ARTIFACTS_AWS_ACCESS_KEY_ID }}\n          AWS_SECRET_ACCESS_KEY: ${{ secrets.ARTIFACTS_AWS_SECRET_ACCESS_KEY }}\n        # Adding a condition on DEPLOY=1 or DEPLOY_ALT=1 is not needed as all deploy\n        # builders *should* have the AWS credentials available. Still, explicitly\n        # adding the condition is helpful as this way CI will not silently skip\n        # deploying artifacts from a dist builder if the variables are misconfigured,\n        # erroring about invalid credentials instead.\n        if: github.event_name == 'push' || env.DEPLOY == '1' || env.DEPLOY_ALT == '1'\n\n      - name: postprocess metrics into the summary\n        # This step is not critical, and if some I/O problem happens, we don't want\n        # to cancel the build.\n        continue-on-error: true\n        run: |\n          if [ -f build/metrics.json ]; then\n            METRICS=build/metrics.json\n          elif [ -f obj/build/metrics.json ]; then\n            METRICS=obj/build/metrics.json\n          else\n            echo \"No metrics.json found\"\n            exit 0\n          fi\n\n          # Get closest bors merge commit\n          PARENT_COMMIT=`git rev-list --author='bors@rust-lang.org' --author='122020455+rust-bors\\[bot\\]@users.noreply.github.com' -n1 --first-parent HEAD^1`\n\n          ./build/citool/debug/citool postprocess-metrics \\\n              --job-name ${CI_JOB_NAME} \\\n              --parent ${PARENT_COMMIT} \\\n              ${METRICS} >> ${GITHUB_STEP_SUMMARY}\n\n      - name: upload job metrics to DataDog\n        # This step is not critical, and if some I/O problem happens, we don't want\n        # to cancel the build.\n        continue-on-error: true\n        if: needs.calculate_matrix.outputs.run_type != 'pr'\n        env:\n          DATADOG_API_KEY: ${{ secrets.DATADOG_API_KEY }}\n          DD_GITHUB_JOB_NAME: ${{ matrix.full_name }}\n        run: ./build/citool/debug/citool upload-build-metrics build/cpu-usage.csv\n\n  # This job is used to publish toolstate for successful auto builds.\n  outcome:\n    name: publish toolstate\n    runs-on: ubuntu-26.04\n    needs: [ calculate_matrix, job ]\n    if: ${{ needs.calculate_matrix.outputs.run_type == 'auto' }}\n    environment: ${{ (github.repository == 'rust-lang/rust' && 'bors') || '' }}\n    steps:\n      - name: checkout the source code\n        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1\n        with:\n          fetch-depth: 2\n      # Publish the toolstate if an auto build succeeds (just before push to the default branch)\n      - name: publish toolstate\n        run: src/ci/publish_toolstate.sh\n        shell: bash\n        env:\n          TOOLSTATE_ISSUES_API_URL: https://api.github.com/repos/rust-lang/rust/issues\n          TOOLSTATE_PUBLISH: 1\n"
+ },
+ "jobs": [
+  {
+   "id": 124779438854,
+   "run_id": 41283296665,
+   "name": "Calculate job matrix",
+   "status": "completed",
+   "conclusion": "success",
+   "labels": [
+    "ubuntu-26.04-arm"
+   ],
+   "runner_name": "GitHub Actions 1002967526",
+   "html_url": "https://github.com/rust-lang/rust/actions/runs/41283296665/job/124779438854",
+   "created_at": "2026-11-01T07:04:22Z",
+   "started_at": "2026-11-01T07:04:26Z",
+   "completed_at": "2026-11-01T07:04:58Z",
+   "steps": [
+    {
+     "number": 1,
+     "name": "Set up job",
+     "status": "completed",
+     "conclusion": "success"
+    },
+    {
+     "number": 2,
+     "name": "Checkout the source code",
+     "status": "completed",
+     "conclusion": "success"
+    },
+    {
+     "number": 3,
+     "name": "Test citool",
+     "status": "completed",
+     "conclusion": "skipped"
+    },
+    {
+     "number": 4,
+     "name": "Calculate the CI job matrix",
+     "status": "completed",
+     "conclusion": "success"
+    },
+    {
+     "number": 8,
+     "name": "Post Checkout the source code",
+     "status": "completed",
+     "conclusion": "success"
+    },
+    {
+     "number": 9,
+     "name": "Complete job",
+     "status": "completed",
+     "conclusion": "success"
+    }
+   ]
+  },
+  {
+   "id": 124779553003,
+   "run_id": 41283296665,
+   "name": "PR - test-pr-check-1",
+   "status": "completed",
+   "conclusion": "success",
+   "labels": [
+    "ubuntu-24.04"
+   ],
+   "runner_name": "GitHub Actions 1002967530",
+   "html_url": "https://github.com/rust-lang/rust/actions/runs/41283296665/job/124779553003",
+   "created_at": "2026-11-01T07:04:58Z",
+   "started_at": "2026-11-01T07:05:00Z",
+   "completed_at": "2026-11-01T07:35:48Z",
+   "steps": [
+    {
+     "number": 1,
+     "name": "Set up job",
+     "status": "completed",
+     "conclusion": "success"
+    },
+    {
+     "number": 2,
+     "name": "Install cargo in AWS CodeBuild",
+     "status": "completed",
+     "conclusion": "skipped"
+    },
+    {
+     "number": 3,
+     "name": "disable git crlf conversion",
+     "status": "completed",
+     "conclusion": "success"
+    },
+    {
+     "number": 4,
+     "name": "checkout the source code",
+     "status": "completed",
+     "conclusion": "success"
+    },
+    {
+     "number": 5,
+     "name": "free up disk space",
+     "status": "completed",
+     "conclusion": "success"
+    },
+    {
+     "number": 6,
+     "name": "print disk usage",
+     "status": "completed",
+     "conclusion": "skipped"
+    },
+    {
+     "number": 7,
+     "name": "configure the PR in which the error message will be posted",
+     "status": "completed",
+     "conclusion": "success"
+    },
+    {
+     "number": 8,
+     "name": "add extra environment variables",
+     "status": "completed",
+     "conclusion": "success"
+    },
+    {
+     "number": 9,
+     "name": "ensure the channel matches the target branch",
+     "status": "completed",
+     "conclusion": "success"
+    },
+    {
+     "number": 10,
+     "name": "collect CPU statistics",
+     "status": "completed",
+     "conclusion": "success"
+    },
+    {
+     "number": 11,
+     "name": "show the current environment",
+     "status": "completed",
+     "conclusion": "success"
+    },
+    {
+     "number": 12,
+     "name": "install awscli",
+     "status": "completed",
+     "conclusion": "success"
+    },
+    {
+     "number": 13,
+     "name": "install sccache",
+     "status": "completed",
+     "conclusion": "success"
+    },
+    {
+     "number": 14,
+     "name": "install clang",
+     "status": "completed",
+     "conclusion": "success"
+    },
+    {
+     "number": 15,
+     "name": "install tidy",
+     "status": "completed",
+     "conclusion": "success"
+    },
+    {
+     "number": 16,
+     "name": "install WIX",
+     "status": "completed",
+     "conclusion": "success"
+    },
+    {
+     "number": 17,
+     "name": "disable git crlf conversion",
+     "status": "completed",
+     "conclusion": "success"
+    },
+    {
+     "number": 18,
+     "name": "checkout submodules",
+     "status": "completed",
+     "conclusion": "success"
+    },
+    {
+     "number": 19,
+     "name": "install MinGW",
+     "status": "completed",
+     "conclusion": "success"
+    },
+    {
+     "number": 20,
+     "name": "install ninja",
+     "status": "completed",
+     "conclusion": "success"
+    },
+    {
+     "number": 21,
+     "name": "install required Python version",
+     "status": "completed",
+     "conclusion": "skipped"
+    },
+    {
+     "number": 22,
+     "name": "enable ipv6 on Docker",
+     "status": "completed",
+     "conclusion": "success"
+    },
+    {
+     "number": 23,
+     "name": "disable git crlf conversion",
+     "status": "completed",
+     "conclusion": "success"
+    },
+    {
+     "number": 24,
+     "name": "ensure line endings are correct",
+     "status": "completed",
+     "conclusion": "success"
+    },
+    {
+     "number": 25,
+     "name": "ensure backported commits are in upstream branches",
+     "status": "completed",
+     "conclusion": "success"
+    },
+    {
+     "number": 26,
+     "name": "ensure the stable version number is correct",
+     "status": "completed",
+     "conclusion": "success"
+    },
+    {
+     "number": 27,
+     "name": "show the current environment",
+     "status": "completed",
+     "conclusion": "success"
+    },
+    {
+     "number": 28,
+     "name": "build citool",
+     "status": "completed",
+     "conclusion": "success"
+    },
+    {
+     "number": 29,
+     "name": "run the build",
+     "status": "completed",
+     "conclusion": "success"
+    },
+    {
+     "number": 30,
+     "name": "create github artifacts",
+     "status": "completed",
+     "conclusion": "success"
+    },
+    {
+     "number": 31,
+     "name": "print disk usage",
+     "status": "completed",
+     "conclusion": "success"
+    },
+    {
+     "number": 32,
+     "name": "upload artifacts to github",
+     "status": "completed",
+     "conclusion": "success"
+    },
+    {
+     "number": 33,
+     "name": "upload artifacts to S3",
+     "status": "completed",
+     "conclusion": "skipped"
+    },
+    {
+     "number": 34,
+     "name": "postprocess metrics into the summary",
+     "status": "completed",
+     "conclusion": "success"
+    },
+    {
+     "number": 35,
+     "name": "upload job metrics to DataDog",
+     "status": "completed",
+     "conclusion": "skipped"
+    },
+    {
+     "number": 70,
+     "name": "Post checkout the source code",
+     "status": "completed",
+     "conclusion": "success"
+    },
+    {
+     "number": 71,
+     "name": "Complete job",
+     "status": "completed",
+     "conclusion": "success"
+    }
+   ]
+  },
+  {
+   "id": 124779553007,
+   "run_id": 41283296665,
+   "name": "PR - test-x86_64-gnu-gcc",
+   "status": "completed",
+   "conclusion": "success",
+   "labels": [
+    "ubuntu-24.04"
+   ],
+   "runner_name": "GitHub Actions 1002967529",
+   "html_url": "https://github.com/rust-lang/rust/actions/runs/41283296665/job/124779553007",
+   "created_at": "2026-11-01T07:04:58Z",
+   "started_at": "2026-11-01T07:05:00Z",
+   "completed_at": "2026-11-01T07:52:47Z",
+   "steps": [
+    {
+     "number": 1,
+     "name": "Set up job",
+     "status": "completed",
+     "conclusion": "success"
+    },
+    {
+     "number": 2,
+     "name": "Install cargo in AWS CodeBuild",
+     "status": "completed",
+     "conclusion": "skipped"
+    },
+    {
+     "number": 3,
+     "name": "disable git crlf conversion",
+     "status": "completed",
+     "conclusion": "success"
+    },
+    {
+     "number": 4,
+     "name": "checkout the source code",
+     "status": "completed",
+     "conclusion": "success"
+    },
+    {
+     "number": 5,
+     "name": "free up disk space",
+     "status": "completed",
+     "conclusion": "success"
+    },
+    {
+     "number": 6,
+     "name": "print disk usage",
+     "status": "completed",
+     "conclusion": "skipped"
+    },
+    {
+     "number": 7,
+     "name": "configure the PR in which the error message will be posted",
+     "status": "completed",
+     "conclusion": "success"
+    },
+    {
+     "number": 8,
+     "name": "add extra environment variables",
+     "status": "completed",
+     "conclusion": "success"
+    },
+    {
+     "number": 9,
+     "name": "ensure the channel matches the target branch",
+     "status": "completed",
+     "conclusion": "success"
+    },
+    {
+     "number": 10,
+     "name": "collect CPU statistics",
+     "status": "completed",
+     "conclusion": "success"
+    },
+    {
+     "number": 11,
+     "name": "show the current environment",
+     "status": "completed",
+     "conclusion": "success"
+    },
+    {
+     "number": 12,
+     "name": "install awscli",
+     "status": "completed",
+     "conclusion": "success"
+    },
+    {
+     "number": 13,
+     "name": "install sccache",
+     "status": "completed",
+     "conclusion": "success"
+    },
+    {
+     "number": 14,
+     "name": "install clang",
+     "status": "completed",
+     "conclusion": "success"
+    },
+    {
+     "number": 15,
+     "name": "install tidy",
+     "status": "completed",
+     "conclusion": "success"
+    },
+    {
+     "number": 16,
+     "name": "install WIX",
+     "status": "completed",
+     "conclusion": "success"
+    },
+    {
+     "number": 17,
+     "name": "disable git crlf conversion",
+     "status": "completed",
+     "conclusion": "success"
+    },
+    {
+     "number": 18,
+     "name": "checkout submodules",
+     "status": "completed",
+     "conclusion": "success"
+    },
+    {
+     "number": 19,
+     "name": "install MinGW",
+     "status": "completed",
+     "conclusion": "success"
+    },
+    {
+     "number": 20,
+     "name": "install ninja",
+     "status": "completed",
+     "conclusion": "success"
+    },
+    {
+     "number": 21,
+     "name": "install required Python version",
+     "status": "completed",
+     "conclusion": "skipped"
+    },
+    {
+     "number": 22,
+     "name": "enable ipv6 on Docker",
+     "status": "completed",
+     "conclusion": "success"
+    },
+    {
+     "number": 23,
+     "name": "disable git crlf conversion",
+     "status": "completed",
+     "conclusion": "success"
+    },
+    {
+     "number": 24,
+     "name": "ensure line endings are correct",
+     "status": "completed",
+     "conclusion": "success"
+    },
+    {
+     "number": 25,
+     "name": "ensure backported commits are in upstream branches",
+     "status": "completed",
+     "conclusion": "success"
+    },
+    {
+     "number": 26,
+     "name": "ensure the stable version number is correct",
+     "status": "completed",
+     "conclusion": "success"
+    },
+    {
+     "number": 27,
+     "name": "show the current environment",
+     "status": "completed",
+     "conclusion": "success"
+    },
+    {
+     "number": 28,
+     "name": "build citool",
+     "status": "completed",
+     "conclusion": "success"
+    },
+    {
+     "number": 29,
+     "name": "run the build",
+     "status": "completed",
+     "conclusion": "success"
+    },
+    {
+     "number": 30,
+     "name": "create github artifacts",
+     "status": "completed",
+     "conclusion": "success"
+    },
+    {
+     "number": 31,
+     "name": "print disk usage",
+     "status": "completed",
+     "conclusion": "success"
+    },
+    {
+     "number": 32,
+     "name": "upload artifacts to github",
+     "status": "completed",
+     "conclusion": "success"
+    },
+    {
+     "number": 33,
+     "name": "upload artifacts to S3",
+     "status": "completed",
+     "conclusion": "skipped"
+    },
+    {
+     "number": 34,
+     "name": "postprocess metrics into the summary",
+     "status": "completed",
+     "conclusion": "success"
+    },
+    {
+     "number": 35,
+     "name": "upload job metrics to DataDog",
+     "status": "completed",
+     "conclusion": "skipped"
+    },
+    {
+     "number": 70,
+     "name": "Post checkout the source code",
+     "status": "completed",
+     "conclusion": "success"
+    },
+    {
+     "number": 71,
+     "name": "Complete job",
+     "status": "completed",
+     "conclusion": "success"
+    }
+   ]
+  },
+  {
+   "id": 124779553022,
+   "run_id": 41283296665,
+   "name": "PR - test-tidy",
+   "status": "completed",
+   "conclusion": "success",
+   "labels": [
+    "ubuntu-24.04"
+   ],
+   "runner_name": "GitHub Actions 1002967531",
+   "html_url": "https://github.com/rust-lang/rust/actions/runs/41283296665/job/124779553022",
+   "created_at": "2026-11-01T07:04:58Z",
+   "started_at": "2026-11-01T07:05:00Z",
+   "completed_at": "2026-11-01T07:11:54Z",
+   "steps": [
+    {
+     "number": 1,
+     "name": "Set up job",
+     "status": "completed",
+     "conclusion": "success"
+    },
+    {
+     "number": 2,
+     "name": "Install cargo in AWS CodeBuild",
+     "status": "completed",
+     "conclusion": "skipped"
+    },
+    {
+     "number": 3,
+     "name": "disable git crlf conversion",
+     "status": "completed",
+     "conclusion": "success"
+    },
+    {
+     "number": 4,
+     "name": "checkout the source code",
+     "status": "completed",
+     "conclusion": "success"
+    },
+    {
+     "number": 5,
+     "name": "free up disk space",
+     "status": "completed",
+     "conclusion": "skipped"
+    },
+    {
+     "number": 6,
+     "name": "print disk usage",
+     "status": "completed",
+     "conclusion": "success"
+    },
+    {
+     "number": 7,
+     "name": "configure the PR in which the error message will be posted",
+     "status": "completed",
+     "conclusion": "success"
+    },
+    {
+     "number": 8,
+     "name": "add extra environment variables",
+     "status": "completed",
+     "conclusion": "success"
+    },
+    {
+     "number": 9,
+     "name": "ensure the channel matches the target branch",
+     "status": "completed",
+     "conclusion": "success"
+    },
+    {
+     "number": 10,
+     "name": "collect CPU statistics",
+     "status": "completed",
+     "conclusion": "success"
+    },
+    {
+     "number": 11,
+     "name": "show the current environment",
+     "status": "completed",
+     "conclusion": "success"
+    },
+    {
+     "number": 12,
+     "name": "install awscli",
+     "status": "completed",
+     "conclusion": "success"
+    },
+    {
+     "number": 13,
+     "name": "install sccache",
+     "status": "completed",
+     "conclusion": "success"
+    },
+    {
+     "number": 14,
+     "name": "install clang",
+     "status": "completed",
+     "conclusion": "success"
+    },
+    {
+     "number": 15,
+     "name": "install tidy",
+     "status": "completed",
+     "conclusion": "success"
+    },
+    {
+     "number": 16,
+     "name": "install WIX",
+     "status": "completed",
+     "conclusion": "success"
+    },
+    {
+     "number": 17,
+     "name": "disable git crlf conversion",
+     "status": "completed",
+     "conclusion": "success"
+    },
+    {
+     "number": 18,
+     "name": "checkout submodules",
+     "status": "completed",
+     "conclusion": "success"
+    },
+    {
+     "number": 19,
+     "name": "install MinGW",
+     "status": "completed",
+     "conclusion": "success"
+    },
+    {
+     "number": 20,
+     "name": "install ninja",
+     "status": "completed",
+     "conclusion": "success"
+    },
+    {
+     "number": 21,
+     "name": "install required Python version",
+     "status": "completed",
+     "conclusion": "skipped"
+    },
+    {
+     "number": 22,
+     "name": "enable ipv6 on Docker",
+     "status": "completed",
+     "conclusion": "success"
+    },
+    {
+     "number": 23,
+     "name": "disable git crlf conversion",
+     "status": "completed",
+     "conclusion": "success"
+    },
+    {
+     "number": 24,
+     "name": "ensure line endings are correct",
+     "status": "completed",
+     "conclusion": "success"
+    },
+    {
+     "number": 25,
+     "name": "ensure backported commits are in upstream branches",
+     "status": "completed",
+     "conclusion": "success"
+    },
+    {
+     "number": 26,
+     "name": "ensure the stable version number is correct",
+     "status": "completed",
+     "conclusion": "success"
+    },
+    {
+     "number": 27,
+     "name": "show the current environment",
+     "status": "completed",
+     "conclusion": "success"
+    },
+    {
+     "number": 28,
+     "name": "build citool",
+     "status": "completed",
+     "conclusion": "success"
+    },
+    {
+     "number": 29,
+     "name": "run the build",
+     "status": "completed",
+     "conclusion": "success"
+    },
+    {
+     "number": 30,
+     "name": "create github artifacts",
+     "status": "completed",
+     "conclusion": "success"
+    },
+    {
+     "number": 31,
+     "name": "print disk usage",
+     "status": "completed",
+     "conclusion": "success"
+    },
+    {
+     "number": 32,
+     "name": "upload artifacts to github",
+     "status": "completed",
+     "conclusion": "success"
+    },
+    {
+     "number": 33,
+     "name": "upload artifacts to S3",
+     "status": "completed",
+     "conclusion": "skipped"
+    },
+    {
+     "number": 34,
+     "name": "postprocess metrics into the summary",
+     "status": "completed",
+     "conclusion": "success"
+    },
+    {
+     "number": 35,
+     "name": "upload job metrics to DataDog",
+     "status": "completed",
+     "conclusion": "skipped"
+    },
+    {
+     "number": 70,
+     "name": "Post checkout the source code",
+     "status": "completed",
+     "conclusion": "success"
+    },
+    {
+     "number": 71,
+     "name": "Complete job",
+     "status": "completed",
+     "conclusion": "success"
+    }
+   ]
+  },
+  {
+   "id": 124779553024,
+   "run_id": 41283296665,
+   "name": "PR - test-x86_64-gnu-tools",
+   "status": "completed",
+   "conclusion": "success",
+   "labels": [
+    "ubuntu-24.04"
+   ],
+   "runner_name": "GitHub Actions 1002967532",
+   "html_url": "https://github.com/rust-lang/rust/actions/runs/41283296665/job/124779553024",
+   "created_at": "2026-11-01T07:04:58Z",
+   "started_at": "2026-11-01T07:05:00Z",
+   "completed_at": "2026-11-01T07:54:33Z",
+   "steps": [
+    {
+     "number": 1,
+     "name": "Set up job",
+     "status": "completed",
+     "conclusion": "success"
+    },
+    {
+     "number": 2,
+     "name": "Install cargo in AWS CodeBuild",
+     "status": "completed",
+     "conclusion": "skipped"
+    },
+    {
+     "number": 3,
+     "name": "disable git crlf conversion",
+     "status": "completed",
+     "conclusion": "success"
+    },
+    {
+     "number": 4,
+     "name": "checkout the source code",
+     "status": "completed",
+     "conclusion": "success"
+    },
+    {
+     "number": 5,
+     "name": "free up disk space",
+     "status": "completed",
+     "conclusion": "success"
+    },
+    {
+     "number": 6,
+     "name": "print disk usage",
+     "status": "completed",
+     "conclusion": "skipped"
+    },
+    {
+     "number": 7,
+     "name": "configure the PR in which the error message will be posted",
+     "status": "completed",
+     "conclusion": "success"
+    },
+    {
+     "number": 8,
+     "name": "add extra environment variables",
+     "status": "completed",
+     "conclusion": "success"
+    },
+    {
+     "number": 9,
+     "name": "ensure the channel matches the target branch",
+     "status": "completed",
+     "conclusion": "success"
+    },
+    {
+     "number": 10,
+     "name": "collect CPU statistics",
+     "status": "completed",
+     "conclusion": "success"
+    },
+    {
+     "number": 11,
+     "name": "show the current environment",
+     "status": "completed",
+     "conclusion": "success"
+    },
+    {
+     "number": 12,
+     "name": "install awscli",
+     "status": "completed",
+     "conclusion": "success"
+    },
+    {
+     "number": 13,
+     "name": "install sccache",
+     "status": "completed",
+     "conclusion": "success"
+    },
+    {
+     "number": 14,
+     "name": "install clang",
+     "status": "completed",
+     "conclusion": "success"
+    },
+    {
+     "number": 15,
+     "name": "install tidy",
+     "status": "completed",
+     "conclusion": "success"
+    },
+    {
+     "number": 16,
+     "name": "install WIX",
+     "status": "completed",
+     "conclusion": "success"
+    },
+    {
+     "number": 17,
+     "name": "disable git crlf conversion",
+     "status": "completed",
+     "conclusion": "success"
+    },
+    {
+     "number": 18,
+     "name": "checkout submodules",
+     "status": "completed",
+     "conclusion": "success"
+    },
+    {
+     "number": 19,
+     "name": "install MinGW",
+     "status": "completed",
+     "conclusion": "success"
+    },
+    {
+     "number": 20,
+     "name": "install ninja",
+     "status": "completed",
+     "conclusion": "success"
+    },
+    {
+     "number": 21,
+     "name": "install required Python version",
+     "status": "completed",
+     "conclusion": "skipped"
+    },
+    {
+     "number": 22,
+     "name": "enable ipv6 on Docker",
+     "status": "completed",
+     "conclusion": "success"
+    },
+    {
+     "number": 23,
+     "name": "disable git crlf conversion",
+     "status": "completed",
+     "conclusion": "success"
+    },
+    {
+     "number": 24,
+     "name": "ensure line endings are correct",
+     "status": "completed",
+     "conclusion": "success"
+    },
+    {
+     "number": 25,
+     "name": "ensure backported commits are in upstream branches",
+     "status": "completed",
+     "conclusion": "success"
+    },
+    {
+     "number": 26,
+     "name": "ensure the stable version number is correct",
+     "status": "completed",
+     "conclusion": "success"
+    },
+    {
+     "number": 27,
+     "name": "show the current environment",
+     "status": "completed",
+     "conclusion": "success"
+    },
+    {
+     "number": 28,
+     "name": "build citool",
+     "status": "completed",
+     "conclusion": "success"
+    },
+    {
+     "number": 29,
+     "name": "run the build",
+     "status": "completed",
+     "conclusion": "success"
+    },
+    {
+     "number": 30,
+     "name": "create github artifacts",
+     "status": "completed",
+     "conclusion": "success"
+    },
+    {
+     "number": 31,
+     "name": "print disk usage",
+     "status": "completed",
+     "conclusion": "success"
+    },
+    {
+     "number": 32,
+     "name": "upload artifacts to github",
+     "status": "completed",
+     "conclusion": "success"
+    },
+    {
+     "number": 33,
+     "name": "upload artifacts to S3",
+     "status": "completed",
+     "conclusion": "skipped"
+    },
+    {
+     "number": 34,
+     "name": "postprocess metrics into the summary",
+     "status": "completed",
+     "conclusion": "success"
+    },
+    {
+     "number": 35,
+     "name": "upload job metrics to DataDog",
+     "status": "completed",
+     "conclusion": "skipped"
+    },
+    {
+     "number": 70,
+     "name": "Post checkout the source code",
+     "status": "completed",
+     "conclusion": "success"
+    },
+    {
+     "number": 71,
+     "name": "Complete job",
+     "status": "completed",
+     "conclusion": "success"
+    }
+   ]
+  },
+  {
+   "id": 124779553026,
+   "run_id": 41283296665,
+   "name": "PR - test-aarch64-gnu-llvm-22-2",
+   "status": "completed",
+   "conclusion": "success",
+   "labels": [
+    "ubuntu-24.04-arm"
+   ],
+   "runner_name": "GitHub Actions 1002967528",
+   "html_url": "https://github.com/rust-lang/rust/actions/runs/41283296665/job/124779553026",
+   "created_at": "2026-11-01T07:04:58Z",
+   "started_at": "2026-11-01T07:05:02Z",
+   "completed_at": "2026-11-01T07:59:27Z",
+   "steps": [
+    {
+     "number": 1,
+     "name": "Set up job",
+     "status": "completed",
+     "conclusion": "success"
+    },
+    {
+     "number": 2,
+     "name": "Install cargo in AWS CodeBuild",
+     "status": "completed",
+     "conclusion": "skipped"
+    },
+    {
+     "number": 3,
+     "name": "disable git crlf conversion",
+     "status": "completed",
+     "conclusion": "success"
+    },
+    {
+     "number": 4,
+     "name": "checkout the source code",
+     "status": "completed",
+     "conclusion": "success"
+    },
+    {
+     "number": 5,
+     "name": "free up disk space",
+     "status": "completed",
+     "conclusion": "success"
+    },
+    {
+     "number": 6,
+     "name": "print disk usage",
+     "status": "completed",
+     "conclusion": "skipped"
+    },
+    {
+     "number": 7,
+     "name": "configure the PR in which the error message will be posted",
+     "status": "completed",
+     "conclusion": "success"
+    },
+    {
+     "number": 8,
+     "name": "add extra environment variables",
+     "status": "completed",
+     "conclusion": "success"
+    },
+    {
+     "number": 9,
+     "name": "ensure the channel matches the target branch",
+     "status": "completed",
+     "conclusion": "success"
+    },
+    {
+     "number": 10,
+     "name": "collect CPU statistics",
+     "status": "completed",
+     "conclusion": "success"
+    },
+    {
+     "number": 11,
+     "name": "show the current environment",
+     "status": "completed",
+     "conclusion": "success"
+    },
+    {
+     "number": 12,
+     "name": "install awscli",
+     "status": "completed",
+     "conclusion": "success"
+    },
+    {
+     "number": 13,
+     "name": "install sccache",
+     "status": "completed",
+     "conclusion": "success"
+    },
+    {
+     "number": 14,
+     "name": "install clang",
+     "status": "completed",
+     "conclusion": "success"
+    },
+    {
+     "number": 15,
+     "name": "install tidy",
+     "status": "completed",
+     "conclusion": "success"
+    },
+    {
+     "number": 16,
+     "name": "install WIX",
+     "status": "completed",
+     "conclusion": "success"
+    },
+    {
+     "number": 17,
+     "name": "disable git crlf conversion",
+     "status": "completed",
+     "conclusion": "success"
+    },
+    {
+     "number": 18,
+     "name": "checkout submodules",
+     "status": "completed",
+     "conclusion": "success"
+    },
+    {
+     "number": 19,
+     "name": "install MinGW",
+     "status": "completed",
+     "conclusion": "success"
+    },
+    {
+     "number": 20,
+     "name": "install ninja",
+     "status": "completed",
+     "conclusion": "success"
+    },
+    {
+     "number": 21,
+     "name": "install required Python version",
+     "status": "completed",
+     "conclusion": "skipped"
+    },
+    {
+     "number": 22,
+     "name": "enable ipv6 on Docker",
+     "status": "completed",
+     "conclusion": "success"
+    },
+    {
+     "number": 23,
+     "name": "disable git crlf conversion",
+     "status": "completed",
+     "conclusion": "success"
+    },
+    {
+     "number": 24,
+     "name": "ensure line endings are correct",
+     "status": "completed",
+     "conclusion": "success"
+    },
+    {
+     "number": 25,
+     "name": "ensure backported commits are in upstream branches",
+     "status": "completed",
+     "conclusion": "success"
+    },
+    {
+     "number": 26,
+     "name": "ensure the stable version number is correct",
+     "status": "completed",
+     "conclusion": "success"
+    },
+    {
+     "number": 27,
+     "name": "show the current environment",
+     "status": "completed",
+     "conclusion": "success"
+    },
+    {
+     "number": 28,
+     "name": "build citool",
+     "status": "completed",
+     "conclusion": "success"
+    },
+    {
+     "number": 29,
+     "name": "run the build",
+     "status": "completed",
+     "conclusion": "success"
+    },
+    {
+     "number": 30,
+     "name": "create github artifacts",
+     "status": "completed",
+     "conclusion": "success"
+    },
+    {
+     "number": 31,
+     "name": "print disk usage",
+     "status": "completed",
+     "conclusion": "success"
+    },
+    {
+     "number": 32,
+     "name": "upload artifacts to github",
+     "status": "completed",
+     "conclusion": "success"
+    },
+    {
+     "number": 33,
+     "name": "upload artifacts to S3",
+     "status": "completed",
+     "conclusion": "skipped"
+    },
+    {
+     "number": 34,
+     "name": "postprocess metrics into the summary",
+     "status": "completed",
+     "conclusion": "success"
+    },
+    {
+     "number": 35,
+     "name": "upload job metrics to DataDog",
+     "status": "completed",
+     "conclusion": "skipped"
+    },
+    {
+     "number": 70,
+     "name": "Post checkout the source code",
+     "status": "completed",
+     "conclusion": "success"
+    },
+    {
+     "number": 71,
+     "name": "Complete job",
+     "status": "completed",
+     "conclusion": "success"
+    }
+   ]
+  },
+  {
+   "id": 124779553029,
+   "run_id": 41283296665,
+   "name": "PR - test-x86_64-gnu-gcc-core-tests",
+   "status": "completed",
+   "conclusion": "success",
+   "labels": [
+    "ubuntu-24.04"
+   ],
+   "runner_name": "GitHub Actions 1002967533",
+   "html_url": "https://github.com/rust-lang/rust/actions/runs/41283296665/job/124779553029",
+   "created_at": "2026-11-01T07:04:58Z",
+   "started_at": "2026-11-01T07:05:01Z",
+   "completed_at": "2026-11-01T07:18:57Z",
+   "steps": [
+    {
+     "number": 1,
+     "name": "Set up job",
+     "status": "completed",
+     "conclusion": "success"
+    },
+    {
+     "number": 2,
+     "name": "Install cargo in AWS CodeBuild",
+     "status": "completed",
+     "conclusion": "skipped"
+    },
+    {
+     "number": 3,
+     "name": "disable git crlf conversion",
+     "status": "completed",
+     "conclusion": "success"
+    },
+    {
+     "number": 4,
+     "name": "checkout the source code",
+     "status": "completed",
+     "conclusion": "success"
+    },
+    {
+     "number": 5,
+     "name": "free up disk space",
+     "status": "completed",
+     "conclusion": "success"
+    },
+    {
+     "number": 6,
+     "name": "print disk usage",
+     "status": "completed",
+     "conclusion": "skipped"
+    },
+    {
+     "number": 7,
+     "name": "configure the PR in which the error message will be posted",
+     "status": "completed",
+     "conclusion": "success"
+    },
+    {
+     "number": 8,
+     "name": "add extra environment variables",
+     "status": "completed",
+     "conclusion": "success"
+    },
+    {
+     "number": 9,
+     "name": "ensure the channel matches the target branch",
+     "status": "completed",
+     "conclusion": "success"
+    },
+    {
+     "number": 10,
+     "name": "collect CPU statistics",
+     "status": "completed",
+     "conclusion": "success"
+    },
+    {
+     "number": 11,
+     "name": "show the current environment",
+     "status": "completed",
+     "conclusion": "success"
+    },
+    {
+     "number": 12,
+     "name": "install awscli",
+     "status": "completed",
+     "conclusion": "success"
+    },
+    {
+     "number": 13,
+     "name": "install sccache",
+     "status": "completed",
+     "conclusion": "success"
+    },
+    {
+     "number": 14,
+     "name": "install clang",
+     "status": "completed",
+     "conclusion": "success"
+    },
+    {
+     "number": 15,
+     "name": "install tidy",
+     "status": "completed",
+     "conclusion": "success"
+    },
+    {
+     "number": 16,
+     "name": "install WIX",
+     "status": "completed",
+     "conclusion": "success"
+    },
+    {
+     "number": 17,
+     "name": "disable git crlf conversion",
+     "status": "completed",
+     "conclusion": "success"
+    },
+    {
+     "number": 18,
+     "name": "checkout submodules",
+     "status": "completed",
+     "conclusion": "success"
+    },
+    {
+     "number": 19,
+     "name": "install MinGW",
+     "status": "completed",
+     "conclusion": "success"
+    },
+    {
+     "number": 20,
+     "name": "install ninja",
+     "status": "completed",
+     "conclusion": "success"
+    },
+    {
+     "number": 21,
+     "name": "install required Python version",
+     "status": "completed",
+     "conclusion": "skipped"
+    },
+    {
+     "number": 22,
+     "name": "enable ipv6 on Docker",
+     "status": "completed",
+     "conclusion": "success"
+    },
+    {
+     "number": 23,
+     "name": "disable git crlf conversion",
+     "status": "completed",
+     "conclusion": "success"
+    },
+    {
+     "number": 24,
+     "name": "ensure line endings are correct",
+     "status": "completed",
+     "conclusion": "success"
+    },
+    {
+     "number": 25,
+     "name": "ensure backported commits are in upstream branches",
+     "status": "completed",
+     "conclusion": "success"
+    },
+    {
+     "number": 26,
+     "name": "ensure the stable version number is correct",
+     "status": "completed",
+     "conclusion": "success"
+    },
+    {
+     "number": 27,
+     "name": "show the current environment",
+     "status": "completed",
+     "conclusion": "success"
+    },
+    {
+     "number": 28,
+     "name": "build citool",
+     "status": "completed",
+     "conclusion": "success"
+    },
+    {
+     "number": 29,
+     "name": "run the build",
+     "status": "completed",
+     "conclusion": "success"
+    },
+    {
+     "number": 30,
+     "name": "create github artifacts",
+     "status": "completed",
+     "conclusion": "success"
+    },
+    {
+     "number": 31,
+     "name": "print disk usage",
+     "status": "completed",
+     "conclusion": "success"
+    },
+    {
+     "number": 32,
+     "name": "upload artifacts to github",
+     "status": "completed",
+     "conclusion": "success"
+    },
+    {
+     "number": 33,
+     "name": "upload artifacts to S3",
+     "status": "completed",
+     "conclusion": "skipped"
+    },
+    {
+     "number": 34,
+     "name": "postprocess metrics into the summary",
+     "status": "completed",
+     "conclusion": "success"
+    },
+    {
+     "number": 35,
+     "name": "upload job metrics to DataDog",
+     "status": "completed",
+     "conclusion": "skipped"
+    },
+    {
+     "number": 70,
+     "name": "Post checkout the source code",
+     "status": "completed",
+     "conclusion": "success"
+    },
+    {
+     "number": 71,
+     "name": "Complete job",
+     "status": "completed",
+     "conclusion": "success"
+    }
+   ]
+  },
+  {
+   "id": 124779553038,
+   "run_id": 41283296665,
+   "name": "PR - test-pr-check-2",
+   "status": "completed",
+   "conclusion": "success",
+   "labels": [
+    "ubuntu-24.04"
+   ],
+   "runner_name": "GitHub Actions 1002967536",
+   "html_url": "https://github.com/rust-lang/rust/actions/runs/41283296665/job/124779553038",
+   "created_at": "2026-11-01T07:04:58Z",
+   "started_at": "2026-11-01T07:05:01Z",
+   "completed_at": "2026-11-01T07:45:36Z",
+   "steps": [
+    {
+     "number": 1,
+     "name": "Set up job",
+     "status": "completed",
+     "conclusion": "success"
+    },
+    {
+     "number": 2,
+     "name": "Install cargo in AWS CodeBuild",
+     "status": "completed",
+     "conclusion": "skipped"
+    },
+    {
+     "number": 3,
+     "name": "disable git crlf conversion",
+     "status": "completed",
+     "conclusion": "success"
+    },
+    {
+     "number": 4,
+     "name": "checkout the source code",
+     "status": "completed",
+     "conclusion": "success"
+    },
+    {
+     "number": 5,
+     "name": "free up disk space",
+     "status": "completed",
+     "conclusion": "success"
+    },
+    {
+     "number": 6,
+     "name": "print disk usage",
+     "status": "completed",
+     "conclusion": "skipped"
+    },
+    {
+     "number": 7,
+     "name": "configure the PR in which the error message will be posted",
+     "status": "completed",
+     "conclusion": "success"
+    },
+    {
+     "number": 8,
+     "name": "add extra environment variables",
+     "status": "completed",
+     "conclusion": "success"
+    },
+    {
+     "number": 9,
+     "name": "ensure the channel matches the target branch",
+     "status": "completed",
+     "conclusion": "success"
+    },
+    {
+     "number": 10,
+     "name": "collect CPU statistics",
+     "status": "completed",
+     "conclusion": "success"
+    },
+    {
+     "number": 11,
+     "name": "show the current environment",
+     "status": "completed",
+     "conclusion": "success"
+    },
+    {
+     "number": 12,
+     "name": "install awscli",
+     "status": "completed",
+     "conclusion": "success"
+    },
+    {
+     "number": 13,
+     "name": "install sccache",
+     "status": "completed",
+     "conclusion": "success"
+    },
+    {
+     "number": 14,
+     "name": "install clang",
+     "status": "completed",
+     "conclusion": "success"
+    },
+    {
+     "number": 15,
+     "name": "install tidy",
+     "status": "completed",
+     "conclusion": "success"
+    },
+    {
+     "number": 16,
+     "name": "install WIX",
+     "status": "completed",
+     "conclusion": "success"
+    },
+    {
+     "number": 17,
+     "name": "disable git crlf conversion",
+     "status": "completed",
+     "conclusion": "success"
+    },
+    {
+     "number": 18,
+     "name": "checkout submodules",
+     "status": "completed",
+     "conclusion": "success"
+    },
+    {
+     "number": 19,
+     "name": "install MinGW",
+     "status": "completed",
+     "conclusion": "success"
+    },
+    {
+     "number": 20,
+     "name": "install ninja",
+     "status": "completed",
+     "conclusion": "success"
+    },
+    {
+     "number": 21,
+     "name": "install required Python version",
+     "status": "completed",
+     "conclusion": "skipped"
+    },
+    {
+     "number": 22,
+     "name": "enable ipv6 on Docker",
+     "status": "completed",
+     "conclusion": "success"
+    },
+    {
+     "number": 23,
+     "name": "disable git crlf conversion",
+     "status": "completed",
+     "conclusion": "success"
+    },
+    {
+     "number": 24,
+     "name": "ensure line endings are correct",
+     "status": "completed",
+     "conclusion": "success"
+    },
+    {
+     "number": 25,
+     "name": "ensure backported commits are in upstream branches",
+     "status": "completed",
+     "conclusion": "success"
+    },
+    {
+     "number": 26,
+     "name": "ensure the stable version number is correct",
+     "status": "completed",
+     "conclusion": "success"
+    },
+    {
+     "number": 27,
+     "name": "show the current environment",
+     "status": "completed",
+     "conclusion": "success"
+    },
+    {
+     "number": 28,
+     "name": "build citool",
+     "status": "completed",
+     "conclusion": "success"
+    },
+    {
+     "number": 29,
+     "name": "run the build",
+     "status": "completed",
+     "conclusion": "success"
+    },
+    {
+     "number": 30,
+     "name": "create github artifacts",
+     "status": "completed",
+     "conclusion": "success"
+    },
+    {
+     "number": 31,
+     "name": "print disk usage",
+     "status": "completed",
+     "conclusion": "success"
+    },
+    {
+     "number": 32,
+     "name": "upload artifacts to github",
+     "status": "completed",
+     "conclusion": "success"
+    },
+    {
+     "number": 33,
+     "name": "upload artifacts to S3",
+     "status": "completed",
+     "conclusion": "skipped"
+    },
+    {
+     "number": 34,
+     "name": "postprocess metrics into the summary",
+     "status": "completed",
+     "conclusion": "success"
+    },
+    {
+     "number": 35,
+     "name": "upload job metrics to DataDog",
+     "status": "completed",
+     "conclusion": "skipped"
+    },
+    {
+     "number": 70,
+     "name": "Post checkout the source code",
+     "status": "completed",
+     "conclusion": "success"
+    },
+    {
+     "number": 71,
+     "name": "Complete job",
+     "status": "completed",
+     "conclusion": "success"
+    }
+   ]
+  },
+  {
+   "id": 124779553041,
+   "run_id": 41283296665,
+   "name": "PR - test-x86_64-gnu-next-trait-solver-polonius",
+   "status": "completed",
+   "conclusion": "success",
+   "labels": [
+    "ubuntu-24.04"
+   ],
+   "runner_name": "GitHub Actions 1002967534",
+   "html_url": "https://github.com/rust-lang/rust/actions/runs/41283296665/job/124779553041",
+   "created_at": "2026-11-01T07:04:58Z",
+   "started_at": "2026-11-01T07:05:00Z",
+   "completed_at": "2026-11-01T09:06:55Z",
+   "steps": [
+    {
+     "number": 1,
+     "name": "Set up job",
+     "status": "completed",
+     "conclusion": "success"
+    },
+    {
+     "number": 2,
+     "name": "Install cargo in AWS CodeBuild",
+     "status": "completed",
+     "conclusion": "skipped"
+    },
+    {
+     "number": 3,
+     "name": "disable git crlf conversion",
+     "status": "completed",
+     "conclusion": "success"
+    },
+    {
+     "number": 4,
+     "name": "checkout the source code",
+     "status": "completed",
+     "conclusion": "success"
+    },
+    {
+     "number": 5,
+     "name": "free up disk space",
+     "status": "completed",
+     "conclusion": "success"
+    },
+    {
+     "number": 6,
+     "name": "print disk usage",
+     "status": "completed",
+     "conclusion": "skipped"
+    },
+    {
+     "number": 7,
+     "name": "configure the PR in which the error message will be posted",
+     "status": "completed",
+     "conclusion": "success"
+    },
+    {
+     "number": 8,
+     "name": "add extra environment variables",
+     "status": "completed",
+     "conclusion": "success"
+    },
+    {
+     "number": 9,
+     "name": "ensure the channel matches the target branch",
+     "status": "completed",
+     "conclusion": "success"
+    },
+    {
+     "number": 10,
+     "name": "collect CPU statistics",
+     "status": "completed",
+     "conclusion": "success"
+    },
+    {
+     "number": 11,
+     "name": "show the current environment",
+     "status": "completed",
+     "conclusion": "success"
+    },
+    {
+     "number": 12,
+     "name": "install awscli",
+     "status": "completed",
+     "conclusion": "success"
+    },
+    {
+     "number": 13,
+     "name": "install sccache",
+     "status": "completed",
+     "conclusion": "success"
+    },
+    {
+     "number": 14,
+     "name": "install clang",
+     "status": "completed",
+     "conclusion": "success"
+    },
+    {
+     "number": 15,
+     "name": "install tidy",
+     "status": "completed",
+     "conclusion": "success"
+    },
+    {
+     "number": 16,
+     "name": "install WIX",
+     "status": "completed",
+     "conclusion": "success"
+    },
+    {
+     "number": 17,
+     "name": "disable git crlf conversion",
+     "status": "completed",
+     "conclusion": "success"
+    },
+    {
+     "number": 18,
+     "name": "checkout submodules",
+     "status": "completed",
+     "conclusion": "success"
+    },
+    {
+     "number": 19,
+     "name": "install MinGW",
+     "status": "completed",
+     "conclusion": "success"
+    },
+    {
+     "number": 20,
+     "name": "install ninja",
+     "status": "completed",
+     "conclusion": "success"
+    },
+    {
+     "number": 21,
+     "name": "install required Python version",
+     "status": "completed",
+     "conclusion": "skipped"
+    },
+    {
+     "number": 22,
+     "name": "enable ipv6 on Docker",
+     "status": "completed",
+     "conclusion": "success"
+    },
+    {
+     "number": 23,
+     "name": "disable git crlf conversion",
+     "status": "completed",
+     "conclusion": "success"
+    },
+    {
+     "number": 24,
+     "name": "ensure line endings are correct",
+     "status": "completed",
+     "conclusion": "success"
+    },
+    {
+     "number": 25,
+     "name": "ensure backported commits are in upstream branches",
+     "status": "completed",
+     "conclusion": "success"
+    },
+    {
+     "number": 26,
+     "name": "ensure the stable version number is correct",
+     "status": "completed",
+     "conclusion": "success"
+    },
+    {
+     "number": 27,
+     "name": "show the current environment",
+     "status": "completed",
+     "conclusion": "success"
+    },
+    {
+     "number": 28,
+     "name": "build citool",
+     "status": "completed",
+     "conclusion": "success"
+    },
+    {
+     "number": 29,
+     "name": "run the build",
+     "status": "completed",
+     "conclusion": "success"
+    },
+    {
+     "number": 30,
+     "name": "create github artifacts",
+     "status": "completed",
+     "conclusion": "success"
+    },
+    {
+     "number": 31,
+     "name": "print disk usage",
+     "status": "completed",
+     "conclusion": "success"
+    },
+    {
+     "number": 32,
+     "name": "upload artifacts to github",
+     "status": "completed",
+     "conclusion": "success"
+    },
+    {
+     "number": 33,
+     "name": "upload artifacts to S3",
+     "status": "completed",
+     "conclusion": "skipped"
+    },
+    {
+     "number": 34,
+     "name": "postprocess metrics into the summary",
+     "status": "completed",
+     "conclusion": "success"
+    },
+    {
+     "number": 35,
+     "name": "upload job metrics to DataDog",
+     "status": "completed",
+     "conclusion": "skipped"
+    },
+    {
+     "number": 70,
+     "name": "Post checkout the source code",
+     "status": "completed",
+     "conclusion": "success"
+    },
+    {
+     "number": 71,
+     "name": "Complete job",
+     "status": "completed",
+     "conclusion": "success"
+    }
+   ]
+  },
+  {
+   "id": 124779553046,
+   "run_id": 41283296665,
+   "name": "PR - test-aarch64-gnu-llvm-22-1",
+   "status": "completed",
+   "conclusion": "success",
+   "labels": [
+    "ubuntu-24.04-arm"
+   ],
+   "runner_name": "GitHub Actions 1002967535",
+   "html_url": "https://github.com/rust-lang/rust/actions/runs/41283296665/job/124779553046",
+   "created_at": "2026-11-01T07:04:58Z",
+   "started_at": "2026-11-01T07:05:02Z",
+   "completed_at": "2026-11-01T09:17:18Z",
+   "steps": [
+    {
+     "number": 1,
+     "name": "Set up job",
+     "status": "completed",
+     "conclusion": "success"
+    },
+    {
+     "number": 2,
+     "name": "Install cargo in AWS CodeBuild",
+     "status": "completed",
+     "conclusion": "skipped"
+    },
+    {
+     "number": 3,
+     "name": "disable git crlf conversion",
+     "status": "completed",
+     "conclusion": "success"
+    },
+    {
+     "number": 4,
+     "name": "checkout the source code",
+     "status": "completed",
+     "conclusion": "success"
+    },
+    {
+     "number": 5,
+     "name": "free up disk space",
+     "status": "completed",
+     "conclusion": "success"
+    },
+    {
+     "number": 6,
+     "name": "print disk usage",
+     "status": "completed",
+     "conclusion": "skipped"
+    },
+    {
+     "number": 7,
+     "name": "configure the PR in which the error message will be posted",
+     "status": "completed",
+     "conclusion": "success"
+    },
+    {
+     "number": 8,
+     "name": "add extra environment variables",
+     "status": "completed",
+     "conclusion": "success"
+    },
+    {
+     "number": 9,
+     "name": "ensure the channel matches the target branch",
+     "status": "completed",
+     "conclusion": "success"
+    },
+    {
+     "number": 10,
+     "name": "collect CPU statistics",
+     "status": "completed",
+     "conclusion": "success"
+    },
+    {
+     "number": 11,
+     "name": "show the current environment",
+     "status": "completed",
+     "conclusion": "success"
+    },
+    {
+     "number": 12,
+     "name": "install awscli",
+     "status": "completed",
+     "conclusion": "success"
+    },
+    {
+     "number": 13,
+     "name": "install sccache",
+     "status": "completed",
+     "conclusion": "success"
+    },
+    {
+     "number": 14,
+     "name": "install clang",
+     "status": "completed",
+     "conclusion": "success"
+    },
+    {
+     "number": 15,
+     "name": "install tidy",
+     "status": "completed",
+     "conclusion": "success"
+    },
+    {
+     "number": 16,
+     "name": "install WIX",
+     "status": "completed",
+     "conclusion": "success"
+    },
+    {
+     "number": 17,
+     "name": "disable git crlf conversion",
+     "status": "completed",
+     "conclusion": "success"
+    },
+    {
+     "number": 18,
+     "name": "checkout submodules",
+     "status": "completed",
+     "conclusion": "success"
+    },
+    {
+     "number": 19,
+     "name": "install MinGW",
+     "status": "completed",
+     "conclusion": "success"
+    },
+    {
+     "number": 20,
+     "name": "install ninja",
+     "status": "completed",
+     "conclusion": "success"
+    },
+    {
+     "number": 21,
+     "name": "install required Python version",
+     "status": "completed",
+     "conclusion": "skipped"
+    },
+    {
+     "number": 22,
+     "name": "enable ipv6 on Docker",
+     "status": "completed",
+     "conclusion": "success"
+    },
+    {
+     "number": 23,
+     "name": "disable git crlf conversion",
+     "status": "completed",
+     "conclusion": "success"
+    },
+    {
+     "number": 24,
+     "name": "ensure line endings are correct",
+     "status": "completed",
+     "conclusion": "success"
+    },
+    {
+     "number": 25,
+     "name": "ensure backported commits are in upstream branches",
+     "status": "completed",
+     "conclusion": "success"
+    },
+    {
+     "number": 26,
+     "name": "ensure the stable version number is correct",
+     "status": "completed",
+     "conclusion": "success"
+    },
+    {
+     "number": 27,
+     "name": "show the current environment",
+     "status": "completed",
+     "conclusion": "success"
+    },
+    {
+     "number": 28,
+     "name": "build citool",
+     "status": "completed",
+     "conclusion": "success"
+    },
+    {
+     "number": 29,
+     "name": "run the build",
+     "status": "completed",
+     "conclusion": "success"
+    },
+    {
+     "number": 30,
+     "name": "create github artifacts",
+     "status": "completed",
+     "conclusion": "success"
+    },
+    {
+     "number": 31,
+     "name": "print disk usage",
+     "status": "completed",
+     "conclusion": "success"
+    },
+    {
+     "number": 32,
+     "name": "upload artifacts to github",
+     "status": "completed",
+     "conclusion": "success"
+    },
+    {
+     "number": 33,
+     "name": "upload artifacts to S3",
+     "status": "completed",
+     "conclusion": "skipped"
+    },
+    {
+     "number": 34,
+     "name": "postprocess metrics into the summary",
+     "status": "completed",
+     "conclusion": "success"
+    },
+    {
+     "number": 35,
+     "name": "upload job metrics to DataDog",
+     "status": "completed",
+     "conclusion": "skipped"
+    },
+    {
+     "number": 70,
+     "name": "Post checkout the source code",
+     "status": "completed",
+     "conclusion": "success"
+    },
+    {
+     "number": 71,
+     "name": "Complete job",
+     "status": "completed",
+     "conclusion": "success"
+    }
+   ]
+  },
+  {
+   "id": 124779553052,
+   "run_id": 41283296665,
+   "name": "PR - test-x86_64-gnu-llvm-22",
+   "status": "completed",
+   "conclusion": "success",
+   "labels": [
+    "ubuntu-24.04"
+   ],
+   "runner_name": "GitHub Actions 1002967537",
+   "html_url": "https://github.com/rust-lang/rust/actions/runs/41283296665/job/124779553052",
+   "created_at": "2026-11-01T07:04:58Z",
+   "started_at": "2026-11-01T07:05:00Z",
+   "completed_at": "2026-11-01T07:59:01Z",
+   "steps": [
+    {
+     "number": 1,
+     "name": "Set up job",
+     "status": "completed",
+     "conclusion": "success"
+    },
+    {
+     "number": 2,
+     "name": "Install cargo in AWS CodeBuild",
+     "status": "completed",
+     "conclusion": "skipped"
+    },
+    {
+     "number": 3,
+     "name": "disable git crlf conversion",
+     "status": "completed",
+     "conclusion": "success"
+    },
+    {
+     "number": 4,
+     "name": "checkout the source code",
+     "status": "completed",
+     "conclusion": "success"
+    },
+    {
+     "number": 5,
+     "name": "free up disk space",
+     "status": "completed",
+     "conclusion": "success"
+    },
+    {
+     "number": 6,
+     "name": "print disk usage",
+     "status": "completed",
+     "conclusion": "skipped"
+    },
+    {
+     "number": 7,
+     "name": "configure the PR in which the error message will be posted",
+     "status": "completed",
+     "conclusion": "success"
+    },
+    {
+     "number": 8,
+     "name": "add extra environment variables",
+     "status": "completed",
+     "conclusion": "success"
+    },
+    {
+     "number": 9,
+     "name": "ensure the channel matches the target branch",
+     "status": "completed",
+     "conclusion": "success"
+    },
+    {
+     "number": 10,
+     "name": "collect CPU statistics",
+     "status": "completed",
+     "conclusion": "success"
+    },
+    {
+     "number": 11,
+     "name": "show the current environment",
+     "status": "completed",
+     "conclusion": "success"
+    },
+    {
+     "number": 12,
+     "name": "install awscli",
+     "status": "completed",
+     "conclusion": "success"
+    },
+    {
+     "number": 13,
+     "name": "install sccache",
+     "status": "completed",
+     "conclusion": "success"
+    },
+    {
+     "number": 14,
+     "name": "install clang",
+     "status": "completed",
+     "conclusion": "success"
+    },
+    {
+     "number": 15,
+     "name": "install tidy",
+     "status": "completed",
+     "conclusion": "success"
+    },
+    {
+     "number": 16,
+     "name": "install WIX",
+     "status": "completed",
+     "conclusion": "success"
+    },
+    {
+     "number": 17,
+     "name": "disable git crlf conversion",
+     "status": "completed",
+     "conclusion": "success"
+    },
+    {
+     "number": 18,
+     "name": "checkout submodules",
+     "status": "completed",
+     "conclusion": "success"
+    },
+    {
+     "number": 19,
+     "name": "install MinGW",
+     "status": "completed",
+     "conclusion": "success"
+    },
+    {
+     "number": 20,
+     "name": "install ninja",
+     "status": "completed",
+     "conclusion": "success"
+    },
+    {
+     "number": 21,
+     "name": "install required Python version",
+     "status": "completed",
+     "conclusion": "skipped"
+    },
+    {
+     "number": 22,
+     "name": "enable ipv6 on Docker",
+     "status": "completed",
+     "conclusion": "success"
+    },
+    {
+     "number": 23,
+     "name": "disable git crlf conversion",
+     "status": "completed",
+     "conclusion": "success"
+    },
+    {
+     "number": 24,
+     "name": "ensure line endings are correct",
+     "status": "completed",
+     "conclusion": "success"
+    },
+    {
+     "number": 25,
+     "name": "ensure backported commits are in upstream branches",
+     "status": "completed",
+     "conclusion": "success"
+    },
+    {
+     "number": 26,
+     "name": "ensure the stable version number is correct",
+     "status": "completed",
+     "conclusion": "success"
+    },
+    {
+     "number": 27,
+     "name": "show the current environment",
+     "status": "completed",
+     "conclusion": "success"
+    },
+    {
+     "number": 28,
+     "name": "build citool",
+     "status": "completed",
+     "conclusion": "success"
+    },
+    {
+     "number": 29,
+     "name": "run the build",
+     "status": "completed",
+     "conclusion": "success"
+    },
+    {
+     "number": 30,
+     "name": "create github artifacts",
+     "status": "completed",
+     "conclusion": "success"
+    },
+    {
+     "number": 31,
+     "name": "print disk usage",
+     "status": "completed",
+     "conclusion": "success"
+    },
+    {
+     "number": 32,
+     "name": "upload artifacts to github",
+     "status": "completed",
+     "conclusion": "success"
+    },
+    {
+     "number": 33,
+     "name": "upload artifacts to S3",
+     "status": "completed",
+     "conclusion": "skipped"
+    },
+    {
+     "number": 34,
+     "name": "postprocess metrics into the summary",
+     "status": "completed",
+     "conclusion": "success"
+    },
+    {
+     "number": 35,
+     "name": "upload job metrics to DataDog",
+     "status": "completed",
+     "conclusion": "skipped"
+    },
+    {
+     "number": 70,
+     "name": "Post checkout the source code",
+     "status": "completed",
+     "conclusion": "success"
+    },
+    {
+     "number": 71,
+     "name": "Complete job",
+     "status": "completed",
+     "conclusion": "success"
+    }
+   ]
+  },
+  {
+   "id": 124779553158,
+   "run_id": 41283296665,
+   "name": "PR - test-x86_64-gnu-miri",
+   "status": "completed",
+   "conclusion": "success",
+   "labels": [
+    "ubuntu-24.04"
+   ],
+   "runner_name": "GitHub Actions 1002967538",
+   "html_url": "https://github.com/rust-lang/rust/actions/runs/41283296665/job/124779553158",
+   "created_at": "2026-11-01T07:04:58Z",
+   "started_at": "2026-11-01T07:05:00Z",
+   "completed_at": "2026-11-01T09:02:57Z",
+   "steps": [
+    {
+     "number": 1,
+     "name": "Set up job",
+     "status": "completed",
+     "conclusion": "success"
+    },
+    {
+     "number": 2,
+     "name": "Install cargo in AWS CodeBuild",
+     "status": "completed",
+     "conclusion": "skipped"
+    },
+    {
+     "number": 3,
+     "name": "disable git crlf conversion",
+     "status": "completed",
+     "conclusion": "success"
+    },
+    {
+     "number": 4,
+     "name": "checkout the source code",
+     "status": "completed",
+     "conclusion": "success"
+    },
+    {
+     "number": 5,
+     "name": "free up disk space",
+     "status": "completed",
+     "conclusion": "success"
+    },
+    {
+     "number": 6,
+     "name": "print disk usage",
+     "status": "completed",
+     "conclusion": "skipped"
+    },
+    {
+     "number": 7,
+     "name": "configure the PR in which the error message will be posted",
+     "status": "completed",
+     "conclusion": "success"
+    },
+    {
+     "number": 8,
+     "name": "add extra environment variables",
+     "status": "completed",
+     "conclusion": "success"
+    },
+    {
+     "number": 9,
+     "name": "ensure the channel matches the target branch",
+     "status": "completed",
+     "conclusion": "success"
+    },
+    {
+     "number": 10,
+     "name": "collect CPU statistics",
+     "status": "completed",
+     "conclusion": "success"
+    },
+    {
+     "number": 11,
+     "name": "show the current environment",
+     "status": "completed",
+     "conclusion": "success"
+    },
+    {
+     "number": 12,
+     "name": "install awscli",
+     "status": "completed",
+     "conclusion": "success"
+    },
+    {
+     "number": 13,
+     "name": "install sccache",
+     "status": "completed",
+     "conclusion": "success"
+    },
+    {
+     "number": 14,
+     "name": "install clang",
+     "status": "completed",
+     "conclusion": "success"
+    },
+    {
+     "number": 15,
+     "name": "install tidy",
+     "status": "completed",
+     "conclusion": "success"
+    },
+    {
+     "number": 16,
+     "name": "install WIX",
+     "status": "completed",
+     "conclusion": "success"
+    },
+    {
+     "number": 17,
+     "name": "disable git crlf conversion",
+     "status": "completed",
+     "conclusion": "success"
+    },
+    {
+     "number": 18,
+     "name": "checkout submodules",
+     "status": "completed",
+     "conclusion": "success"
+    },
+    {
+     "number": 19,
+     "name": "install MinGW",
+     "status": "completed",
+     "conclusion": "success"
+    },
+    {
+     "number": 20,
+     "name": "install ninja",
+     "status": "completed",
+     "conclusion": "success"
+    },
+    {
+     "number": 21,
+     "name": "install required Python version",
+     "status": "completed",
+     "conclusion": "skipped"
+    },
+    {
+     "number": 22,
+     "name": "enable ipv6 on Docker",
+     "status": "completed",
+     "conclusion": "success"
+    },
+    {
+     "number": 23,
+     "name": "disable git crlf conversion",
+     "status": "completed",
+     "conclusion": "success"
+    },
+    {
+     "number": 24,
+     "name": "ensure line endings are correct",
+     "status": "completed",
+     "conclusion": "success"
+    },
+    {
+     "number": 25,
+     "name": "ensure backported commits are in upstream branches",
+     "status": "completed",
+     "conclusion": "success"
+    },
+    {
+     "number": 26,
+     "name": "ensure the stable version number is correct",
+     "status": "completed",
+     "conclusion": "success"
+    },
+    {
+     "number": 27,
+     "name": "show the current environment",
+     "status": "completed",
+     "conclusion": "success"
+    },
+    {
+     "number": 28,
+     "name": "build citool",
+     "status": "completed",
+     "conclusion": "success"
+    },
+    {
+     "number": 29,
+     "name": "run the build",
+     "status": "completed",
+     "conclusion": "success"
+    },
+    {
+     "number": 30,
+     "name": "create github artifacts",
+     "status": "completed",
+     "conclusion": "success"
+    },
+    {
+     "number": 31,
+     "name": "print disk usage",
+     "status": "completed",
+     "conclusion": "success"
+    },
+    {
+     "number": 32,
+     "name": "upload artifacts to github",
+     "status": "completed",
+     "conclusion": "success"
+    },
+    {
+     "number": 33,
+     "name": "upload artifacts to S3",
+     "status": "completed",
+     "conclusion": "skipped"
+    },
+    {
+     "number": 34,
+     "name": "postprocess metrics into the summary",
+     "status": "completed",
+     "conclusion": "success"
+    },
+    {
+     "number": 35,
+     "name": "upload job metrics to DataDog",
+     "status": "completed",
+     "conclusion": "skipped"
+    },
+    {
+     "number": 70,
+     "name": "Post checkout the source code",
+     "status": "completed",
+     "conclusion": "success"
+    },
+    {
+     "number": 71,
+     "name": "Complete job",
+     "status": "completed",
+     "conclusion": "success"
+    }
+   ]
+  },
+  {
+   "id": 124793814075,
+   "run_id": 41283296665,
+   "name": "publish toolstate",
+   "status": "completed",
+   "conclusion": "skipped",
+   "labels": [
+    "ubuntu-26.04"
+   ],
+   "runner_name": null,
+   "html_url": "https://github.com/rust-lang/rust/actions/runs/41283296665/job/124793814075",
+   "created_at": "2026-11-01T09:17:19Z",
+   "started_at": "2026-11-01T09:17:19Z",
+   "completed_at": "2026-11-01T09:17:18Z",
+   "steps": []
+  }
+ ]
+}

@@ -1,0 +1,117 @@
+{
+ "source": "grafana/grafana run 41074274150, captured 2026-11-01",
+ "run": {
+  "id": 41074274150,
+  "name": "Backend Unit Tests",
+  "run_number": 122815,
+  "event": "pull_request",
+  "path": ".github/workflows/backend-unit-tests.yml",
+  "head_sha": "f15676802f592ec7b36ac21aeefcaacbdf59cc83",
+  "head_branch": "feat/markdown-admonitions",
+  "status": "completed",
+  "conclusion": "success",
+  "run_attempt": 1,
+  "workflow_url": "https://api.github.com/repos/grafana/grafana/actions/workflows/151051222",
+  "created_at": "2026-10-30T14:44:18Z",
+  "run_started_at": "2026-10-30T14:44:18Z",
+  "repoOwner": "grafana",
+  "repoName": "grafana",
+  "referenced_workflows": []
+ },
+ "files": {
+  "grafana/grafana/.github/workflows/backend-unit-tests.yml@f15676802f592ec7b36ac21aeefcaacbdf59cc83": "name: Backend Unit Tests\n\non:\n  pull_request:\n  push:\n    branches:\n      - main\n      - release-*.*.*\n\nconcurrency:\n  group: ${{ github.workflow }}-${{ github.ref }}\n  cancel-in-progress: ${{ startsWith(github.ref, 'refs/pull/') }}\n\npermissions: {}\n\njobs:\n  detect-changes:\n    name: Detect whether code changed\n    # Run on `grafana/grafana` main branch, or on pull requests to prevent double-running on mirrors\n    if: (github.event_name == 'pull_request' || (github.event_name == 'push' && github.repository == 'grafana/grafana'))\n    runs-on: ubuntu-arm64-small\n    permissions:\n      contents: read\n    outputs:\n      changed: ${{ steps.detect-changes.outputs.backend }}\n    steps:\n      - uses: actions/checkout@v5\n        with:\n          persist-credentials: true # required to get more history in the changed-files action\n          fetch-depth: 0\n          filter: blob:none\n      - name: Detect changes\n        id: detect-changes\n        uses: ./.github/actions/change-detection\n        with:\n          self: .github/workflows/backend-unit-tests.yml\n\n  grafana:\n    # Run this workflow only for PRs from forks\n    # the `pr-backend-unit-tests-enterprise` workflow will run instead\n    needs: detect-changes\n    if: github.event_name == 'pull_request' && github.event.pull_request.head.repo.fork == true && needs.detect-changes.outputs.changed == 'true'\n    strategy:\n      matrix:\n        shard: [\n          1/8, 2/8, 3/8, 4/8,\n          5/8, 6/8, 7/8, 8/8,\n        ]\n      fail-fast: false\n\n    name: Grafana (${{ matrix.shard }})\n    runs-on: ubuntu-x64\n    permissions:\n      contents: read\n      id-token: write\n    steps:\n      - name: Checkout code\n        uses: actions/checkout@v5\n        with:\n          persist-credentials: false\n      - name: Setup Go\n        uses: ./.github/actions/setup-go\n      - name: Run unit tests\n        env:\n          SHARD: ${{ matrix.shard }}\n        run: |\n          set -euo pipefail\n          readarray -t PACKAGES <<< \"$(./scripts/ci/backend-tests/shard.sh -N\"$SHARD\")\"\n          CGO_ENABLED=0 go test -vet=off -short -timeout=30m \"${PACKAGES[@]}\"\n\n  grafana-enterprise:\n    # Run this workflow for non-PR events (like pushes to `main` or `release-*`) OR for internal PRs (PRs not from forks)\n    needs: detect-changes\n    if: github.event_name != 'pull_request' || (github.event_name == 'pull_request' && github.event.pull_request.head.repo.fork == false && needs.detect-changes.outputs.changed == 'true')\n    strategy:\n      matrix:\n        shard: [\n          1/8, 2/8, 3/8, 4/8,\n          5/8, 6/8, 7/8, 8/8,\n        ]\n      fail-fast: false\n\n    name: Grafana Enterprise (${{ matrix.shard }})\n    runs-on: ubuntu-x64-large\n    permissions:\n      contents: read\n      id-token: write\n    steps:\n      # Set up repository clone\n      - name: Checkout code\n        uses: actions/checkout@v5\n        with:\n          persist-credentials: false\n      - name: Get GitHub App token\n        id: get-github-app-token\n        uses: grafana/shared-workflows/actions/create-github-app-token@46f48da11e78ebdba7a8747ae456b11062fac83e # create-github-app-token/v0.3.1\n        with:\n          github_app: grafana-ci-bot\n      - name: Setup Enterprise\n        uses: ./.github/actions/setup-enterprise\n        with:\n          token: ${{ steps.get-github-app-token.outputs.token }}\n      # Enterprise must be cloned before setup-go so that enterprise\n      # modules are visible when the Go cache key is computed.\n      - name: Setup Go\n        uses: ./.github/actions/setup-go\n\n      # Prepare what we need to upload test results\n      - run: echo \"RESULTS_FILE=$(date --rfc-3339=seconds --utc | sed -s 's/ /-/g')_${SHARD/\\//_}.xml\" >> \"$GITHUB_ENV\"\n        env:\n          SHARD: ${{ matrix.shard }}\n      - run: go install github.com/jstemmer/go-junit-report/v2@85bf4716ac1f025f2925510a9f5e9f5bb347c009\n\n      # Run code\n      - name: Run unit tests\n        env:\n          SHARD: ${{ matrix.shard }}\n        run: |\n          set -euo pipefail\n\n          readarray -t PACKAGES <<< \"$(./scripts/ci/backend-tests/shard.sh -N\"$SHARD\")\"\n          # This tee requires pipefail to be set, otherwise `go test`'s exit code is thrown away.\n          # That means having no `-o pipefail` => failing tests => exit code 0, which is wrong.\n          CGO_ENABLED=0 go test -vet=off -short -timeout=30m \"${PACKAGES[@]}\"\n\n      # The enterprise module beside this checkout is a separate Go module, so shard.sh's\n      # `find . -name go.mod` never reaches it and its packages need their own run.\n      # EXCLUDED mirrors grafana-enterprise's own root-module job: those packages already fail\n      # on main. Keep the two lists in step.\n      - name: Run enterprise module unit tests\n        env:\n          SHARD: ${{ matrix.shard }}\n          EXCLUDED: '/pkg/(saml)$'\n        run: |\n          set -euo pipefail\n\n          grafana_root=\"$PWD\"\n          cd ../grafana-enterprise\n          readarray -t PACKAGES <<< \"$(\"$grafana_root\"/scripts/ci/backend-tests/shard.sh -N\"$SHARD\" -d ./pkg/... | grep -v -E \"$EXCLUDED\")\"\n          if [ \"${#PACKAGES[@]}\" -eq 0 ] || [ -z \"${PACKAGES[0]}\" ]; then\n            echo \"No enterprise packages in this shard\"\n            exit 0\n          fi\n          CGO_ENABLED=0 go test -vet=off -short -timeout=30m \"${PACKAGES[@]}\"\n"
+ },
+ "jobs": [
+  {
+   "id": 124126166513,
+   "run_id": 41074274150,
+   "name": "Detect whether code changed",
+   "status": "completed",
+   "conclusion": "success",
+   "labels": [
+    "ubuntu-arm64-small"
+   ],
+   "runner_name": "ubuntu-arm64-small_i-05dc751b49a886550",
+   "html_url": "https://github.com/grafana/grafana/actions/runs/41074274150/job/124126166513",
+   "created_at": "2026-10-30T14:44:19Z",
+   "started_at": "2026-10-30T14:44:37Z",
+   "completed_at": "2026-10-30T14:45:04Z",
+   "steps": [
+    {
+     "number": 1,
+     "name": "Set up job",
+     "status": "completed",
+     "conclusion": "success"
+    },
+    {
+     "number": 2,
+     "name": "Set up runner",
+     "status": "completed",
+     "conclusion": "success"
+    },
+    {
+     "number": 3,
+     "name": "Run actions/checkout@v5",
+     "status": "completed",
+     "conclusion": "success"
+    },
+    {
+     "number": 4,
+     "name": "Detect changes",
+     "status": "completed",
+     "conclusion": "success"
+    },
+    {
+     "number": 7,
+     "name": "Post Run actions/checkout@v5",
+     "status": "completed",
+     "conclusion": "success"
+    },
+    {
+     "number": 8,
+     "name": "Complete runner",
+     "status": "completed",
+     "conclusion": "success"
+    },
+    {
+     "number": 9,
+     "name": "Complete job",
+     "status": "completed",
+     "conclusion": "success"
+    }
+   ]
+  },
+  {
+   "id": 124126577484,
+   "run_id": 41074274150,
+   "name": "Grafana Enterprise (${{ matrix.shard }})",
+   "status": "completed",
+   "conclusion": "skipped",
+   "labels": [
+    "ubuntu-x64-large"
+   ],
+   "runner_name": null,
+   "html_url": "https://github.com/grafana/grafana/actions/runs/41074274150/job/124126577484",
+   "created_at": "2026-10-30T14:45:05Z",
+   "started_at": "2026-10-30T14:45:05Z",
+   "completed_at": "2026-10-30T14:45:04Z",
+   "steps": []
+  },
+  {
+   "id": 124126577778,
+   "run_id": 41074274150,
+   "name": "Grafana (${{ matrix.shard }})",
+   "status": "completed",
+   "conclusion": "skipped",
+   "labels": [
+    "ubuntu-x64"
+   ],
+   "runner_name": null,
+   "html_url": "https://github.com/grafana/grafana/actions/runs/41074274150/job/124126577778",
+   "created_at": "2026-10-30T14:45:05Z",
+   "started_at": "2026-10-30T14:45:05Z",
+   "completed_at": "2026-10-30T14:45:04Z",
+   "steps": []
+  }
+ ]
+}

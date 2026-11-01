@@ -1,0 +1,3999 @@
+{
+ "source": "home-assistant/core run 41289361229, captured 2026-11-01",
+ "run": {
+  "id": 41289361229,
+  "name": "CI",
+  "run_number": 383694,
+  "event": "push",
+  "path": ".github/workflows/ci.yaml",
+  "head_sha": "d7345ed4fa46ead10292cd5326545617d1d727ad",
+  "head_branch": "dev",
+  "status": "completed",
+  "conclusion": "cancelled",
+  "run_attempt": 1,
+  "workflow_url": "https://api.github.com/repos/home-assistant/core/actions/workflows/1777664",
+  "created_at": "2026-11-01T09:33:26Z",
+  "run_started_at": "2026-11-01T09:33:26Z",
+  "repoOwner": "home-assistant",
+  "repoName": "core",
+  "referenced_workflows": []
+ },
+ "files": {
+  "home-assistant/core/.github/workflows/ci.yaml@d7345ed4fa46ead10292cd5326545617d1d727ad": "name: CI\nrun-name: \"${{ github.event_name == 'workflow_dispatch' && format('CI: {0}', github.ref_name) || '' }}\"\n\n# yamllint disable-line rule:truthy\non:\n  push:\n    branches:\n      - dev\n      - rc\n      - master\n  pull_request: ~\n  workflow_dispatch:\n    inputs:\n      full:\n        description: \"Full run (regardless of changes)\"\n        default: false\n        type: boolean\n      lint-only:\n        description: \"Skip pytest\"\n        default: false\n        type: boolean\n      skip-coverage:\n        description: \"Skip coverage\"\n        default: false\n        type: boolean\n      pylint-only:\n        description: \"Only run pylint\"\n        default: false\n        type: boolean\n      mypy-only:\n        description: \"Only run mypy\"\n        default: false\n        type: boolean\n      audit-licenses-only:\n        description: \"Only run audit licenses\"\n        default: false\n        type: boolean\n\nenv:\n  CACHE_VERSION: 1\n  MYPY_CACHE_VERSION: 1\n  HA_SHORT_VERSION: \"2026.12\"\n  ADDITIONAL_PYTHON_VERSIONS: \"[]\"\n  # LTS versions: 10.3, 10.6, 10.11, 11.4, 11.8, 12.3\n  # - 10.3 and 10.6 are the versions currently phased out until 2027.3\n  # - 10.11.2 is the oldest supported long term version (as of September 2026)\n  # - 11.4.9 is used in Alpine 3.23 (used in latest HA base images as of April 2026)\n  # - 11.8.8 is used in Alpine 3.24 (used in latest HA base images as of July 2026)\n  # - 12.3.3 is the latest supported long term version (as of September 2026),\n  #   the last mariadb entry is bumped by Renovate when a new LTS is released\n  # mysql 8.0.32 does not always behave the same as MariaDB\n  # and some queries that work on MariaDB do not work on MySQL\n  MARIADB_VERSIONS: \"['mariadb:10.3.32','mariadb:10.6.10','mariadb:10.11.2','mariadb:11.4.9','mariadb:11.8.8','mariadb:12.3.3','mysql:8.0.32']\"\n  # 12 is the oldest supported version\n  # 15 is a supported version\n  # 18 is the latest version\n  # Renovate keeps each entry on the latest release of its major version\n  POSTGRESQL_VERSIONS: \"['postgres:12.22','postgres:15.19', 'postgres:18.6']\"\n  # 3.40.1 is the oldest supported version (recorder MIN_VERSION_SQLITE),\n  # shipped in Debian 12 (bookworm)\n  # 3.53.4 is the latest (as of 25 Aug 2026) and the version shipped with\n  # HA OS and the official container images (Alpine 3.24); when bumping the\n  # latest, keep an entry for the version the container images ship\n  # The year is part of the sqlite.org amalgamation download URL\n  SQLITE_VERSIONS: '[{\"version\": \"3.40.1\", \"year\": \"2022\"}, {\"version\": \"3.53.4\", \"year\": \"2026\"}]'\n  RECORDER_TEST_DIRS: >-\n    tests/components/history\n    tests/components/logbook\n    tests/components/recorder\n    tests/components/sensor\n  UV_CACHE_DIR: /tmp/uv-cache\n  APT_CACHE_VERSION: 2\n  SQLALCHEMY_WARN_20: 1\n  PYTHONASYNCIODEBUG: 1\n  HASS_CI: 1\n\npermissions: {}\n\nconcurrency:\n  group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}\n  cancel-in-progress: true\n\njobs:\n  info:\n    name: Collect information & changes data\n    runs-on: ubuntu-26.04\n    permissions:\n      contents: read # To check out the repository\n      pull-requests: read # For paths-filter to detect changed files\n    outputs:\n      # In case of issues with the partial run, use the following line instead:\n      # test_full_suite: 'true'\n      core: ${{ steps.core.outputs.changes }}\n      integrations_glob: ${{ steps.info.outputs.integrations_glob }}\n      integrations: ${{ steps.integrations.outputs.changes }}\n      python_cache_key: ${{ steps.generate_python_cache_key.outputs.key }}\n      requirements: ${{ steps.core.outputs.requirements }}\n      mariadb_groups: ${{ steps.info.outputs.mariadb_groups }}\n      postgresql_groups: ${{ steps.info.outputs.postgresql_groups }}\n      sqlite_groups: ${{ steps.info.outputs.sqlite_groups }}\n      python_versions: ${{ steps.info.outputs.python_versions }}\n      default_python: ${{ steps.info.outputs.default_python }}\n      uv_version: ${{ steps.info.outputs.uv_version }}\n      test_full_suite: ${{ steps.info.outputs.test_full_suite }}\n      test_group_count: ${{ steps.info.outputs.test_group_count }}\n      test_groups: ${{ steps.info.outputs.test_groups }}\n      tests_glob: ${{ steps.info.outputs.tests_glob }}\n      tests: ${{ steps.info.outputs.tests }}\n      lint_only: ${{ steps.info.outputs.lint_only }}\n      skip_coverage: ${{ steps.info.outputs.skip_coverage }}\n    steps:\n      - name: Check out code from GitHub\n        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1\n        with:\n          persist-credentials: false\n      - name: Generate partial Python venv restore key\n        id: generate_python_cache_key\n        env:\n          HASH_REQUIREMENTS_TEST: ${{ hashFiles('requirements_test.txt', 'requirements_test_pre_commit.txt', 'packages/pytest-home-assistant/pyproject.toml') }}\n          HASH_REQUIREMENTS: ${{ hashFiles('requirements.txt') }}\n          HASH_REQUIREMENTS_ALL: ${{ hashFiles('requirements_all.txt') }}\n          HASH_PACKAGE_CONSTRAINTS: ${{ hashFiles('homeassistant/package_constraints.txt') }}\n          HASH_GEN_REQUIREMENTS: ${{ hashFiles('script/gen_requirements_all.py') }}\n          HASH_EDITABLE_PACKAGES: ${{ hashFiles('pyproject.toml', 'packages/hassfest/pyproject.toml', 'packages/hassfest/setup.py', '.github/actions/restore-or-build-venv/action.yml') }}\n        run: |\n          # Include HA_SHORT_VERSION to force the immediate creation\n          # of a new uv cache entry after a version bump.\n          echo \"key=venv-${CACHE_VERSION}-${HA_SHORT_VERSION}-${HASH_REQUIREMENTS_TEST}-${HASH_REQUIREMENTS}-${HASH_REQUIREMENTS_ALL}-${HASH_PACKAGE_CONSTRAINTS}-${HASH_GEN_REQUIREMENTS}-${HASH_EDITABLE_PACKAGES}\" >> $GITHUB_OUTPUT\n      - name: Filter for core changes\n        uses: dorny/paths-filter@ceb8a2b8f2d89434be7ff52d3de7ec3738c5cc9d # v4.0.3\n        id: core\n        with:\n          filters: .core_files.yaml\n      - name: Create a list of integrations to filter for changes\n        run: |\n          python3 -m script.gen_integration_paths\n          echo \"Result:\"\n          cat .integration_paths.yaml\n      - name: Filter for integration changes\n        uses: dorny/paths-filter@ceb8a2b8f2d89434be7ff52d3de7ec3738c5cc9d # v4.0.3\n        id: integrations\n        with:\n          filters: .integration_paths.yaml\n      - name: Collect additional information\n        id: info\n        env:\n          INTEGRATION_CHANGES: ${{ steps.integrations.outputs.changes }}\n          CORE_ANY: ${{ steps.core.outputs.any }}\n          INPUT_FULL: ${{ github.event.inputs.full }}\n          HAS_CI_FULL_RUN_LABEL: ${{ contains(github.event.pull_request.labels.*.name, 'ci-full-run') }}\n          INPUT_LINT_ONLY: ${{ github.event.inputs.lint-only }}\n          INPUT_PYLINT_ONLY: ${{ github.event.inputs.pylint-only }}\n          INPUT_MYPY_ONLY: ${{ github.event.inputs.mypy-only }}\n          INPUT_AUDIT_LICENSES_ONLY: ${{ github.event.inputs.audit-licenses-only }}\n          REPO_FULL_NAME: ${{ github.event.repository.full_name }}\n          INPUT_SKIP_COVERAGE: ${{ github.event.inputs.skip-coverage }}\n          HAS_CI_SKIP_COVERAGE_LABEL: ${{ contains(github.event.pull_request.labels.*.name, 'ci-skip-coverage') }}\n        run: |\n          # Defaults\n          integrations_glob=\"\"\n          mariadb_groups=${MARIADB_VERSIONS}\n          postgresql_groups=${POSTGRESQL_VERSIONS}\n          sqlite_groups=${SQLITE_VERSIONS}\n          test_full_suite=\"true\"\n          test_groups=\"[1, 2, 3, 4, 5, 6, 7, 8, 9, 10]\"\n          test_group_count=10\n          tests=\"[]\"\n          tests_glob=\"\"\n          lint_only=\"\"\n          skip_coverage=\"\"\n          default_python=$(cat .python-version)\n          all_python_versions=$(jq -cn \\\n            --arg default_python \"${default_python}\" \\\n            --argjson additional_python_versions \"${ADDITIONAL_PYTHON_VERSIONS}\" \\\n            '[$default_python] + $additional_python_versions')\n\n          if [[ \"${INTEGRATION_CHANGES}\" != \"[]\" ]];\n          then\n            # Create a space-separated list of integrations\n            integrations_glob=$(echo \"${INTEGRATION_CHANGES}\" | jq -r '. | join(\" \")')\n\n            # Create list of testable integrations\n            possible_integrations=$(echo \"${INTEGRATION_CHANGES}\" | jq -cSr '.[]')\n            tests=$(\n              for integration in ${possible_integrations};\n              do\n                if [[ -d \"tests/components/${integration}\" ]]; then\n                  echo -n \"\\\"${integration}\\\",\";\n                fi;\n              done\n            )\n\n            [[ ! -z \"${tests}\" ]] && tests=\"${tests::-1}\"\n            tests=\"[${tests}]\"\n            test_groups=\"${tests}\"\n            # Test group count should be 1, we don't split partial tests\n            test_group_count=1\n\n            # Create a space-separated list of test integrations\n            tests_glob=$(echo \"${tests}\" | jq -r '. | join(\" \")')\n\n            mariadb_groups=\"[]\"\n            postgresql_groups=\"[]\"\n            sqlite_groups=\"[]\"\n            test_full_suite=\"false\"\n          fi\n\n          # We need to run the full suite on certain branches.\n          # Or, in case core files are touched, for the full suite as well.\n          if [[ \"${GITHUB_REF}\" == \"refs/heads/dev\" ]] \\\n            || [[ \"${GITHUB_REF}\" == \"refs/heads/master\" ]] \\\n            || [[ \"${GITHUB_REF}\" == \"refs/heads/rc\" ]] \\\n            || [[ \"${CORE_ANY}\" == \"true\" ]] \\\n            || [[ \"${INPUT_FULL}\" == \"true\" ]] \\\n            || [[ \"${HAS_CI_FULL_RUN_LABEL}\" == \"true\" ]];\n          then\n            mariadb_groups=${MARIADB_VERSIONS}\n            postgresql_groups=${POSTGRESQL_VERSIONS}\n            sqlite_groups=${SQLITE_VERSIONS}\n            test_groups=\"[1, 2, 3, 4, 5, 6, 7, 8, 9, 10]\"\n            test_group_count=10\n            test_full_suite=\"true\"\n          fi\n\n          if [[ \"${INPUT_LINT_ONLY}\" == \"true\" ]] \\\n            || [[ \"${INPUT_PYLINT_ONLY}\" == \"true\" ]] \\\n            || [[ \"${INPUT_MYPY_ONLY}\" == \"true\" ]] \\\n            || [[ \"${INPUT_AUDIT_LICENSES_ONLY}\" == \"true\" ]] \\\n            || [[ \"${GITHUB_EVENT_NAME}\" == \"push\" \\\n              && \"${REPO_FULL_NAME}\" != \"home-assistant/core\" ]];\n          then\n            lint_only=\"true\"\n            skip_coverage=\"true\"\n          fi\n\n          if [[ \"${INPUT_SKIP_COVERAGE}\" == \"true\" ]] \\\n            || [[ \"${HAS_CI_SKIP_COVERAGE_LABEL}\" == \"true\" ]];\n          then\n            skip_coverage=\"true\"\n          fi\n\n          # Output & sent to GitHub Actions\n          echo \"mariadb_groups: ${mariadb_groups}\"\n          echo \"mariadb_groups=${mariadb_groups}\" >> $GITHUB_OUTPUT\n          echo \"postgresql_groups: ${postgresql_groups}\"\n          echo \"postgresql_groups=${postgresql_groups}\" >> $GITHUB_OUTPUT\n          echo \"sqlite_groups: ${sqlite_groups}\"\n          echo \"sqlite_groups=${sqlite_groups}\" >> $GITHUB_OUTPUT\n          echo \"python_versions: ${all_python_versions}\"\n          echo \"python_versions=${all_python_versions}\" >> $GITHUB_OUTPUT\n          echo \"default_python: ${default_python}\"\n          echo \"default_python=${default_python}\" >> $GITHUB_OUTPUT\n          uv_version=$(grep '^uv==' requirements.txt | cut -d'=' -f3)\n          echo \"uv_version: ${uv_version}\"\n          echo \"uv_version=${uv_version}\" >> $GITHUB_OUTPUT\n          echo \"test_full_suite: ${test_full_suite}\"\n          echo \"test_full_suite=${test_full_suite}\" >> $GITHUB_OUTPUT\n          echo \"integrations_glob: ${integrations_glob}\"\n          echo \"integrations_glob=${integrations_glob}\" >> $GITHUB_OUTPUT\n          echo \"test_group_count: ${test_group_count}\"\n          echo \"test_group_count=${test_group_count}\" >> $GITHUB_OUTPUT\n          echo \"test_groups: ${test_groups}\"\n          echo \"test_groups=${test_groups}\" >> $GITHUB_OUTPUT\n          echo \"tests: ${tests}\"\n          echo \"tests=${tests}\" >> $GITHUB_OUTPUT\n          echo \"tests_glob: ${tests_glob}\"\n          echo \"tests_glob=${tests_glob}\" >> $GITHUB_OUTPUT\n          echo \"lint_only\": ${lint_only}\n          echo \"lint_only=${lint_only}\" >> $GITHUB_OUTPUT\n          echo \"skip_coverage: ${skip_coverage}\"\n          echo \"skip_coverage=${skip_coverage}\" >> $GITHUB_OUTPUT\n\n  prek:\n    name: Run prek checks\n    runs-on: ubuntu-26.04\n    permissions:\n      contents: read\n    needs: [info]\n    if: |\n      github.event.inputs.pylint-only != 'true'\n      && github.event.inputs.mypy-only != 'true'\n      && github.event.inputs.audit-licenses-only != 'true'\n    steps:\n      - name: Check out code from GitHub\n        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1\n        with:\n          persist-credentials: false\n      - name: Register problem matchers\n        run: |\n          echo \"::add-matcher::.github/workflows/matchers/yamllint.json\"\n          echo \"::add-matcher::.github/workflows/matchers/check-json.json\"\n          echo \"::add-matcher::.github/workflows/matchers/check-executables-have-shebangs.json\"\n          echo \"::add-matcher::.github/workflows/matchers/codespell.json\"\n      - name: Run prek\n        uses: j178/prek-action@44924fe9ef4a6f88253c4b6b1bf11c689d3ce53d # v3.1.0\n        env:\n          PREK_SKIP: no-commit-to-branch,mypy,pylint,gen_requirements_all,hassfest,hassfest-metadata,hassfest-mypy-config,zizmor\n          RUFF_OUTPUT_FORMAT: github\n\n  lint-hadolint:\n    name: Check ${{ matrix.file }}\n    runs-on: ubuntu-26.04\n    permissions:\n      contents: read\n    needs: [info]\n    if: |\n      github.event.inputs.pylint-only != 'true'\n      && github.event.inputs.mypy-only != 'true'\n      && github.event.inputs.audit-licenses-only != 'true'\n    strategy:\n      fail-fast: false\n      matrix:\n        file:\n          - Dockerfile\n          - Dockerfile.dev\n          - script/hassfest/docker/Dockerfile\n    steps:\n      - name: Check out code from GitHub\n        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1\n        with:\n          persist-credentials: false\n      - name: Register hadolint problem matcher\n        run: |\n          echo \"::add-matcher::.github/workflows/matchers/hadolint.json\"\n      - name: Check ${{ matrix.file }}\n        uses: hadolint/hadolint-action@06be81baf89a55ffd0e24b8f04a4185738dd3387 # v3.5.0\n        with:\n          dockerfile: ${{ matrix.file }}\n          no-color: true\n\n  base:\n    name: Prepare dependencies\n    runs-on: ubuntu-26.04\n    permissions:\n      contents: read\n    needs: [info]\n    timeout-minutes: 60\n    strategy:\n      matrix:\n        python-version: ${{ fromJson(needs.info.outputs.python_versions) }}\n    steps:\n      - name: Check out code from GitHub\n        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1\n        with:\n          persist-credentials: false\n      - name: Set up Python ${{ matrix.python-version }} and build venv\n        id: python\n        uses: $/.github/actions/restore-or-build-venv\n        with:\n          uv-version: ${{ needs.info.outputs.uv_version }}\n          python-version: ${{ matrix.python-version }}\n          python-cache-key: ${{ needs.info.outputs.python_cache_key }}\n          uv-cache-dir: ${{ env.UV_CACHE_DIR }}\n          apt-cache-version: ${{ env.APT_CACHE_VERSION }}\n          save: \"true\"\n      - name: Dump pip freeze\n        run: |\n          . venv/bin/activate\n          python --version\n          uv pip freeze >> pip_freeze.txt\n      - name: Upload pip_freeze artifact\n        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2\n        with:\n          name: pip-freeze-${{ matrix.python-version }}\n          path: pip_freeze.txt\n          overwrite: true\n      - name: Remove pip_freeze\n        run: rm pip_freeze.txt\n      - name: Check dirty\n        run: |\n          ./script/check_dirty\n\n  hassfest:\n    name: Check hassfest\n    runs-on: ubuntu-26.04\n    permissions:\n      contents: read\n    needs:\n      - info\n      - base\n    if: |\n      github.event.inputs.pylint-only != 'true'\n      && github.event.inputs.mypy-only != 'true'\n      && github.event.inputs.audit-licenses-only != 'true'\n    steps:\n      - name: Check out code from GitHub\n        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1\n        with:\n          persist-credentials: false\n      - name: Install additional OS dependencies\n        timeout-minutes: 10\n        uses: $/.github/actions/cache-apt-packages\n        with:\n          packages: libturbojpeg0\n          version: ${{ env.APT_CACHE_VERSION }}\n      - name: Set up Python and restore venv\n        id: python\n        uses: $/.github/actions/restore-or-build-venv\n        with:\n          uv-version: ${{ needs.info.outputs.uv_version }}\n          python-version: ${{ needs.info.outputs.default_python }}\n          python-cache-key: ${{ needs.info.outputs.python_cache_key }}\n          uv-cache-dir: ${{ env.UV_CACHE_DIR }}\n          apt-cache-version: ${{ env.APT_CACHE_VERSION }}\n      - name: Test hassfest package\n        run: |\n          . venv/bin/activate\n          pytest -c packages/hassfest/pyproject.toml packages/hassfest/tests\n      - name: Run hassfest\n        run: |\n          . venv/bin/activate\n          python -m script.hassfest --requirements --action validate\n\n  gen-requirements-all:\n    name: Check all requirements\n    runs-on: ubuntu-26.04\n    permissions:\n      contents: read\n    needs:\n      - info\n      - base\n    if: |\n      github.event.inputs.pylint-only != 'true'\n      && github.event.inputs.mypy-only != 'true'\n      && github.event.inputs.audit-licenses-only != 'true'\n    steps:\n      - name: Check out code from GitHub\n        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1\n        with:\n          persist-credentials: false\n      - name: Set up Python and restore venv\n        id: python\n        uses: $/.github/actions/restore-or-build-venv\n        with:\n          uv-version: ${{ needs.info.outputs.uv_version }}\n          python-version: ${{ needs.info.outputs.default_python }}\n          python-cache-key: ${{ needs.info.outputs.python_cache_key }}\n          uv-cache-dir: ${{ env.UV_CACHE_DIR }}\n          apt-cache-version: ${{ env.APT_CACHE_VERSION }}\n      - name: Run gen_requirements_all.py\n        run: |\n          . venv/bin/activate\n          python -m script.gen_requirements_all validate\n\n  gen-copilot-instructions:\n    name: Check copilot instructions\n    runs-on: ubuntu-26.04\n    permissions:\n      contents: read\n    needs:\n      - info\n    if: |\n      github.event.inputs.pylint-only != 'true'\n      && github.event.inputs.mypy-only != 'true'\n      && github.event.inputs.audit-licenses-only != 'true'\n    steps:\n      - name: Check out code from GitHub\n        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1\n        with:\n          persist-credentials: false\n      - name: Set up Python\n        id: python\n        uses: $/.github/actions/setup-uv-python\n        with:\n          uv-version: ${{ needs.info.outputs.uv_version }}\n          python-version: ${{ needs.info.outputs.default_python }}\n      - name: Run gen_copilot_instructions.py\n        run: |\n          uv run --no-project python -m script.gen_copilot_instructions validate\n\n  build-pylint-package:\n    name: Build pylint-home-assistant package\n    runs-on: ubuntu-26.04\n    permissions:\n      contents: read\n    needs:\n      - info\n    if: |\n      github.event.inputs.mypy-only != 'true'\n      && github.event.inputs.audit-licenses-only != 'true'\n      && needs.info.outputs.test_full_suite == 'true'\n    steps:\n      - name: Check out code from GitHub\n        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1\n        with:\n          persist-credentials: false\n      - name: Set up Python\n        uses: $/.github/actions/setup-uv-python\n        with:\n          uv-version: ${{ needs.info.outputs.uv_version }}\n          python-version: ${{ needs.info.outputs.default_python }}\n      - name: Build source distribution and wheel\n        run: uv build packages/pylint-home-assistant --out-dir dist\n      - name: Install wheel in a clean environment\n        run: |\n          uv venv \"${RUNNER_TEMP}/package-venv\"\n          uv pip install --python \"${RUNNER_TEMP}/package-venv/bin/python\" dist/*.whl\n      - name: Load installed Pylint plugin outside the checkout\n        working-directory: ${{ runner.temp }}\n        run: |\n          \"${RUNNER_TEMP}/package-venv/bin/pylint\" \\\n            --rcfile=/dev/null --load-plugins=pylint_home_assistant --list-msgs > /dev/null\n\n  gen-recorder-db-versions:\n    name: Check recorder database versions\n    runs-on: ubuntu-26.04\n    permissions:\n      contents: read\n    needs:\n      - info\n    # Only run on push to the dev branch; this job reaches out to endoflife.date, and\n    # we do not want a new MariaDB/MySQL release to fail CI on PR runs or the rc/master\n    # branches.\n    if: github.event_name == 'push' && github.ref == 'refs/heads/dev'\n    steps:\n      - name: Check out code from GitHub\n        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1\n        with:\n          persist-credentials: false\n      - name: Set up Python\n        id: python\n        uses: $/.github/actions/setup-uv-python\n        with:\n          uv-version: ${{ needs.info.outputs.uv_version }}\n          python-version: ${{ needs.info.outputs.default_python }}\n      - name: Check MariaDB and MySQL versions are up to date\n        run: |\n          uv run --no-project python -m script.gen_recorder_db_versions validate\n\n  dependency-review:\n    name: Dependency review\n    runs-on: ubuntu-26.04\n    permissions:\n      contents: read\n    needs:\n      - info\n      - base\n    if: |\n      github.event.inputs.pylint-only != 'true'\n      && github.event.inputs.mypy-only != 'true'\n      && needs.info.outputs.requirements == 'true'\n      && github.event_name == 'pull_request'\n    steps:\n      - name: Check out code from GitHub\n        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1\n        with:\n          persist-credentials: false\n      - name: Dependency review\n        uses: actions/dependency-review-action@a1d282b36b6f3519aa1f3fc636f609c47dddb294 # v5.0.0\n        with:\n          license-check: false # We use our own license audit checks\n\n  audit-licenses:\n    name: Audit licenses\n    runs-on: ubuntu-26.04\n    permissions:\n      contents: read\n    needs:\n      - info\n      - base\n    if: |\n      (github.event.inputs.pylint-only != 'true'\n        && github.event.inputs.mypy-only != 'true'\n        || github.event.inputs.audit-licenses-only == 'true')\n      && needs.info.outputs.requirements == 'true'\n    strategy:\n      fail-fast: false\n      matrix:\n        python-version: ${{ fromJson(needs.info.outputs.python_versions) }}\n    steps:\n      - name: Check out code from GitHub\n        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1\n        with:\n          persist-credentials: false\n      - name: Set up Python ${{ matrix.python-version }} and restore venv\n        id: python\n        uses: $/.github/actions/restore-or-build-venv\n        with:\n          uv-version: ${{ needs.info.outputs.uv_version }}\n          python-version: ${{ matrix.python-version }}\n          python-cache-key: ${{ needs.info.outputs.python_cache_key }}\n          uv-cache-dir: ${{ env.UV_CACHE_DIR }}\n          apt-cache-version: ${{ env.APT_CACHE_VERSION }}\n      - name: Extract license data\n        env:\n          PYTHON_VERSION: ${{ matrix.python-version }}\n        run: |\n          . venv/bin/activate\n          python -m script.licenses extract --output-file=licenses-${PYTHON_VERSION}.json\n      - name: Upload licenses\n        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2\n        with:\n          name: licenses-${{ github.run_number }}-${{ matrix.python-version }}\n          path: licenses-${{ matrix.python-version }}.json\n      - name: Check licenses\n        env:\n          PYTHON_VERSION: ${{ matrix.python-version }}\n        run: |\n          . venv/bin/activate\n          python -m script.licenses check licenses-${PYTHON_VERSION}.json\n\n  pylint:\n    name: Check pylint\n    runs-on: ubuntu-26.04\n    permissions:\n      contents: read\n    needs:\n      - info\n      - base\n    timeout-minutes: 20\n    if: |\n      github.event.inputs.mypy-only != 'true'\n      && github.event.inputs.audit-licenses-only != 'true'\n      || github.event.inputs.pylint-only == 'true'\n    steps:\n      - name: Check out code from GitHub\n        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1\n        with:\n          persist-credentials: false\n      - name: Set up Python and restore venv\n        id: python\n        uses: $/.github/actions/restore-or-build-venv\n        with:\n          uv-version: ${{ needs.info.outputs.uv_version }}\n          python-version: ${{ needs.info.outputs.default_python }}\n          python-cache-key: ${{ needs.info.outputs.python_cache_key }}\n          uv-cache-dir: ${{ env.UV_CACHE_DIR }}\n          apt-cache-version: ${{ env.APT_CACHE_VERSION }}\n      - name: Register pylint problem matcher\n        run: |\n          echo \"::add-matcher::.github/workflows/matchers/pylint.json\"\n      - name: Run pylint (fully)\n        if: needs.info.outputs.test_full_suite == 'true'\n        run: |\n          . venv/bin/activate\n          python --version\n          pylint --jobs 0 --ignore-missing-annotations=y homeassistant\n      - name: Run pylint (partially)\n        if: needs.info.outputs.test_full_suite == 'false'\n        shell: bash\n        env:\n          INTEGRATIONS_GLOB: ${{ needs.info.outputs.integrations_glob }}\n        run: |\n          . venv/bin/activate\n          python --version\n          pylint --ignore-missing-annotations=y $(printf \"homeassistant/components/%s \" ${INTEGRATIONS_GLOB})\n\n  pylint-tests:\n    name: Check pylint on tests\n    runs-on: ubuntu-26.04\n    permissions:\n      contents: read\n    needs:\n      - info\n      - base\n    timeout-minutes: 20\n    if: |\n      (github.event.inputs.mypy-only != 'true'\n        && github.event.inputs.audit-licenses-only != 'true'\n        || github.event.inputs.pylint-only == 'true')\n      && (needs.info.outputs.tests_glob || needs.info.outputs.test_full_suite == 'true')\n    steps:\n      - name: Check out code from GitHub\n        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1\n        with:\n          persist-credentials: false\n      - name: Set up Python and restore venv\n        id: python\n        uses: $/.github/actions/restore-or-build-venv\n        with:\n          uv-version: ${{ needs.info.outputs.uv_version }}\n          python-version: ${{ needs.info.outputs.default_python }}\n          python-cache-key: ${{ needs.info.outputs.python_cache_key }}\n          uv-cache-dir: ${{ env.UV_CACHE_DIR }}\n          apt-cache-version: ${{ env.APT_CACHE_VERSION }}\n      - name: Register pylint problem matcher\n        run: |\n          echo \"::add-matcher::.github/workflows/matchers/pylint.json\"\n      - name: Run pylint (fully)\n        if: needs.info.outputs.test_full_suite == 'true'\n        run: |\n          . venv/bin/activate\n          python --version\n          pylint --jobs 0 tests packages/pytest-home-assistant/pytest_homeassistant\n      - name: Run pylint (partially)\n        if: needs.info.outputs.test_full_suite == 'false'\n        shell: bash\n        env:\n          TESTS_GLOB: ${{ needs.info.outputs.tests_glob }}\n        run: |\n          . venv/bin/activate\n          python --version\n          pylint $(printf \"tests/components/%s \" ${TESTS_GLOB})\n\n  mypy:\n    name: Check mypy\n    runs-on: ubuntu-26.04\n    permissions:\n      contents: read\n    needs:\n      - info\n      - base\n    if: |\n      github.event.inputs.pylint-only != 'true'\n      && github.event.inputs.audit-licenses-only != 'true'\n      || github.event.inputs.mypy-only == 'true'\n    steps:\n      - name: Check out code from GitHub\n        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1\n        with:\n          persist-credentials: false\n      - name: Generate partial mypy restore key\n        id: generate-mypy-key\n        run: |\n          mypy_version=$(cat requirements_test.txt | grep 'mypy.*=' | cut -d '=' -f 3)\n          echo \"version=${mypy_version}\" >> $GITHUB_OUTPUT\n          echo \"key=mypy-${MYPY_CACHE_VERSION}-${mypy_version}-${HA_SHORT_VERSION}-$(date -u '+%Y-%m-%dT%H:%M:%s')\" >> $GITHUB_OUTPUT\n      - name: Set up Python and restore venv\n        id: python\n        uses: $/.github/actions/restore-or-build-venv\n        with:\n          uv-version: ${{ needs.info.outputs.uv_version }}\n          python-version: ${{ needs.info.outputs.default_python }}\n          python-cache-key: ${{ needs.info.outputs.python_cache_key }}\n          uv-cache-dir: ${{ env.UV_CACHE_DIR }}\n          apt-cache-version: ${{ env.APT_CACHE_VERSION }}\n      - name: Restore mypy cache\n        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0\n        with:\n          path: .mypy_cache\n          key: >-\n            ${{ runner.os }}-${{ runner.arch }}-${{ steps.python.outputs.python-version }}-${{\n            steps.generate-mypy-key.outputs.key }}\n          restore-keys: |\n            ${{ runner.os }}-${{ runner.arch }}-${{ steps.python.outputs.python-version }}-mypy-${{\n            env.MYPY_CACHE_VERSION }}-${{ steps.generate-mypy-key.outputs.version }}-${{\n            env.HA_SHORT_VERSION }}-\n      - name: Register mypy problem matcher\n        run: |\n          echo \"::add-matcher::.github/workflows/matchers/mypy.json\"\n      - name: Run mypy (fully)\n        if: needs.info.outputs.test_full_suite == 'true'\n        run: |\n          . venv/bin/activate\n          python --version\n          mypy --num-workers=4 homeassistant packages/pylint-home-assistant\n      - name: Run mypy (partially)\n        if: needs.info.outputs.test_full_suite == 'false'\n        shell: bash\n        env:\n          INTEGRATIONS_GLOB: ${{ needs.info.outputs.integrations_glob }}\n        run: |\n          . venv/bin/activate\n          python --version\n          mypy --num-workers=4 $(printf \"homeassistant/components/%s \" ${INTEGRATIONS_GLOB})\n\n  benchmarks:\n    name: Run benchmarks\n    runs-on: ubuntu-26.04\n    permissions:\n      contents: read\n      id-token: write # OIDC token CodSpeed mints (no CODSPEED_TOKEN secret)\n    needs:\n      - info\n      - base\n    # Run only when core code or the benchmark suite itself changed. Skipped on\n    # forks, where the OIDC token CodSpeed needs is unavailable. Pushes to dev\n    # that touch core refresh the CodSpeed baseline.\n    if: >-\n      needs.info.outputs.lint_only != 'true'\n      && (github.event_name != 'pull_request'\n        || !github.event.pull_request.head.repo.fork)\n      && (contains(fromJSON(needs.info.outputs.core), 'core')\n        || contains(fromJSON(needs.info.outputs.core), 'benchmarks'))\n    steps:\n      - name: Check out code from GitHub\n        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1\n        with:\n          persist-credentials: false\n      - name: Set up Python and restore venv\n        id: python\n        uses: $/.github/actions/restore-or-build-venv\n        with:\n          uv-version: ${{ needs.info.outputs.uv_version }}\n          python-version: ${{ needs.info.outputs.default_python }}\n          python-cache-key: ${{ needs.info.outputs.python_cache_key }}\n          uv-cache-dir: ${{ env.UV_CACHE_DIR }}\n          apt-cache-version: ${{ env.APT_CACHE_VERSION }}\n      - name: Run benchmarks\n        uses: CodSpeedHQ/action@78102a468f96d8e0ccb92d0ec49425753fc42062 # v5.6.0\n        with:\n          mode: simulation,memory\n          # No token: auth uses the OIDC id-token minted by the job permissions.\n          # Keep respx disabled: it imports httpx before it can be aliased to httpx2.\n          run: |\n            . venv/bin/activate\n            pytest benchmarks --codspeed --no-cov -o addopts=\"-p no:respx\"\n\n  build-hassfest-package:\n    name: Build hassfest package\n    runs-on: ubuntu-26.04\n    permissions:\n      contents: read\n    needs:\n      - info\n    if: |\n      github.event.inputs.pylint-only != 'true'\n      && github.event.inputs.mypy-only != 'true'\n      && github.event.inputs.audit-licenses-only != 'true'\n    steps:\n      - name: Check out code from GitHub\n        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1\n        with:\n          persist-credentials: false\n      - name: Set up Python\n        uses: $/.github/actions/setup-uv-python\n        with:\n          uv-version: ${{ needs.info.outputs.uv_version }}\n          python-version: ${{ needs.info.outputs.default_python }}\n      - name: Build hassfest source distribution and wheel\n        run: uv build packages/hassfest --out-dir dist/hassfest\n      - name: Install wheel in a clean environment\n        run: |\n          uv venv \"${RUNNER_TEMP}/hassfest-venv\"\n          uv pip install --python \"${RUNNER_TEMP}/hassfest-venv/bin/python\" \\\n            dist/hassfest/*.whl\n      - name: Check installed package outside the checkout\n        working-directory: ${{ runner.temp }}\n        run: |\n          \"${RUNNER_TEMP}/hassfest-venv/bin/python\" \\\n            \"${GITHUB_WORKSPACE}/packages/hassfest/tests/check_package.py\"\n\n  build-pytest-package:\n    name: Build pytest-home-assistant package\n    runs-on: ubuntu-26.04\n    permissions:\n      contents: read\n    needs:\n      - info\n    if: |\n      github.event.inputs.pylint-only != 'true'\n      && github.event.inputs.mypy-only != 'true'\n      && github.event.inputs.audit-licenses-only != 'true'\n      && needs.info.outputs.test_full_suite == 'true'\n    steps:\n      - name: Check out code from GitHub\n        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1\n        with:\n          persist-credentials: false\n      - name: Set up Python\n        uses: $/.github/actions/setup-uv-python\n        with:\n          uv-version: ${{ needs.info.outputs.uv_version }}\n          python-version: ${{ needs.info.outputs.default_python }}\n      - name: Build source distribution and wheel\n        run: uv build packages/pytest-home-assistant --out-dir dist\n      - name: Install wheel and matching Home Assistant in a clean environment\n        run: |\n          uv venv \"${RUNNER_TEMP}/pytest-package-venv\"\n          uv pip install --python \"${RUNNER_TEMP}/pytest-package-venv/bin/python\" . dist/*.whl\n          cp -R packages/pytest-home-assistant/tests/standalone \"${RUNNER_TEMP}/pytest-package-tests\"\n      - name: Test installed package outside the checkout\n        working-directory: ${{ runner.temp }}\n        run: |\n          \"${RUNNER_TEMP}/pytest-package-venv/bin/pytest\" \\\n            -c \"${RUNNER_TEMP}/pytest-package-tests/pytest.ini\" \\\n            \"${RUNNER_TEMP}/pytest-package-tests/integration_tests/test_plugin.py\"\n      - name: Test optional helpers and fixtures\n        run: |\n          for wheel in dist/*.whl; do\n            uv pip install --python \"${RUNNER_TEMP}/pytest-package-venv/bin/python\" \\\n              \"${wheel}[bluetooth,infrared,radio-frequency]\"\n          done\n          cd \"${RUNNER_TEMP}\"\n          \"${RUNNER_TEMP}/pytest-package-venv/bin/python\" - <<'PY'\n          import importlib\n\n          for module in (\n              \"pytest_homeassistant.plugins\",\n              \"pytest_homeassistant.components.bluetooth\",\n              \"pytest_homeassistant.components.infrared.common\",\n              \"pytest_homeassistant.components.radio_frequency.common\",\n          ):\n              importlib.import_module(module)\n          PY\n\n          \"${RUNNER_TEMP}/pytest-package-venv/bin/pytest\" \\\n            -c \"${RUNNER_TEMP}/pytest-package-tests/pytest.ini\" \\\n            \"${RUNNER_TEMP}/pytest-package-tests/integration_tests/test_optional.py\"\n\n  prepare-pytest-full:\n    name: Split tests for full run\n    runs-on: ubuntu-26.04\n    permissions:\n      contents: read\n    if: |\n      needs.info.outputs.lint_only != 'true'\n      && needs.info.outputs.test_full_suite == 'true'\n    needs:\n      - info\n      - base\n    steps:\n      - name: Check out code from GitHub\n        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1\n        with:\n          persist-credentials: false\n      - name: Install additional OS dependencies\n        timeout-minutes: 10\n        uses: $/.github/actions/cache-apt-packages\n        with:\n          packages: >-\n            bluez\n            ffmpeg\n            libturbojpeg0\n          version: ${{ env.APT_CACHE_VERSION }}\n          execute_install_scripts: true\n      - name: Set up Python and restore venv\n        id: python\n        uses: $/.github/actions/restore-or-build-venv\n        with:\n          uv-version: ${{ needs.info.outputs.uv_version }}\n          python-version: ${{ needs.info.outputs.default_python }}\n          python-cache-key: ${{ needs.info.outputs.python_cache_key }}\n          uv-cache-dir: ${{ env.UV_CACHE_DIR }}\n          apt-cache-version: ${{ env.APT_CACHE_VERSION }}\n      - name: Restore pytest test counts cache\n        id: cache-pytest-counts\n        uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0\n        with:\n          path: pytest_test_counts.json\n          # Primary key is a sentinel; restore-keys pick the most recent\n          # prefix match since the real (content-addressed) key isn't\n          # known until split_tests.py runs below. The keys leave out the\n          # requirements: split_tests.py recounts a file when it or a conftest\n          # or helper module on its path changes, and a count that shifts with\n          # a library update only makes the buckets slightly uneven.\n          key: >-\n            pytest-counts-${{ runner.os }}-${{ runner.arch }}-${{\n            steps.python.outputs.python-version }}-restore-sentinel\n          restore-keys: |\n            pytest-counts-${{ runner.os }}-${{ runner.arch }}-${{ steps.python.outputs.python-version }}-\n      - name: Run split_tests.py\n        env:\n          TEST_GROUP_COUNT: ${{ needs.info.outputs.test_group_count }}\n        run: |\n          . venv/bin/activate\n          python -m script.split_tests \\\n            --cache pytest_test_counts.json \\\n            ${TEST_GROUP_COUNT} tests\n      - name: Hash pytest test counts cache\n        id: cache-pytest-counts-hash\n        run: |\n          echo \"hash=$(sha256sum pytest_test_counts.json | cut -d' ' -f1)\" \\\n            >> \"$GITHUB_OUTPUT\"\n      - name: Save pytest test counts cache\n        # Content-addressed key: identical content reuses the same entry.\n        # Skip the save when the restore already matched that hash.\n        if: >-\n          !endsWith(\n            steps.cache-pytest-counts.outputs.cache-matched-key,\n            steps.cache-pytest-counts-hash.outputs.hash\n          )\n        uses: actions/cache/save@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0\n        with:\n          path: pytest_test_counts.json\n          key: >-\n            pytest-counts-${{ runner.os }}-${{ runner.arch }}-${{\n            steps.python.outputs.python-version }}-${{\n            steps.cache-pytest-counts-hash.outputs.hash }}\n      - name: Upload pytest_buckets\n        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2\n        with:\n          name: pytest_buckets\n          path: pytest_buckets.txt\n          overwrite: true\n\n  pytest-full:\n    name: Run tests Python ${{ matrix.python-version }} (${{ matrix.group }})\n    runs-on: ubuntu-26.04\n    permissions:\n      contents: read\n    needs:\n      - info\n      - base\n      - gen-requirements-all\n      - hassfest\n      - prek\n      - mypy\n      - prepare-pytest-full\n    if: |\n      needs.info.outputs.lint_only != 'true'\n      && needs.info.outputs.test_full_suite == 'true'\n    strategy:\n      fail-fast: false\n      matrix:\n        python-version: ${{ fromJson(needs.info.outputs.python_versions) }}\n        group: ${{ fromJson(needs.info.outputs.test_groups) }}\n    steps:\n      - name: Check out code from GitHub\n        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1\n        with:\n          persist-credentials: false\n      - name: Install additional OS dependencies\n        timeout-minutes: 10\n        uses: $/.github/actions/cache-apt-packages\n        with:\n          packages: >-\n            bluez\n            ffmpeg\n            libturbojpeg0\n            libxml2-utils\n          version: ${{ env.APT_CACHE_VERSION }}\n          execute_install_scripts: true\n      - name: Set up Python ${{ matrix.python-version }} and restore venv\n        id: python\n        uses: $/.github/actions/restore-or-build-venv\n        with:\n          uv-version: ${{ needs.info.outputs.uv_version }}\n          python-version: ${{ matrix.python-version }}\n          python-cache-key: ${{ needs.info.outputs.python_cache_key }}\n          uv-cache-dir: ${{ env.UV_CACHE_DIR }}\n          apt-cache-version: ${{ env.APT_CACHE_VERSION }}\n      - name: Register Python problem matcher\n        run: |\n          echo \"::add-matcher::.github/workflows/matchers/python.json\"\n      - name: Download pytest_buckets\n        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2\n        with:\n          name: pytest_buckets\n      - name: Compile English translations\n        run: |\n          . venv/bin/activate\n          python3 -m script.translations develop --all\n      - name: Run pytest\n        timeout-minutes: 60\n        id: pytest-full\n        env:\n          PYTHONDONTWRITEBYTECODE: 1\n          SKIP_COVERAGE: ${{ needs.info.outputs.skip_coverage }}\n          TEST_GROUP: ${{ matrix.group }}\n          PYTHON_VERSION: ${{ matrix.python-version }}\n        run: |\n          . venv/bin/activate\n          python --version\n          set -o pipefail\n          cov_params=()\n          if [[ \"${SKIP_COVERAGE}\" != \"true\" ]]; then\n            if [[ \"${TEST_GROUP}\" == \"1\" ]]; then\n              # Also report never-imported files as 0%. Listing every file\n              # is slow, so only one group does it.\n              cov_params+=(--cov=\"homeassistant\")\n            else\n              cov_params+=(--cov)\n            fi\n            cov_params+=(--cov-report=xml)\n            cov_params+=(--junitxml=junit.xml -o junit_family=legacy)\n          fi\n\n          echo \"Test group ${TEST_GROUP}: $(sed -n \"${TEST_GROUP},1p\" pytest_buckets.txt)\"\n          python3 -b -X dev -m pytest \\\n            -qq \\\n            --timeout=9 \\\n            --durations=0 \\\n            --durations-min=1 \\\n            --numprocesses logical \\\n            --snapshot-details \\\n            --dist=loadfile \\\n            ${cov_params[@]} \\\n            -o console_output_style=count \\\n            -p no:sugar \\\n            --exclude-warning-annotations \\\n            $(sed -n \"${TEST_GROUP},1p\" pytest_buckets.txt) \\\n              2>&1 | tee pytest-${PYTHON_VERSION}-${TEST_GROUP}.txt\n      - name: Upload pytest output\n        if: success() || failure() && steps.pytest-full.conclusion == 'failure'\n        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2\n        with:\n          name: pytest-${{ github.run_number }}-${{ matrix.python-version }}-${{ matrix.group }}\n          path: pytest-*.txt\n          overwrite: true\n      - name: Upload coverage artifact\n        if: needs.info.outputs.skip_coverage != 'true'\n        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2\n        with:\n          name: coverage-${{ matrix.python-version }}-${{ matrix.group }}\n          path: coverage.xml\n          overwrite: true\n      - name: Beautify test results\n        # For easier identification of parsing errors\n        if: needs.info.outputs.skip_coverage != 'true'\n        run: |\n          xmllint --format \"junit.xml\" > \"junit.xml-tmp\"\n          mv \"junit.xml-tmp\" \"junit.xml\"\n      - name: Upload test results artifact\n        if: needs.info.outputs.skip_coverage != 'true' && !cancelled()\n        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2\n        with:\n          name: test-results-full-${{ matrix.python-version }}-${{ matrix.group }}\n          path: junit.xml\n      - name: Remove pytest_buckets\n        run: rm pytest_buckets.txt\n      - name: Check dirty\n        run: |\n          ./script/check_dirty\n\n  pytest-mariadb:\n    name: Run ${{ matrix.mariadb-group }} tests Python ${{ matrix.python-version }}\n    runs-on: ubuntu-26.04\n    permissions:\n      contents: read\n    services:\n      mariadb:\n        image: ${{ matrix.mariadb-group }} # zizmor: ignore[unpinned-images]\n        ports:\n          - 3306:3306\n        env:\n          MYSQL_ROOT_PASSWORD: password\n        options: >-\n          --health-cmd=\"if command -v mariadb-admin >/dev/null; then mariadb-admin ping -uroot -ppassword; else mysqladmin ping -uroot -ppassword; fi\"\n          --health-interval=5s --health-timeout=2s --health-retries=3\n          --tmpfs /var/lib/mysql:size=2g,mode=0750\n    needs:\n      - info\n      - base\n      - gen-requirements-all\n      - hassfest\n      - prek\n      - mypy\n    if: |\n      needs.info.outputs.lint_only != 'true'\n      && needs.info.outputs.mariadb_groups != '[]'\n    strategy:\n      fail-fast: false\n      matrix:\n        python-version: ${{ fromJson(needs.info.outputs.python_versions) }}\n        mariadb-group: ${{ fromJson(needs.info.outputs.mariadb_groups) }}\n    steps:\n      - name: Check out code from GitHub\n        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1\n        with:\n          persist-credentials: false\n      - name: Install additional OS dependencies\n        timeout-minutes: 10\n        uses: $/.github/actions/cache-apt-packages\n        with:\n          packages: >-\n            bluez\n            ffmpeg\n            libturbojpeg0\n            libmariadb-dev-compat\n            libxml2-utils\n          version: ${{ env.APT_CACHE_VERSION }}\n          execute_install_scripts: true\n      - name: Set up Python ${{ matrix.python-version }} and restore venv\n        id: python\n        uses: $/.github/actions/restore-or-build-venv\n        with:\n          uv-version: ${{ needs.info.outputs.uv_version }}\n          python-version: ${{ matrix.python-version }}\n          python-cache-key: ${{ needs.info.outputs.python_cache_key }}\n          uv-cache-dir: ${{ env.UV_CACHE_DIR }}\n          apt-cache-version: ${{ env.APT_CACHE_VERSION }}\n      - name: Register Python problem matcher\n        run: |\n          echo \"::add-matcher::.github/workflows/matchers/python.json\"\n      - name: Install SQL Python libraries\n        run: |\n          . venv/bin/activate\n          uv pip install mysqlclient sqlalchemy_utils\n      - name: Compile English translations\n        run: |\n          . venv/bin/activate\n          python3 -m script.translations develop --all\n      - name: Run pytest (partially)\n        timeout-minutes: 20\n        id: pytest-partial\n        shell: bash\n        env:\n          PYTHONDONTWRITEBYTECODE: 1\n          MARIADB_GROUP: ${{ matrix.mariadb-group }}\n          SKIP_COVERAGE: ${{ needs.info.outputs.skip_coverage }}\n          PYTHON_VERSION: ${{ matrix.python-version }}\n        run: |\n          . venv/bin/activate\n          python --version\n          set -o pipefail\n          mariadb=$(echo \"${MARIADB_GROUP}\" | sed \"s/:/-/g\")\n          echo \"mariadb=${mariadb}\" >> $GITHUB_OUTPUT\n          cov_params=()\n          if [[ \"${SKIP_COVERAGE}\" != \"true\" ]]; then\n            cov_params+=(--cov=\"homeassistant.components.recorder\")\n            cov_params+=(--cov-report=xml)\n            cov_params+=(--cov-report=term-missing)\n            cov_params+=(--junitxml=junit.xml -o junit_family=legacy)\n          fi\n\n          python3 -b -X dev -m pytest \\\n            -qq \\\n            --timeout=20 \\\n            --numprocesses logical \\\n            --dist=loadfile \\\n            --snapshot-details \\\n            ${cov_params[@]} \\\n            -o console_output_style=count \\\n            --durations=0 \\\n            --durations-min=10 \\\n            -p no:sugar \\\n            --exclude-warning-annotations \\\n            --dburl=mysql://root:password@127.0.0.1/homeassistant-test \\\n            ${RECORDER_TEST_DIRS} \\\n              2>&1 | tee pytest-${PYTHON_VERSION}-${mariadb}.txt\n      - name: Upload pytest output\n        if: success() || failure() && steps.pytest-partial.conclusion == 'failure'\n        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2\n        with:\n          name: pytest-${{ github.run_number }}-${{ matrix.python-version }}-${{\n            steps.pytest-partial.outputs.mariadb }}\n          path: pytest-*.txt\n          overwrite: true\n      - name: Upload coverage artifact\n        if: needs.info.outputs.skip_coverage != 'true'\n        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2\n        with:\n          name: coverage-${{ matrix.python-version }}-${{\n            steps.pytest-partial.outputs.mariadb }}\n          path: coverage.xml\n          overwrite: true\n      - name: Beautify test results\n        # For easier identification of parsing errors\n        if: needs.info.outputs.skip_coverage != 'true'\n        run: |\n          xmllint --format \"junit.xml\" > \"junit.xml-tmp\"\n          mv \"junit.xml-tmp\" \"junit.xml\"\n      - name: Upload test results artifact\n        if: needs.info.outputs.skip_coverage != 'true' && !cancelled()\n        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2\n        with:\n          name: test-results-mariadb-${{ matrix.python-version }}-${{\n            steps.pytest-partial.outputs.mariadb }}\n          path: junit.xml\n      - name: Check dirty\n        run: |\n          ./script/check_dirty\n\n  pytest-postgres:\n    name: Run ${{ matrix.postgresql-group }} tests Python ${{ matrix.python-version }}\n    runs-on: ubuntu-26.04\n    permissions:\n      contents: read\n    services:\n      postgres:\n        image: ${{ matrix.postgresql-group }} # zizmor: ignore[unpinned-images]\n        ports:\n          - 5432:5432\n        env:\n          POSTGRES_PASSWORD: password\n          # 18+ images default PGDATA to /var/lib/postgresql/<major>/docker,\n          # which is not covered by the tmpfs below\n          PGDATA: /var/lib/postgresql/data\n        options: >-\n          --health-cmd=\"pg_isready -hlocalhost -Upostgres\"\n          --health-interval=5s --health-timeout=2s --health-retries=3\n          --tmpfs /var/lib/postgresql/data:size=2g,mode=0700\n    needs:\n      - info\n      - base\n      - gen-requirements-all\n      - hassfest\n      - prek\n      - mypy\n    if: |\n      needs.info.outputs.lint_only != 'true'\n      && needs.info.outputs.postgresql_groups != '[]'\n    strategy:\n      fail-fast: false\n      matrix:\n        python-version: ${{ fromJson(needs.info.outputs.python_versions) }}\n        postgresql-group: ${{ fromJson(needs.info.outputs.postgresql_groups) }}\n    steps:\n      - name: Check out code from GitHub\n        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1\n        with:\n          persist-credentials: false\n      - name: Install additional OS dependencies\n        timeout-minutes: 10\n        uses: $/.github/actions/cache-apt-packages\n        with:\n          packages: >-\n            bluez\n            ffmpeg\n            libturbojpeg0\n            libxml2-utils\n          version: ${{ env.APT_CACHE_VERSION }}\n          execute_install_scripts: true\n      - name: Set up PostgreSQL apt repository\n        run: sudo /usr/share/postgresql-common/pgdg/apt.postgresql.org.sh -y\n      - name: Cache PostgreSQL development headers\n        timeout-minutes: 10\n        uses: $/.github/actions/cache-apt-packages\n        with:\n          packages: postgresql-server-dev-14\n          version: ${{ env.APT_CACHE_VERSION }}\n      - name: Set up Python ${{ matrix.python-version }} and restore venv\n        id: python\n        uses: $/.github/actions/restore-or-build-venv\n        with:\n          uv-version: ${{ needs.info.outputs.uv_version }}\n          python-version: ${{ matrix.python-version }}\n          python-cache-key: ${{ needs.info.outputs.python_cache_key }}\n          uv-cache-dir: ${{ env.UV_CACHE_DIR }}\n          apt-cache-version: ${{ env.APT_CACHE_VERSION }}\n      - name: Register Python problem matcher\n        run: |\n          echo \"::add-matcher::.github/workflows/matchers/python.json\"\n      - name: Install SQL Python libraries\n        run: |\n          . venv/bin/activate\n          uv pip install psycopg2 sqlalchemy_utils\n      - name: Compile English translations\n        run: |\n          . venv/bin/activate\n          python3 -m script.translations develop --all\n      - name: Run pytest (partially)\n        timeout-minutes: 20\n        id: pytest-partial\n        shell: bash\n        env:\n          PYTHONDONTWRITEBYTECODE: 1\n          POSTGRESQL_GROUP: ${{ matrix.postgresql-group }}\n          SKIP_COVERAGE: ${{ needs.info.outputs.skip_coverage }}\n          PYTHON_VERSION: ${{ matrix.python-version }}\n        run: |\n          . venv/bin/activate\n          python --version\n          set -o pipefail\n          postgresql=$(echo \"${POSTGRESQL_GROUP}\" | sed \"s/:/-/g\")\n          echo \"postgresql=${postgresql}\" >> $GITHUB_OUTPUT\n          cov_params=()\n          if [[ \"${SKIP_COVERAGE}\" != \"true\" ]]; then\n            cov_params+=(--cov=\"homeassistant.components.recorder\")\n            cov_params+=(--cov-report=xml)\n            cov_params+=(--cov-report=term-missing)\n            cov_params+=(--junitxml=junit.xml -o junit_family=legacy)\n          fi\n\n          python3 -b -X dev -m pytest \\\n            -qq \\\n            --timeout=9 \\\n            --numprocesses logical \\\n            --dist=loadfile \\\n            --snapshot-details \\\n            ${cov_params[@]} \\\n            -o console_output_style=count \\\n            --durations=0 \\\n            --durations-min=10 \\\n            -p no:sugar \\\n            --exclude-warning-annotations \\\n            --dburl=postgresql://postgres:password@127.0.0.1/homeassistant-test \\\n            ${RECORDER_TEST_DIRS} \\\n              2>&1 | tee pytest-${PYTHON_VERSION}-${postgresql}.txt\n      - name: Upload pytest output\n        if: success() || failure() && steps.pytest-partial.conclusion == 'failure'\n        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2\n        with:\n          name: pytest-${{ github.run_number }}-${{ matrix.python-version }}-${{\n            steps.pytest-partial.outputs.postgresql }}\n          path: pytest-*.txt\n          overwrite: true\n      - name: Upload coverage artifact\n        if: needs.info.outputs.skip_coverage != 'true'\n        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2\n        with:\n          name: coverage-${{ matrix.python-version }}-${{\n            steps.pytest-partial.outputs.postgresql }}\n          path: coverage.xml\n          overwrite: true\n      - name: Beautify test results\n        # For easier identification of parsing errors\n        if: needs.info.outputs.skip_coverage != 'true'\n        run: |\n          xmllint --format \"junit.xml\" > \"junit.xml-tmp\"\n          mv \"junit.xml-tmp\" \"junit.xml\"\n      - name: Upload test results artifact\n        if: needs.info.outputs.skip_coverage != 'true' && !cancelled()\n        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2\n        with:\n          name: test-results-postgres-${{ matrix.python-version }}-${{\n            steps.pytest-partial.outputs.postgresql }}\n          path: junit.xml\n      - name: Check dirty\n        run: |\n          ./script/check_dirty\n\n  pytest-sqlite:\n    name: Run SQLite ${{ matrix.sqlite-group.version }} tests Python ${{ matrix.python-version }}\n    runs-on: ubuntu-26.04\n    permissions:\n      contents: read\n    needs:\n      - info\n      - base\n      - gen-requirements-all\n      - hassfest\n      - prek\n      - mypy\n    if: |\n      needs.info.outputs.lint_only != 'true'\n      && needs.info.outputs.sqlite_groups != '[]'\n    strategy:\n      fail-fast: false\n      matrix:\n        python-version: ${{ fromJson(needs.info.outputs.python_versions) }}\n        sqlite-group: ${{ fromJson(needs.info.outputs.sqlite_groups) }}\n    steps:\n      - name: Check out code from GitHub\n        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1\n        with:\n          persist-credentials: false\n      - name: Install additional OS dependencies\n        timeout-minutes: 10\n        uses: $/.github/actions/cache-apt-packages\n        with:\n          packages: >-\n            bluez\n            ffmpeg\n            libturbojpeg0\n            libxml2-utils\n          version: ${{ env.APT_CACHE_VERSION }}\n          execute_install_scripts: true\n      - name: Set up Python ${{ matrix.python-version }} and restore venv\n        id: python\n        uses: $/.github/actions/restore-or-build-venv\n        with:\n          uv-version: ${{ needs.info.outputs.uv_version }}\n          python-version: ${{ matrix.python-version }}\n          python-cache-key: ${{ needs.info.outputs.python_cache_key }}\n          uv-cache-dir: ${{ env.UV_CACHE_DIR }}\n          apt-cache-version: ${{ env.APT_CACHE_VERSION }}\n      - name: Register Python problem matcher\n        run: |\n          echo \"::add-matcher::.github/workflows/matchers/python.json\"\n      - name: Restore vendored sqlite3 wheel cache\n        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0\n        with:\n          path: ~/sqlite3-vendor-wheel\n          key: >-\n            sqlite3-vendor-wheel-${{ runner.os }}-${{ runner.arch }}-${{\n            steps.python.outputs.python-version }}-${{\n            matrix.sqlite-group.version }}-${{\n            hashFiles('script/vendor_sqlite3.py', 'script/sqlite3_vendor/**') }}\n      - name: Install sqlite3 module with SQLite ${{ matrix.sqlite-group.version }}\n        env:\n          SQLITE_VERSION: ${{ matrix.sqlite-group.version }}\n          SQLITE_YEAR: ${{ matrix.sqlite-group.year }}\n        run: |\n          . venv/bin/activate\n          python3 -m script.vendor_sqlite3 \\\n            --version \"${SQLITE_VERSION}\" \\\n            --year \"${SQLITE_YEAR}\" \\\n            --wheel-dir ~/sqlite3-vendor-wheel\n      - name: Compile English translations\n        run: |\n          . venv/bin/activate\n          python3 -m script.translations develop --all\n      - name: Run pytest (partially)\n        timeout-minutes: 20\n        id: pytest-partial\n        shell: bash\n        env:\n          PYTHONDONTWRITEBYTECODE: 1\n          EXPECTED_SQLITE_VERSION: ${{ matrix.sqlite-group.version }}\n          PYTHON_VERSION: ${{ matrix.python-version }}\n        run: |\n          . venv/bin/activate\n          python --version\n          set -o pipefail\n\n          # No coverage collection: these tests already run with coverage in\n          # the pytest-full job with the interpreter's own SQLite.\n          python3 -b -X dev -m pytest \\\n            -qq \\\n            --timeout=20 \\\n            --numprocesses logical \\\n            --dist=loadfile \\\n            --snapshot-details \\\n            -o console_output_style=count \\\n            --durations=0 \\\n            --durations-min=10 \\\n            -p no:sugar \\\n            -p tests.sqlite3_shim \\\n            --exclude-warning-annotations \\\n            ${RECORDER_TEST_DIRS} \\\n              2>&1 | tee pytest-${PYTHON_VERSION}-sqlite-${EXPECTED_SQLITE_VERSION}.txt\n      - name: Upload pytest output\n        if: success() || failure() && steps.pytest-partial.conclusion == 'failure'\n        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2\n        with:\n          name:\n            pytest-${{ github.run_number }}-${{ matrix.python-version }}-sqlite-${{\n            matrix.sqlite-group.version }}\n          path: pytest-*.txt\n          overwrite: true\n      - name: Check dirty\n        run: |\n          ./script/check_dirty\n\n  coverage-full:\n    name: Upload test coverage to Codecov (full suite)\n    runs-on: ubuntu-26.04\n    permissions:\n      contents: read\n    needs:\n      - info\n      - pytest-full\n      - pytest-postgres\n      - pytest-mariadb\n    timeout-minutes: 10\n    if: needs.info.outputs.skip_coverage != 'true'\n    steps:\n      - name: Check out code from GitHub\n        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1\n        with:\n          persist-credentials: false\n      - name: Download all coverage artifacts\n        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2\n        with:\n          pattern: coverage-*\n      - name: Upload coverage to Codecov\n        if: needs.info.outputs.test_full_suite == 'true'\n        uses: codecov/codecov-action@303a32d7a59b442fa8d48b6a1cc6825c09c847a5 # v7.1.1\n        with:\n          fail_ci_if_error: true\n          flags: full-suite\n          token: ${{ secrets.CODECOV_TOKEN }} # zizmor: ignore[secrets-outside-env]\n\n  pytest-partial:\n    name: Run tests Python ${{ matrix.python-version }} (${{ matrix.group }})\n    runs-on: ubuntu-26.04\n    permissions:\n      contents: read\n    # Partial runs are short, so start the tests in parallel with the lint jobs\n    needs:\n      - info\n      - base\n    if: |\n      needs.info.outputs.lint_only != 'true'\n      && needs.info.outputs.tests_glob\n      && needs.info.outputs.test_full_suite == 'false'\n    strategy:\n      fail-fast: false\n      matrix:\n        python-version: ${{ fromJson(needs.info.outputs.python_versions) }}\n        group: ${{ fromJson(needs.info.outputs.test_groups) }}\n    steps:\n      - name: Check out code from GitHub\n        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1\n        with:\n          persist-credentials: false\n      - name: Install additional OS dependencies\n        timeout-minutes: 10\n        uses: $/.github/actions/cache-apt-packages\n        with:\n          packages: >-\n            bluez\n            ffmpeg\n            libturbojpeg0\n            libxml2-utils\n          version: ${{ env.APT_CACHE_VERSION }}\n          execute_install_scripts: true\n      - name: Set up Python ${{ matrix.python-version }} and restore venv\n        id: python\n        uses: $/.github/actions/restore-or-build-venv\n        with:\n          uv-version: ${{ needs.info.outputs.uv_version }}\n          python-version: ${{ matrix.python-version }}\n          python-cache-key: ${{ needs.info.outputs.python_cache_key }}\n          uv-cache-dir: ${{ env.UV_CACHE_DIR }}\n          apt-cache-version: ${{ env.APT_CACHE_VERSION }}\n      - name: Register Python problem matcher\n        run: |\n          echo \"::add-matcher::.github/workflows/matchers/python.json\"\n      - name: Register pytest slow test problem matcher\n        run: |\n          echo \"::add-matcher::.github/workflows/matchers/pytest-slow.json\"\n      - name: Compile English translations\n        run: |\n          . venv/bin/activate\n          python3 -m script.translations develop --all\n      - name: Run pytest\n        timeout-minutes: 10\n        id: pytest-partial\n        shell: bash\n        env:\n          PYTHONDONTWRITEBYTECODE: 1\n          TEST_GROUP: ${{ matrix.group }}\n          SKIP_COVERAGE: ${{ needs.info.outputs.skip_coverage }}\n          PYTHON_VERSION: ${{ matrix.python-version }}\n        run: |\n          . venv/bin/activate\n          python --version\n          set -o pipefail\n\n          if [[ ! -f \"tests/components/${TEST_GROUP}/__init__.py\" ]]; then\n            echo \"::error:: missing file tests/components/${TEST_GROUP}/__init__.py\"\n            exit 1\n          fi\n\n          cov_params=()\n          if [[ \"${SKIP_COVERAGE}\" != \"true\" ]]; then\n            cov_params+=(--cov=\"homeassistant.components.${TEST_GROUP}\")\n            cov_params+=(--cov-report=xml)\n            cov_params+=(--cov-report=term-missing)\n            cov_params+=(--junitxml=junit.xml -o junit_family=legacy)\n          fi\n\n          python3 -b -X dev -m pytest \\\n            -qq \\\n            --timeout=9 \\\n            --numprocesses logical \\\n            --snapshot-details \\\n            ${cov_params[@]} \\\n            -o console_output_style=count \\\n            --durations=0 \\\n            --durations-min=1 \\\n            -p no:sugar \\\n            --exclude-warning-annotations \\\n            tests/components/${TEST_GROUP} \\\n              2>&1 | tee pytest-${PYTHON_VERSION}-${TEST_GROUP}.txt\n      - name: Upload pytest output\n        if: success() || failure() && steps.pytest-partial.conclusion == 'failure'\n        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2\n        with:\n          name: pytest-${{ github.run_number }}-${{ matrix.python-version }}-${{ matrix.group }}\n          path: pytest-*.txt\n          overwrite: true\n      - name: Upload coverage artifact\n        if: needs.info.outputs.skip_coverage != 'true'\n        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2\n        with:\n          name: coverage-${{ matrix.python-version }}-${{ matrix.group }}\n          path: coverage.xml\n          overwrite: true\n      - name: Beautify test results\n        # For easier identification of parsing errors\n        if: needs.info.outputs.skip_coverage != 'true'\n        run: |\n          xmllint --format \"junit.xml\" > \"junit.xml-tmp\"\n          mv \"junit.xml-tmp\" \"junit.xml\"\n      - name: Upload test results artifact\n        if: needs.info.outputs.skip_coverage != 'true' && !cancelled()\n        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2\n        with:\n          name: test-results-partial-${{ matrix.python-version }}-${{ matrix.group }}\n          path: junit.xml\n      - name: Check dirty\n        run: |\n          ./script/check_dirty\n\n  coverage-partial:\n    name: Upload test coverage to Codecov (partial suite)\n    if: needs.info.outputs.skip_coverage != 'true'\n    runs-on: ubuntu-26.04\n    permissions:\n      contents: read\n    timeout-minutes: 10\n    needs:\n      - info\n      - pytest-partial\n    steps:\n      - name: Check out code from GitHub\n        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1\n        with:\n          persist-credentials: false\n      - name: Download all coverage artifacts\n        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2\n        with:\n          pattern: coverage-*\n      - name: Upload coverage to Codecov\n        if: needs.info.outputs.test_full_suite == 'false'\n        uses: codecov/codecov-action@303a32d7a59b442fa8d48b6a1cc6825c09c847a5 # v7.1.1\n        with:\n          fail_ci_if_error: true\n          token: ${{ secrets.CODECOV_TOKEN }} # zizmor: ignore[secrets-outside-env]\n\n  upload-test-results:\n    name: Upload test results to Codecov\n    runs-on: ubuntu-26.04\n    needs:\n      - info\n      - pytest-partial\n      - pytest-full\n      - pytest-postgres\n      - pytest-mariadb\n    timeout-minutes: 10\n    permissions:\n      id-token: write # For Codecov OIDC upload\n    # codecov/test-results-action currently doesn't support tokenless uploads\n    # therefore we can't run it on forks\n    if: |\n      (github.event_name != 'pull_request' || !github.event.pull_request.head.repo.fork)\n      && needs.info.outputs.skip_coverage != 'true' && !cancelled()\n    steps:\n      - name: Download all coverage artifacts\n        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2\n        with:\n          pattern: test-results-*\n      - name: Upload test results to Codecov\n        uses: codecov/codecov-action@303a32d7a59b442fa8d48b6a1cc6825c09c847a5 # v7.1.1\n        with:\n          report_type: test_results\n          fail_ci_if_error: true\n          verbose: true\n          use_oidc: true\n"
+ },
+ "jobs": [
+  {
+   "id": 124797189946,
+   "run_id": 41289361229,
+   "name": "Collect information & changes data",
+   "status": "completed",
+   "conclusion": "success",
+   "labels": [
+    "ubuntu-26.04"
+   ],
+   "runner_name": "GitHub Actions 1005087417",
+   "html_url": "https://github.com/home-assistant/core/actions/runs/41289361229/job/124797189946",
+   "created_at": "2026-11-01T09:33:27Z",
+   "started_at": "2026-11-01T09:33:29Z",
+   "completed_at": "2026-11-01T09:33:47Z",
+   "steps": [
+    {
+     "number": 1,
+     "name": "Set up job",
+     "status": "completed",
+     "conclusion": "success"
+    },
+    {
+     "number": 2,
+     "name": "Check out code from GitHub",
+     "status": "completed",
+     "conclusion": "success"
+    },
+    {
+     "number": 3,
+     "name": "Generate partial Python venv restore key",
+     "status": "completed",
+     "conclusion": "success"
+    },
+    {
+     "number": 4,
+     "name": "Filter for core changes",
+     "status": "completed",
+     "conclusion": "success"
+    },
+    {
+     "number": 5,
+     "name": "Create a list of integrations to filter for changes",
+     "status": "completed",
+     "conclusion": "success"
+    },
+    {
+     "number": 6,
+     "name": "Filter for integration changes",
+     "status": "completed",
+     "conclusion": "success"
+    },
+    {
+     "number": 7,
+     "name": "Collect additional information",
+     "status": "completed",
+     "conclusion": "success"
+    },
+    {
+     "number": 14,
+     "name": "Post Check out code from GitHub",
+     "status": "completed",
+     "conclusion": "success"
+    },
+    {
+     "number": 15,
+     "name": "Complete job",
+     "status": "completed",
+     "conclusion": "success"
+    }
+   ]
+  },
+  {
+   "id": 124797257613,
+   "run_id": 41289361229,
+   "name": "Check copilot instructions",
+   "status": "completed",
+   "conclusion": "success",
+   "labels": [
+    "ubuntu-26.04"
+   ],
+   "runner_name": "GitHub Actions 1005087419",
+   "html_url": "https://github.com/home-assistant/core/actions/runs/41289361229/job/124797257613",
+   "created_at": "2026-11-01T09:33:47Z",
+   "started_at": "2026-11-01T09:33:49Z",
+   "completed_at": "2026-11-01T09:34:21Z",
+   "steps": [
+    {
+     "number": 1,
+     "name": "Set up job",
+     "status": "completed",
+     "conclusion": "success"
+    },
+    {
+     "number": 2,
+     "name": "Check out code from GitHub",
+     "status": "completed",
+     "conclusion": "success"
+    },
+    {
+     "number": 3,
+     "name": "Set up Python",
+     "status": "completed",
+     "conclusion": "success"
+    },
+    {
+     "number": 4,
+     "name": "Run gen_copilot_instructions.py",
+     "status": "completed",
+     "conclusion": "success"
+    },
+    {
+     "number": 7,
+     "name": "Post Set up Python",
+     "status": "completed",
+     "conclusion": "success"
+    },
+    {
+     "number": 8,
+     "name": "Post Check out code from GitHub",
+     "status": "completed",
+     "conclusion": "success"
+    },
+    {
+     "number": 9,
+     "name": "Complete job",
+     "status": "completed",
+     "conclusion": "success"
+    }
+   ]
+  },
+  {
+   "id": 124797257618,
+   "run_id": 41289361229,
+   "name": "Build hassfest package",
+   "status": "completed",
+   "conclusion": "success",
+   "labels": [
+    "ubuntu-26.04"
+   ],
+   "runner_name": "GitHub Actions 1005087421",
+   "html_url": "https://github.com/home-assistant/core/actions/runs/41289361229/job/124797257618",
+   "created_at": "2026-11-01T09:33:47Z",
+   "started_at": "2026-11-01T09:33:49Z",
+   "completed_at": "2026-11-01T09:34:25Z",
+   "steps": [
+    {
+     "number": 1,
+     "name": "Set up job",
+     "status": "completed",
+     "conclusion": "success"
+    },
+    {
+     "number": 2,
+     "name": "Check out code from GitHub",
+     "status": "completed",
+     "conclusion": "success"
+    },
+    {
+     "number": 3,
+     "name": "Set up Python",
+     "status": "completed",
+     "conclusion": "success"
+    },
+    {
+     "number": 4,
+     "name": "Build hassfest source distribution and wheel",
+     "status": "completed",
+     "conclusion": "success"
+    },
+    {
+     "number": 5,
+     "name": "Install wheel in a clean environment",
+     "status": "completed",
+     "conclusion": "success"
+    },
+    {
+     "number": 6,
+     "name": "Check installed package outside the checkout",
+     "status": "completed",
+     "conclusion": "success"
+    },
+    {
+     "number": 11,
+     "name": "Post Set up Python",
+     "status": "completed",
+     "conclusion": "success"
+    },
+    {
+     "number": 12,
+     "name": "Post Check out code from GitHub",
+     "status": "completed",
+     "conclusion": "success"
+    },
+    {
+     "number": 13,
+     "name": "Complete job",
+     "status": "completed",
+     "conclusion": "success"
+    }
+   ]
+  },
+  {
+   "id": 124797257620,
+   "run_id": 41289361229,
+   "name": "Check recorder database versions",
+   "status": "completed",
+   "conclusion": "success",
+   "labels": [
+    "ubuntu-26.04"
+   ],
+   "runner_name": "GitHub Actions 1005087418",
+   "html_url": "https://github.com/home-assistant/core/actions/runs/41289361229/job/124797257620",
+   "created_at": "2026-11-01T09:33:47Z",
+   "started_at": "2026-11-01T09:33:49Z",
+   "completed_at": "2026-11-01T09:34:16Z",
+   "steps": [
+    {
+     "number": 1,
+     "name": "Set up job",
+     "status": "completed",
+     "conclusion": "success"
+    },
+    {
+     "number": 2,
+     "name": "Check out code from GitHub",
+     "status": "completed",
+     "conclusion": "success"
+    },
+    {
+     "number": 3,
+     "name": "Set up Python",
+     "status": "completed",
+     "conclusion": "success"
+    },
+    {
+     "number": 4,
+     "name": "Check MariaDB and MySQL versions are up to date",
+     "status": "completed",
+     "conclusion": "success"
+    },
+    {
+     "number": 7,
+     "name": "Post Set up Python",
+     "status": "completed",
+     "conclusion": "success"
+    },
+    {
+     "number": 8,
+     "name": "Post Check out code from GitHub",
+     "status": "completed",
+     "conclusion": "success"
+    },
+    {
+     "number": 9,
+     "name": "Complete job",
+     "status": "completed",
+     "conclusion": "success"
+    }
+   ]
+  },
+  {
+   "id": 124797257656,
+   "run_id": 41289361229,
+   "name": "Build pytest-home-assistant package",
+   "status": "completed",
+   "conclusion": "success",
+   "labels": [
+    "ubuntu-26.04"
+   ],
+   "runner_name": "GitHub Actions 1005087422",
+   "html_url": "https://github.com/home-assistant/core/actions/runs/41289361229/job/124797257656",
+   "created_at": "2026-11-01T09:33:47Z",
+   "started_at": "2026-11-01T09:33:49Z",
+   "completed_at": "2026-11-01T09:34:44Z",
+   "steps": [
+    {
+     "number": 1,
+     "name": "Set up job",
+     "status": "completed",
+     "conclusion": "success"
+    },
+    {
+     "number": 2,
+     "name": "Check out code from GitHub",
+     "status": "completed",
+     "conclusion": "success"
+    },
+    {
+     "number": 3,
+     "name": "Set up Python",
+     "status": "completed",
+     "conclusion": "success"
+    },
+    {
+     "number": 4,
+     "name": "Build source distribution and wheel",
+     "status": "completed",
+     "conclusion": "success"
+    },
+    {
+     "number": 5,
+     "name": "Install wheel and matching Home Assistant in a clean environment",
+     "status": "completed",
+     "conclusion": "success"
+    },
+    {
+     "number": 6,
+     "name": "Test installed package outside the checkout",
+     "status": "completed",
+     "conclusion": "success"
+    },
+    {
+     "number": 7,
+     "name": "Test optional helpers and fixtures",
+     "status": "completed",
+     "conclusion": "success"
+    },
+    {
+     "number": 13,
+     "name": "Post Set up Python",
+     "status": "completed",
+     "conclusion": "success"
+    },
+    {
+     "number": 14,
+     "name": "Post Check out code from GitHub",
+     "status": "completed",
+     "conclusion": "success"
+    },
+    {
+     "number": 15,
+     "name": "Complete job",
+     "status": "completed",
+     "conclusion": "success"
+    }
+   ]
+  },
+  {
+   "id": 124797257670,
+   "run_id": 41289361229,
+   "name": "Run prek checks",
+   "status": "completed",
+   "conclusion": "success",
+   "labels": [
+    "ubuntu-26.04"
+   ],
+   "runner_name": "GitHub Actions 1005087420",
+   "html_url": "https://github.com/home-assistant/core/actions/runs/41289361229/job/124797257670",
+   "created_at": "2026-11-01T09:33:47Z",
+   "started_at": "2026-11-01T09:33:49Z",
+   "completed_at": "2026-11-01T09:35:06Z",
+   "steps": [
+    {
+     "number": 1,
+     "name": "Set up job",
+     "status": "completed",
+     "conclusion": "success"
+    },
+    {
+     "number": 2,
+     "name": "Check out code from GitHub",
+     "status": "completed",
+     "conclusion": "success"
+    },
+    {
+     "number": 3,
+     "name": "Register problem matchers",
+     "status": "completed",
+     "conclusion": "success"
+    },
+    {
+     "number": 4,
+     "name": "Run prek",
+     "status": "completed",
+     "conclusion": "success"
+    },
+    {
+     "number": 7,
+     "name": "Post Run prek",
+     "status": "completed",
+     "conclusion": "success"
+    },
+    {
+     "number": 8,
+     "name": "Post Check out code from GitHub",
+     "status": "completed",
+     "conclusion": "success"
+    },
+    {
+     "number": 9,
+     "name": "Complete job",
+     "status": "completed",
+     "conclusion": "success"
+    }
+   ]
+  },
+  {
+   "id": 124797257671,
+   "run_id": 41289361229,
+   "name": "Check Dockerfile.dev",
+   "status": "completed",
+   "conclusion": "success",
+   "labels": [
+    "ubuntu-26.04"
+   ],
+   "runner_name": "GitHub Actions 1005087423",
+   "html_url": "https://github.com/home-assistant/core/actions/runs/41289361229/job/124797257671",
+   "created_at": "2026-11-01T09:33:47Z",
+   "started_at": "2026-11-01T09:33:49Z",
+   "completed_at": "2026-11-01T09:34:09Z",
+   "steps": [
+    {
+     "number": 1,
+     "name": "Set up job",
+     "status": "completed",
+     "conclusion": "success"
+    },
+    {
+     "number": 2,
+     "name": "Build hadolint/hadolint-action@06be81baf89a55ffd0e24b8f04a4185738dd3387",
+     "status": "completed",
+     "conclusion": "success"
+    },
+    {
+     "number": 3,
+     "name": "Check out code from GitHub",
+     "status": "completed",
+     "conclusion": "success"
+    },
+    {
+     "number": 4,
+     "name": "Register hadolint problem matcher",
+     "status": "completed",
+     "conclusion": "success"
+    },
+    {
+     "number": 5,
+     "name": "Check Dockerfile.dev",
+     "status": "completed",
+     "conclusion": "success"
+    },
+    {
+     "number": 10,
+     "name": "Post Check out code from GitHub",
+     "status": "completed",
+     "conclusion": "success"
+    },
+    {
+     "number": 11,
+     "name": "Complete job",
+     "status": "completed",
+     "conclusion": "success"
+    }
+   ]
+  },
+  {
+   "id": 124797257680,
+   "run_id": 41289361229,
+   "name": "Build pylint-home-assistant package",
+   "status": "completed",
+   "conclusion": "success",
+   "labels": [
+    "ubuntu-26.04"
+   ],
+   "runner_name": "GitHub Actions 1005087424",
+   "html_url": "https://github.com/home-assistant/core/actions/runs/41289361229/job/124797257680",
+   "created_at": "2026-11-01T09:33:47Z",
+   "started_at": "2026-11-01T09:33:49Z",
+   "completed_at": "2026-11-01T09:34:23Z",
+   "steps": [
+    {
+     "number": 1,
+     "name": "Set up job",
+     "status": "completed",
+     "conclusion": "success"
+    },
+    {
+     "number": 2,
+     "name": "Check out code from GitHub",
+     "status": "completed",
+     "conclusion": "success"
+    },
+    {
+     "number": 3,
+     "name": "Set up Python",
+     "status": "completed",
+     "conclusion": "success"
+    },
+    {
+     "number": 4,
+     "name": "Build source distribution and wheel",
+     "status": "completed",
+     "conclusion": "success"
+    },
+    {
+     "number": 5,
+     "name": "Install wheel in a clean environment",
+     "status": "completed",
+     "conclusion": "success"
+    },
+    {
+     "number": 6,
+     "name": "Load installed Pylint plugin outside the checkout",
+     "status": "completed",
+     "conclusion": "success"
+    },
+    {
+     "number": 11,
+     "name": "Post Set up Python",
+     "status": "completed",
+     "conclusion": "success"
+    },
+    {
+     "number": 12,
+     "name": "Post Check out code from GitHub",
+     "status": "completed",
+     "conclusion": "success"
+    },
+    {
+     "number": 13,
+     "name": "Complete job",
+     "status": "completed",
+     "conclusion": "success"
+    }
+   ]
+  },
+  {
+   "id": 124797257704,
+   "run_id": 41289361229,
+   "name": "Check Dockerfile",
+   "status": "completed",
+   "conclusion": "success",
+   "labels": [
+    "ubuntu-26.04"
+   ],
+   "runner_name": "GitHub Actions 1005087425",
+   "html_url": "https://github.com/home-assistant/core/actions/runs/41289361229/job/124797257704",
+   "created_at": "2026-11-01T09:33:47Z",
+   "started_at": "2026-11-01T09:33:49Z",
+   "completed_at": "2026-11-01T09:34:10Z",
+   "steps": [
+    {
+     "number": 1,
+     "name": "Set up job",
+     "status": "completed",
+     "conclusion": "success"
+    },
+    {
+     "number": 2,
+     "name": "Build hadolint/hadolint-action@06be81baf89a55ffd0e24b8f04a4185738dd3387",
+     "status": "completed",
+     "conclusion": "success"
+    },
+    {
+     "number": 3,
+     "name": "Check out code from GitHub",
+     "status": "completed",
+     "conclusion": "success"
+    },
+    {
+     "number": 4,
+     "name": "Register hadolint problem matcher",
+     "status": "completed",
+     "conclusion": "success"
+    },
+    {
+     "number": 5,
+     "name": "Check Dockerfile",
+     "status": "completed",
+     "conclusion": "success"
+    },
+    {
+     "number": 10,
+     "name": "Post Check out code from GitHub",
+     "status": "completed",
+     "conclusion": "success"
+    },
+    {
+     "number": 11,
+     "name": "Complete job",
+     "status": "completed",
+     "conclusion": "success"
+    }
+   ]
+  },
+  {
+   "id": 124797257744,
+   "run_id": 41289361229,
+   "name": "Check script/hassfest/docker/Dockerfile",
+   "status": "completed",
+   "conclusion": "success",
+   "labels": [
+    "ubuntu-26.04"
+   ],
+   "runner_name": "GitHub Actions 1005087426",
+   "html_url": "https://github.com/home-assistant/core/actions/runs/41289361229/job/124797257744",
+   "created_at": "2026-11-01T09:33:47Z",
+   "started_at": "2026-11-01T09:33:49Z",
+   "completed_at": "2026-11-01T09:34:10Z",
+   "steps": [
+    {
+     "number": 1,
+     "name": "Set up job",
+     "status": "completed",
+     "conclusion": "success"
+    },
+    {
+     "number": 2,
+     "name": "Build hadolint/hadolint-action@06be81baf89a55ffd0e24b8f04a4185738dd3387",
+     "status": "completed",
+     "conclusion": "success"
+    },
+    {
+     "number": 3,
+     "name": "Check out code from GitHub",
+     "status": "completed",
+     "conclusion": "success"
+    },
+    {
+     "number": 4,
+     "name": "Register hadolint problem matcher",
+     "status": "completed",
+     "conclusion": "success"
+    },
+    {
+     "number": 5,
+     "name": "Check script/hassfest/docker/Dockerfile",
+     "status": "completed",
+     "conclusion": "success"
+    },
+    {
+     "number": 10,
+     "name": "Post Check out code from GitHub",
+     "status": "completed",
+     "conclusion": "success"
+    },
+    {
+     "number": 11,
+     "name": "Complete job",
+     "status": "completed",
+     "conclusion": "success"
+    }
+   ]
+  },
+  {
+   "id": 124797257786,
+   "run_id": 41289361229,
+   "name": "Prepare dependencies (3.14.10)",
+   "status": "completed",
+   "conclusion": "success",
+   "labels": [
+    "ubuntu-26.04"
+   ],
+   "runner_name": "GitHub Actions 1005087427",
+   "html_url": "https://github.com/home-assistant/core/actions/runs/41289361229/job/124797257786",
+   "created_at": "2026-11-01T09:33:47Z",
+   "started_at": "2026-11-01T09:33:49Z",
+   "completed_at": "2026-11-01T09:34:26Z",
+   "steps": [
+    {
+     "number": 1,
+     "name": "Set up job",
+     "status": "completed",
+     "conclusion": "success"
+    },
+    {
+     "number": 2,
+     "name": "Check out code from GitHub",
+     "status": "completed",
+     "conclusion": "success"
+    },
+    {
+     "number": 3,
+     "name": "Set up Python 3.14.10 and build venv",
+     "status": "completed",
+     "conclusion": "success"
+    },
+    {
+     "number": 4,
+     "name": "Dump pip freeze",
+     "status": "completed",
+     "conclusion": "success"
+    },
+    {
+     "number": 5,
+     "name": "Upload pip_freeze artifact",
+     "status": "completed",
+     "conclusion": "success"
+    },
+    {
+     "number": 6,
+     "name": "Remove pip_freeze",
+     "status": "completed",
+     "conclusion": "success"
+    },
+    {
+     "number": 7,
+     "name": "Check dirty",
+     "status": "completed",
+     "conclusion": "success"
+    },
+    {
+     "number": 13,
+     "name": "Post Set up Python 3.14.10 and build venv",
+     "status": "completed",
+     "conclusion": "success"
+    },
+    {
+     "number": 14,
+     "name": "Post Check out code from GitHub",
+     "status": "completed",
+     "conclusion": "success"
+    },
+    {
+     "number": 15,
+     "name": "Complete job",
+     "status": "completed",
+     "conclusion": "success"
+    }
+   ]
+  },
+  {
+   "id": 124797386342,
+   "run_id": 41289361229,
+   "name": "Split tests for full run",
+   "status": "completed",
+   "conclusion": "success",
+   "labels": [
+    "ubuntu-26.04"
+   ],
+   "runner_name": "GitHub Actions 1005087458",
+   "html_url": "https://github.com/home-assistant/core/actions/runs/41289361229/job/124797386342",
+   "created_at": "2026-11-01T09:34:26Z",
+   "started_at": "2026-11-01T09:34:28Z",
+   "completed_at": "2026-11-01T09:35:40Z",
+   "steps": [
+    {
+     "number": 1,
+     "name": "Set up job",
+     "status": "completed",
+     "conclusion": "success"
+    },
+    {
+     "number": 2,
+     "name": "Check out code from GitHub",
+     "status": "completed",
+     "conclusion": "success"
+    },
+    {
+     "number": 3,
+     "name": "Install additional OS dependencies",
+     "status": "completed",
+     "conclusion": "success"
+    },
+    {
+     "number": 4,
+     "name": "Set up Python and restore venv",
+     "status": "completed",
+     "conclusion": "success"
+    },
+    {
+     "number": 5,
+     "name": "Restore pytest test counts cache",
+     "status": "completed",
+     "conclusion": "success"
+    },
+    {
+     "number": 6,
+     "name": "Run split_tests.py",
+     "status": "completed",
+     "conclusion": "success"
+    },
+    {
+     "number": 7,
+     "name": "Hash pytest test counts cache",
+     "status": "completed",
+     "conclusion": "success"
+    },
+    {
+     "number": 8,
+     "name": "Save pytest test counts cache",
+     "status": "completed",
+     "conclusion": "success"
+    },
+    {
+     "number": 9,
+     "name": "Upload pytest_buckets",
+     "status": "completed",
+     "conclusion": "success"
+    },
+    {
+     "number": 17,
+     "name": "Post Set up Python and restore venv",
+     "status": "completed",
+     "conclusion": "success"
+    },
+    {
+     "number": 18,
+     "name": "Post Check out code from GitHub",
+     "status": "completed",
+     "conclusion": "success"
+    },
+    {
+     "number": 19,
+     "name": "Complete job",
+     "status": "completed",
+     "conclusion": "success"
+    }
+   ]
+  },
+  {
+   "id": 124797386371,
+   "run_id": 41289361229,
+   "name": "Check hassfest",
+   "status": "completed",
+   "conclusion": "success",
+   "labels": [
+    "ubuntu-26.04"
+   ],
+   "runner_name": "GitHub Actions 1005087459",
+   "html_url": "https://github.com/home-assistant/core/actions/runs/41289361229/job/124797386371",
+   "created_at": "2026-11-01T09:34:26Z",
+   "started_at": "2026-11-01T09:34:28Z",
+   "completed_at": "2026-11-01T09:35:30Z",
+   "steps": [
+    {
+     "number": 1,
+     "name": "Set up job",
+     "status": "completed",
+     "conclusion": "success"
+    },
+    {
+     "number": 2,
+     "name": "Check out code from GitHub",
+     "status": "completed",
+     "conclusion": "success"
+    },
+    {
+     "number": 3,
+     "name": "Install additional OS dependencies",
+     "status": "completed",
+     "conclusion": "success"
+    },
+    {
+     "number": 4,
+     "name": "Set up Python and restore venv",
+     "status": "completed",
+     "conclusion": "success"
+    },
+    {
+     "number": 5,
+     "name": "Test hassfest package",
+     "status": "completed",
+     "conclusion": "success"
+    },
+    {
+     "number": 6,
+     "name": "Run hassfest",
+     "status": "completed",
+     "conclusion": "success"
+    },
+    {
+     "number": 11,
+     "name": "Post Set up Python and restore venv",
+     "status": "completed",
+     "conclusion": "success"
+    },
+    {
+     "number": 12,
+     "name": "Post Check out code from GitHub",
+     "status": "completed",
+     "conclusion": "success"
+    },
+    {
+     "number": 13,
+     "name": "Complete job",
+     "status": "completed",
+     "conclusion": "success"
+    }
+   ]
+  },
+  {
+   "id": 124797386385,
+   "run_id": 41289361229,
+   "name": "Check mypy",
+   "status": "completed",
+   "conclusion": "success",
+   "labels": [
+    "ubuntu-26.04"
+   ],
+   "runner_name": "GitHub Actions 1005087457",
+   "html_url": "https://github.com/home-assistant/core/actions/runs/41289361229/job/124797386385",
+   "created_at": "2026-11-01T09:34:26Z",
+   "started_at": "2026-11-01T09:34:28Z",
+   "completed_at": "2026-11-01T09:35:10Z",
+   "steps": [
+    {
+     "number": 1,
+     "name": "Set up job",
+     "status": "completed",
+     "conclusion": "success"
+    },
+    {
+     "number": 2,
+     "name": "Check out code from GitHub",
+     "status": "completed",
+     "conclusion": "success"
+    },
+    {
+     "number": 3,
+     "name": "Generate partial mypy restore key",
+     "status": "completed",
+     "conclusion": "success"
+    },
+    {
+     "number": 4,
+     "name": "Set up Python and restore venv",
+     "status": "completed",
+     "conclusion": "success"
+    },
+    {
+     "number": 5,
+     "name": "Restore mypy cache",
+     "status": "completed",
+     "conclusion": "success"
+    },
+    {
+     "number": 6,
+     "name": "Register mypy problem matcher",
+     "status": "completed",
+     "conclusion": "success"
+    },
+    {
+     "number": 7,
+     "name": "Run mypy (fully)",
+     "status": "completed",
+     "conclusion": "success"
+    },
+    {
+     "number": 8,
+     "name": "Run mypy (partially)",
+     "status": "completed",
+     "conclusion": "skipped"
+    },
+    {
+     "number": 14,
+     "name": "Post Restore mypy cache",
+     "status": "completed",
+     "conclusion": "success"
+    },
+    {
+     "number": 15,
+     "name": "Post Set up Python and restore venv",
+     "status": "completed",
+     "conclusion": "success"
+    },
+    {
+     "number": 16,
+     "name": "Post Check out code from GitHub",
+     "status": "completed",
+     "conclusion": "success"
+    },
+    {
+     "number": 17,
+     "name": "Complete job",
+     "status": "completed",
+     "conclusion": "success"
+    }
+   ]
+  },
+  {
+   "id": 124797386392,
+   "run_id": 41289361229,
+   "name": "Check pylint on tests",
+   "status": "completed",
+   "conclusion": "cancelled",
+   "labels": [
+    "ubuntu-26.04"
+   ],
+   "runner_name": "GitHub Actions 1005087456",
+   "html_url": "https://github.com/home-assistant/core/actions/runs/41289361229/job/124797386392",
+   "created_at": "2026-11-01T09:34:26Z",
+   "started_at": "2026-11-01T09:34:28Z",
+   "completed_at": "2026-11-01T09:37:16Z",
+   "steps": [
+    {
+     "number": 1,
+     "name": "Set up job",
+     "status": "completed",
+     "conclusion": "success"
+    },
+    {
+     "number": 2,
+     "name": "Check out code from GitHub",
+     "status": "completed",
+     "conclusion": "success"
+    },
+    {
+     "number": 3,
+     "name": "Set up Python and restore venv",
+     "status": "completed",
+     "conclusion": "success"
+    },
+    {
+     "number": 4,
+     "name": "Register pylint problem matcher",
+     "status": "completed",
+     "conclusion": "success"
+    },
+    {
+     "number": 5,
+     "name": "Run pylint (fully)",
+     "status": "completed",
+     "conclusion": "cancelled"
+    },
+    {
+     "number": 6,
+     "name": "Run pylint (partially)",
+     "status": "completed",
+     "conclusion": "skipped"
+    },
+    {
+     "number": 11,
+     "name": "Post Set up Python and restore venv",
+     "status": "completed",
+     "conclusion": "success"
+    },
+    {
+     "number": 12,
+     "name": "Post Check out code from GitHub",
+     "status": "completed",
+     "conclusion": "success"
+    },
+    {
+     "number": 13,
+     "name": "Complete job",
+     "status": "completed",
+     "conclusion": "success"
+    }
+   ]
+  },
+  {
+   "id": 124797386401,
+   "run_id": 41289361229,
+   "name": "Check all requirements",
+   "status": "completed",
+   "conclusion": "success",
+   "labels": [
+    "ubuntu-26.04"
+   ],
+   "runner_name": "GitHub Actions 1005087460",
+   "html_url": "https://github.com/home-assistant/core/actions/runs/41289361229/job/124797386401",
+   "created_at": "2026-11-01T09:34:26Z",
+   "started_at": "2026-11-01T09:34:28Z",
+   "completed_at": "2026-11-01T09:35:06Z",
+   "steps": [
+    {
+     "number": 1,
+     "name": "Set up job",
+     "status": "completed",
+     "conclusion": "success"
+    },
+    {
+     "number": 2,
+     "name": "Check out code from GitHub",
+     "status": "completed",
+     "conclusion": "success"
+    },
+    {
+     "number": 3,
+     "name": "Set up Python and restore venv",
+     "status": "completed",
+     "conclusion": "success"
+    },
+    {
+     "number": 4,
+     "name": "Run gen_requirements_all.py",
+     "status": "completed",
+     "conclusion": "success"
+    },
+    {
+     "number": 7,
+     "name": "Post Set up Python and restore venv",
+     "status": "completed",
+     "conclusion": "success"
+    },
+    {
+     "number": 8,
+     "name": "Post Check out code from GitHub",
+     "status": "completed",
+     "conclusion": "success"
+    },
+    {
+     "number": 9,
+     "name": "Complete job",
+     "status": "completed",
+     "conclusion": "success"
+    }
+   ]
+  },
+  {
+   "id": 124797386459,
+   "run_id": 41289361229,
+   "name": "Check pylint",
+   "status": "completed",
+   "conclusion": "cancelled",
+   "labels": [
+    "ubuntu-26.04"
+   ],
+   "runner_name": "GitHub Actions 1005087461",
+   "html_url": "https://github.com/home-assistant/core/actions/runs/41289361229/job/124797386459",
+   "created_at": "2026-11-01T09:34:26Z",
+   "started_at": "2026-11-01T09:34:28Z",
+   "completed_at": "2026-11-01T09:38:29Z",
+   "steps": [
+    {
+     "number": 1,
+     "name": "Set up job",
+     "status": "completed",
+     "conclusion": "success"
+    },
+    {
+     "number": 2,
+     "name": "Check out code from GitHub",
+     "status": "completed",
+     "conclusion": "success"
+    },
+    {
+     "number": 3,
+     "name": "Set up Python and restore venv",
+     "status": "completed",
+     "conclusion": "success"
+    },
+    {
+     "number": 4,
+     "name": "Register pylint problem matcher",
+     "status": "completed",
+     "conclusion": "success"
+    },
+    {
+     "number": 5,
+     "name": "Run pylint (fully)",
+     "status": "completed",
+     "conclusion": "cancelled"
+    },
+    {
+     "number": 6,
+     "name": "Run pylint (partially)",
+     "status": "completed",
+     "conclusion": "skipped"
+    },
+    {
+     "number": 11,
+     "name": "Post Set up Python and restore venv",
+     "status": "completed",
+     "conclusion": "success"
+    },
+    {
+     "number": 12,
+     "name": "Post Check out code from GitHub",
+     "status": "completed",
+     "conclusion": "success"
+    },
+    {
+     "number": 13,
+     "name": "Complete job",
+     "status": "completed",
+     "conclusion": "success"
+    }
+   ]
+  },
+  {
+   "id": 124797387217,
+   "run_id": 41289361229,
+   "name": "Dependency review",
+   "status": "completed",
+   "conclusion": "skipped",
+   "labels": [
+    "ubuntu-26.04"
+   ],
+   "runner_name": null,
+   "html_url": "https://github.com/home-assistant/core/actions/runs/41289361229/job/124797387217",
+   "created_at": "2026-11-01T09:34:27Z",
+   "started_at": "2026-11-01T09:34:27Z",
+   "completed_at": "2026-11-01T09:34:26Z",
+   "steps": []
+  },
+  {
+   "id": 124797387223,
+   "run_id": 41289361229,
+   "name": "Audit licenses",
+   "status": "completed",
+   "conclusion": "skipped",
+   "labels": [
+    "ubuntu-26.04"
+   ],
+   "runner_name": null,
+   "html_url": "https://github.com/home-assistant/core/actions/runs/41289361229/job/124797387223",
+   "created_at": "2026-11-01T09:34:27Z",
+   "started_at": "2026-11-01T09:34:27Z",
+   "completed_at": "2026-11-01T09:34:26Z",
+   "steps": []
+  },
+  {
+   "id": 124797387356,
+   "run_id": 41289361229,
+   "name": "Run tests Python ${{ matrix.python-version }} (${{ matrix.group }})",
+   "status": "completed",
+   "conclusion": "skipped",
+   "labels": [
+    "ubuntu-26.04"
+   ],
+   "runner_name": null,
+   "html_url": "https://github.com/home-assistant/core/actions/runs/41289361229/job/124797387356",
+   "created_at": "2026-11-01T09:34:27Z",
+   "started_at": "2026-11-01T09:34:27Z",
+   "completed_at": "2026-11-01T09:34:26Z",
+   "steps": []
+  },
+  {
+   "id": 124797387446,
+   "run_id": 41289361229,
+   "name": "Run benchmarks",
+   "status": "completed",
+   "conclusion": "skipped",
+   "labels": [
+    "ubuntu-26.04"
+   ],
+   "runner_name": null,
+   "html_url": "https://github.com/home-assistant/core/actions/runs/41289361229/job/124797387446",
+   "created_at": "2026-11-01T09:34:27Z",
+   "started_at": "2026-11-01T09:34:27Z",
+   "completed_at": "2026-11-01T09:34:26Z",
+   "steps": []
+  },
+  {
+   "id": 124797388038,
+   "run_id": 41289361229,
+   "name": "Upload test coverage to Codecov (partial suite)",
+   "status": "completed",
+   "conclusion": "skipped",
+   "labels": [
+    "ubuntu-26.04"
+   ],
+   "runner_name": null,
+   "html_url": "https://github.com/home-assistant/core/actions/runs/41289361229/job/124797388038",
+   "created_at": "2026-11-01T09:34:27Z",
+   "started_at": "2026-11-01T09:34:27Z",
+   "completed_at": "2026-11-01T09:34:26Z",
+   "steps": []
+  },
+  {
+   "id": 124797614241,
+   "run_id": 41289361229,
+   "name": "Run SQLite 3.40.1 tests Python 3.14.10",
+   "status": "completed",
+   "conclusion": "cancelled",
+   "labels": [
+    "ubuntu-26.04"
+   ],
+   "runner_name": "GitHub Actions 1005087596",
+   "html_url": "https://github.com/home-assistant/core/actions/runs/41289361229/job/124797614241",
+   "created_at": "2026-11-01T09:35:31Z",
+   "started_at": "2026-11-01T09:35:32Z",
+   "completed_at": "2026-11-01T09:38:09Z",
+   "steps": [
+    {
+     "number": 1,
+     "name": "Set up job",
+     "status": "completed",
+     "conclusion": "success"
+    },
+    {
+     "number": 2,
+     "name": "Check out code from GitHub",
+     "status": "completed",
+     "conclusion": "success"
+    },
+    {
+     "number": 3,
+     "name": "Install additional OS dependencies",
+     "status": "completed",
+     "conclusion": "success"
+    },
+    {
+     "number": 4,
+     "name": "Set up Python 3.14.10 and restore venv",
+     "status": "completed",
+     "conclusion": "success"
+    },
+    {
+     "number": 5,
+     "name": "Register Python problem matcher",
+     "status": "completed",
+     "conclusion": "success"
+    },
+    {
+     "number": 6,
+     "name": "Restore vendored sqlite3 wheel cache",
+     "status": "completed",
+     "conclusion": "success"
+    },
+    {
+     "number": 7,
+     "name": "Install sqlite3 module with SQLite 3.40.1",
+     "status": "completed",
+     "conclusion": "success"
+    },
+    {
+     "number": 8,
+     "name": "Compile English translations",
+     "status": "completed",
+     "conclusion": "success"
+    },
+    {
+     "number": 9,
+     "name": "Run pytest (partially)",
+     "status": "completed",
+     "conclusion": "cancelled"
+    },
+    {
+     "number": 10,
+     "name": "Upload pytest output",
+     "status": "completed",
+     "conclusion": "skipped"
+    },
+    {
+     "number": 11,
+     "name": "Check dirty",
+     "status": "completed",
+     "conclusion": "skipped"
+    },
+    {
+     "number": 20,
+     "name": "Post Restore vendored sqlite3 wheel cache",
+     "status": "completed",
+     "conclusion": "skipped"
+    },
+    {
+     "number": 21,
+     "name": "Post Set up Python 3.14.10 and restore venv",
+     "status": "completed",
+     "conclusion": "success"
+    },
+    {
+     "number": 22,
+     "name": "Post Check out code from GitHub",
+     "status": "completed",
+     "conclusion": "success"
+    },
+    {
+     "number": 23,
+     "name": "Complete job",
+     "status": "completed",
+     "conclusion": "success"
+    }
+   ]
+  },
+  {
+   "id": 124797614249,
+   "run_id": 41289361229,
+   "name": "Run mariadb:11.4.9 tests Python 3.14.10",
+   "status": "completed",
+   "conclusion": "cancelled",
+   "labels": [
+    "ubuntu-26.04"
+   ],
+   "runner_name": "GitHub Actions 1005087597",
+   "html_url": "https://github.com/home-assistant/core/actions/runs/41289361229/job/124797614249",
+   "created_at": "2026-11-01T09:35:31Z",
+   "started_at": "2026-11-01T09:35:32Z",
+   "completed_at": "2026-11-01T09:38:19Z",
+   "steps": [
+    {
+     "number": 1,
+     "name": "Set up job",
+     "status": "completed",
+     "conclusion": "success"
+    },
+    {
+     "number": 2,
+     "name": "Initialize containers",
+     "status": "completed",
+     "conclusion": "success"
+    },
+    {
+     "number": 3,
+     "name": "Check out code from GitHub",
+     "status": "completed",
+     "conclusion": "success"
+    },
+    {
+     "number": 4,
+     "name": "Install additional OS dependencies",
+     "status": "completed",
+     "conclusion": "success"
+    },
+    {
+     "number": 5,
+     "name": "Set up Python 3.14.10 and restore venv",
+     "status": "completed",
+     "conclusion": "success"
+    },
+    {
+     "number": 6,
+     "name": "Register Python problem matcher",
+     "status": "completed",
+     "conclusion": "success"
+    },
+    {
+     "number": 7,
+     "name": "Install SQL Python libraries",
+     "status": "completed",
+     "conclusion": "success"
+    },
+    {
+     "number": 8,
+     "name": "Compile English translations",
+     "status": "completed",
+     "conclusion": "success"
+    },
+    {
+     "number": 9,
+     "name": "Run pytest (partially)",
+     "status": "completed",
+     "conclusion": "cancelled"
+    },
+    {
+     "number": 10,
+     "name": "Upload pytest output",
+     "status": "completed",
+     "conclusion": "skipped"
+    },
+    {
+     "number": 11,
+     "name": "Upload coverage artifact",
+     "status": "completed",
+     "conclusion": "skipped"
+    },
+    {
+     "number": 12,
+     "name": "Beautify test results",
+     "status": "completed",
+     "conclusion": "skipped"
+    },
+    {
+     "number": 13,
+     "name": "Upload test results artifact",
+     "status": "completed",
+     "conclusion": "skipped"
+    },
+    {
+     "number": 14,
+     "name": "Check dirty",
+     "status": "completed",
+     "conclusion": "skipped"
+    },
+    {
+     "number": 26,
+     "name": "Post Set up Python 3.14.10 and restore venv",
+     "status": "completed",
+     "conclusion": "success"
+    },
+    {
+     "number": 27,
+     "name": "Post Check out code from GitHub",
+     "status": "completed",
+     "conclusion": "success"
+    },
+    {
+     "number": 28,
+     "name": "Stop containers",
+     "status": "completed",
+     "conclusion": "success"
+    },
+    {
+     "number": 29,
+     "name": "Complete job",
+     "status": "completed",
+     "conclusion": "success"
+    }
+   ]
+  },
+  {
+   "id": 124797614258,
+   "run_id": 41289361229,
+   "name": "Run mariadb:10.3.32 tests Python 3.14.10",
+   "status": "completed",
+   "conclusion": "cancelled",
+   "labels": [
+    "ubuntu-26.04"
+   ],
+   "runner_name": "GitHub Actions 1005087598",
+   "html_url": "https://github.com/home-assistant/core/actions/runs/41289361229/job/124797614258",
+   "created_at": "2026-11-01T09:35:31Z",
+   "started_at": "2026-11-01T09:35:32Z",
+   "completed_at": "2026-11-01T09:38:17Z",
+   "steps": [
+    {
+     "number": 1,
+     "name": "Set up job",
+     "status": "completed",
+     "conclusion": "success"
+    },
+    {
+     "number": 2,
+     "name": "Initialize containers",
+     "status": "completed",
+     "conclusion": "success"
+    },
+    {
+     "number": 3,
+     "name": "Check out code from GitHub",
+     "status": "completed",
+     "conclusion": "success"
+    },
+    {
+     "number": 4,
+     "name": "Install additional OS dependencies",
+     "status": "completed",
+     "conclusion": "success"
+    },
+    {
+     "number": 5,
+     "name": "Set up Python 3.14.10 and restore venv",
+     "status": "completed",
+     "conclusion": "success"
+    },
+    {
+     "number": 6,
+     "name": "Register Python problem matcher",
+     "status": "completed",
+     "conclusion": "success"
+    },
+    {
+     "number": 7,
+     "name": "Install SQL Python libraries",
+     "status": "completed",
+     "conclusion": "success"
+    },
+    {
+     "number": 8,
+     "name": "Compile English translations",
+     "status": "completed",
+     "conclusion": "success"
+    },
+    {
+     "number": 9,
+     "name": "Run pytest (partially)",
+     "status": "completed",
+     "conclusion": "cancelled"
+    },
+    {
+     "number": 10,
+     "name": "Upload pytest output",
+     "status": "completed",
+     "conclusion": "skipped"
+    },
+    {
+     "number": 11,
+     "name": "Upload coverage artifact",
+     "status": "completed",
+     "conclusion": "skipped"
+    },
+    {
+     "number": 12,
+     "name": "Beautify test results",
+     "status": "completed",
+     "conclusion": "skipped"
+    },
+    {
+     "number": 13,
+     "name": "Upload test results artifact",
+     "status": "completed",
+     "conclusion": "skipped"
+    },
+    {
+     "number": 14,
+     "name": "Check dirty",
+     "status": "completed",
+     "conclusion": "skipped"
+    },
+    {
+     "number": 26,
+     "name": "Post Set up Python 3.14.10 and restore venv",
+     "status": "completed",
+     "conclusion": "success"
+    },
+    {
+     "number": 27,
+     "name": "Post Check out code from GitHub",
+     "status": "completed",
+     "conclusion": "success"
+    },
+    {
+     "number": 28,
+     "name": "Stop containers",
+     "status": "completed",
+     "conclusion": "success"
+    },
+    {
+     "number": 29,
+     "name": "Complete job",
+     "status": "completed",
+     "conclusion": "success"
+    }
+   ]
+  },
+  {
+   "id": 124797614260,
+   "run_id": 41289361229,
+   "name": "Run mariadb:10.6.10 tests Python 3.14.10",
+   "status": "completed",
+   "conclusion": "cancelled",
+   "labels": [
+    "ubuntu-26.04"
+   ],
+   "runner_name": "GitHub Actions 1005087595",
+   "html_url": "https://github.com/home-assistant/core/actions/runs/41289361229/job/124797614260",
+   "created_at": "2026-11-01T09:35:31Z",
+   "started_at": "2026-11-01T09:35:32Z",
+   "completed_at": "2026-11-01T09:38:18Z",
+   "steps": [
+    {
+     "number": 1,
+     "name": "Set up job",
+     "status": "completed",
+     "conclusion": "success"
+    },
+    {
+     "number": 2,
+     "name": "Initialize containers",
+     "status": "completed",
+     "conclusion": "success"
+    },
+    {
+     "number": 3,
+     "name": "Check out code from GitHub",
+     "status": "completed",
+     "conclusion": "success"
+    },
+    {
+     "number": 4,
+     "name": "Install additional OS dependencies",
+     "status": "completed",
+     "conclusion": "success"
+    },
+    {
+     "number": 5,
+     "name": "Set up Python 3.14.10 and restore venv",
+     "status": "completed",
+     "conclusion": "success"
+    },
+    {
+     "number": 6,
+     "name": "Register Python problem matcher",
+     "status": "completed",
+     "conclusion": "success"
+    },
+    {
+     "number": 7,
+     "name": "Install SQL Python libraries",
+     "status": "completed",
+     "conclusion": "success"
+    },
+    {
+     "number": 8,
+     "name": "Compile English translations",
+     "status": "completed",
+     "conclusion": "success"
+    },
+    {
+     "number": 9,
+     "name": "Run pytest (partially)",
+     "status": "completed",
+     "conclusion": "cancelled"
+    },
+    {
+     "number": 10,
+     "name": "Upload pytest output",
+     "status": "completed",
+     "conclusion": "skipped"
+    },
+    {
+     "number": 11,
+     "name": "Upload coverage artifact",
+     "status": "completed",
+     "conclusion": "skipped"
+    },
+    {
+     "number": 12,
+     "name": "Beautify test results",
+     "status": "completed",
+     "conclusion": "skipped"
+    },
+    {
+     "number": 13,
+     "name": "Upload test results artifact",
+     "status": "completed",
+     "conclusion": "skipped"
+    },
+    {
+     "number": 14,
+     "name": "Check dirty",
+     "status": "completed",
+     "conclusion": "skipped"
+    },
+    {
+     "number": 26,
+     "name": "Post Set up Python 3.14.10 and restore venv",
+     "status": "completed",
+     "conclusion": "success"
+    },
+    {
+     "number": 27,
+     "name": "Post Check out code from GitHub",
+     "status": "completed",
+     "conclusion": "success"
+    },
+    {
+     "number": 28,
+     "name": "Stop containers",
+     "status": "completed",
+     "conclusion": "success"
+    },
+    {
+     "number": 29,
+     "name": "Complete job",
+     "status": "completed",
+     "conclusion": "success"
+    }
+   ]
+  },
+  {
+   "id": 124797614262,
+   "run_id": 41289361229,
+   "name": "Run postgres:15.19 tests Python 3.14.10",
+   "status": "completed",
+   "conclusion": "cancelled",
+   "labels": [
+    "ubuntu-26.04"
+   ],
+   "runner_name": "GitHub Actions 1005087599",
+   "html_url": "https://github.com/home-assistant/core/actions/runs/41289361229/job/124797614262",
+   "created_at": "2026-11-01T09:35:31Z",
+   "started_at": "2026-11-01T09:35:32Z",
+   "completed_at": "2026-11-01T09:38:18Z",
+   "steps": [
+    {
+     "number": 1,
+     "name": "Set up job",
+     "status": "completed",
+     "conclusion": "success"
+    },
+    {
+     "number": 2,
+     "name": "Initialize containers",
+     "status": "completed",
+     "conclusion": "success"
+    },
+    {
+     "number": 3,
+     "name": "Check out code from GitHub",
+     "status": "completed",
+     "conclusion": "success"
+    },
+    {
+     "number": 4,
+     "name": "Install additional OS dependencies",
+     "status": "completed",
+     "conclusion": "success"
+    },
+    {
+     "number": 5,
+     "name": "Set up PostgreSQL apt repository",
+     "status": "completed",
+     "conclusion": "success"
+    },
+    {
+     "number": 6,
+     "name": "Cache PostgreSQL development headers",
+     "status": "completed",
+     "conclusion": "success"
+    },
+    {
+     "number": 7,
+     "name": "Set up Python 3.14.10 and restore venv",
+     "status": "completed",
+     "conclusion": "success"
+    },
+    {
+     "number": 8,
+     "name": "Register Python problem matcher",
+     "status": "completed",
+     "conclusion": "success"
+    },
+    {
+     "number": 9,
+     "name": "Install SQL Python libraries",
+     "status": "completed",
+     "conclusion": "success"
+    },
+    {
+     "number": 10,
+     "name": "Compile English translations",
+     "status": "completed",
+     "conclusion": "success"
+    },
+    {
+     "number": 11,
+     "name": "Run pytest (partially)",
+     "status": "completed",
+     "conclusion": "cancelled"
+    },
+    {
+     "number": 12,
+     "name": "Upload pytest output",
+     "status": "completed",
+     "conclusion": "skipped"
+    },
+    {
+     "number": 13,
+     "name": "Upload coverage artifact",
+     "status": "completed",
+     "conclusion": "skipped"
+    },
+    {
+     "number": 14,
+     "name": "Beautify test results",
+     "status": "completed",
+     "conclusion": "skipped"
+    },
+    {
+     "number": 15,
+     "name": "Upload test results artifact",
+     "status": "completed",
+     "conclusion": "skipped"
+    },
+    {
+     "number": 16,
+     "name": "Check dirty",
+     "status": "completed",
+     "conclusion": "skipped"
+    },
+    {
+     "number": 30,
+     "name": "Post Set up Python 3.14.10 and restore venv",
+     "status": "completed",
+     "conclusion": "success"
+    },
+    {
+     "number": 31,
+     "name": "Post Check out code from GitHub",
+     "status": "completed",
+     "conclusion": "success"
+    },
+    {
+     "number": 32,
+     "name": "Stop containers",
+     "status": "completed",
+     "conclusion": "success"
+    },
+    {
+     "number": 33,
+     "name": "Complete job",
+     "status": "completed",
+     "conclusion": "success"
+    }
+   ]
+  },
+  {
+   "id": 124797614266,
+   "run_id": 41289361229,
+   "name": "Run mariadb:10.11.2 tests Python 3.14.10",
+   "status": "completed",
+   "conclusion": "cancelled",
+   "labels": [
+    "ubuntu-26.04"
+   ],
+   "runner_name": "GitHub Actions 1005087600",
+   "html_url": "https://github.com/home-assistant/core/actions/runs/41289361229/job/124797614266",
+   "created_at": "2026-11-01T09:35:31Z",
+   "started_at": "2026-11-01T09:35:32Z",
+   "completed_at": "2026-11-01T09:37:15Z",
+   "steps": [
+    {
+     "number": 1,
+     "name": "Set up job",
+     "status": "completed",
+     "conclusion": "success"
+    },
+    {
+     "number": 2,
+     "name": "Initialize containers",
+     "status": "completed",
+     "conclusion": "success"
+    },
+    {
+     "number": 3,
+     "name": "Check out code from GitHub",
+     "status": "completed",
+     "conclusion": "success"
+    },
+    {
+     "number": 4,
+     "name": "Install additional OS dependencies",
+     "status": "completed",
+     "conclusion": "success"
+    },
+    {
+     "number": 5,
+     "name": "Set up Python 3.14.10 and restore venv",
+     "status": "completed",
+     "conclusion": "success"
+    },
+    {
+     "number": 6,
+     "name": "Register Python problem matcher",
+     "status": "completed",
+     "conclusion": "success"
+    },
+    {
+     "number": 7,
+     "name": "Install SQL Python libraries",
+     "status": "completed",
+     "conclusion": "success"
+    },
+    {
+     "number": 8,
+     "name": "Compile English translations",
+     "status": "completed",
+     "conclusion": "success"
+    },
+    {
+     "number": 9,
+     "name": "Run pytest (partially)",
+     "status": "completed",
+     "conclusion": "cancelled"
+    },
+    {
+     "number": 10,
+     "name": "Upload pytest output",
+     "status": "completed",
+     "conclusion": "skipped"
+    },
+    {
+     "number": 11,
+     "name": "Upload coverage artifact",
+     "status": "completed",
+     "conclusion": "skipped"
+    },
+    {
+     "number": 12,
+     "name": "Beautify test results",
+     "status": "completed",
+     "conclusion": "skipped"
+    },
+    {
+     "number": 13,
+     "name": "Upload test results artifact",
+     "status": "completed",
+     "conclusion": "skipped"
+    },
+    {
+     "number": 14,
+     "name": "Check dirty",
+     "status": "completed",
+     "conclusion": "skipped"
+    },
+    {
+     "number": 26,
+     "name": "Post Set up Python 3.14.10 and restore venv",
+     "status": "completed",
+     "conclusion": "success"
+    },
+    {
+     "number": 27,
+     "name": "Post Check out code from GitHub",
+     "status": "completed",
+     "conclusion": "success"
+    },
+    {
+     "number": 28,
+     "name": "Stop containers",
+     "status": "completed",
+     "conclusion": "success"
+    },
+    {
+     "number": 29,
+     "name": "Complete job",
+     "status": "completed",
+     "conclusion": "success"
+    }
+   ]
+  },
+  {
+   "id": 124797614271,
+   "run_id": 41289361229,
+   "name": "Run SQLite 3.53.4 tests Python 3.14.10",
+   "status": "completed",
+   "conclusion": "cancelled",
+   "labels": [
+    "ubuntu-26.04"
+   ],
+   "runner_name": "GitHub Actions 1005087603",
+   "html_url": "https://github.com/home-assistant/core/actions/runs/41289361229/job/124797614271",
+   "created_at": "2026-11-01T09:35:31Z",
+   "started_at": "2026-11-01T09:35:32Z",
+   "completed_at": "2026-11-01T09:37:57Z",
+   "steps": [
+    {
+     "number": 1,
+     "name": "Set up job",
+     "status": "completed",
+     "conclusion": "success"
+    },
+    {
+     "number": 2,
+     "name": "Check out code from GitHub",
+     "status": "completed",
+     "conclusion": "success"
+    },
+    {
+     "number": 3,
+     "name": "Install additional OS dependencies",
+     "status": "completed",
+     "conclusion": "success"
+    },
+    {
+     "number": 4,
+     "name": "Set up Python 3.14.10 and restore venv",
+     "status": "completed",
+     "conclusion": "success"
+    },
+    {
+     "number": 5,
+     "name": "Register Python problem matcher",
+     "status": "completed",
+     "conclusion": "success"
+    },
+    {
+     "number": 6,
+     "name": "Restore vendored sqlite3 wheel cache",
+     "status": "completed",
+     "conclusion": "success"
+    },
+    {
+     "number": 7,
+     "name": "Install sqlite3 module with SQLite 3.53.4",
+     "status": "completed",
+     "conclusion": "success"
+    },
+    {
+     "number": 8,
+     "name": "Compile English translations",
+     "status": "completed",
+     "conclusion": "success"
+    },
+    {
+     "number": 9,
+     "name": "Run pytest (partially)",
+     "status": "completed",
+     "conclusion": "success"
+    },
+    {
+     "number": 10,
+     "name": "Upload pytest output",
+     "status": "completed",
+     "conclusion": "success"
+    },
+    {
+     "number": 11,
+     "name": "Check dirty",
+     "status": "completed",
+     "conclusion": "success"
+    },
+    {
+     "number": 20,
+     "name": "Post Restore vendored sqlite3 wheel cache",
+     "status": "completed",
+     "conclusion": "success"
+    },
+    {
+     "number": 21,
+     "name": "Post Set up Python 3.14.10 and restore venv",
+     "status": "completed",
+     "conclusion": "success"
+    },
+    {
+     "number": 22,
+     "name": "Post Check out code from GitHub",
+     "status": "completed",
+     "conclusion": "success"
+    },
+    {
+     "number": 23,
+     "name": "Complete job",
+     "status": "completed",
+     "conclusion": "success"
+    }
+   ]
+  },
+  {
+   "id": 124797614272,
+   "run_id": 41289361229,
+   "name": "Run postgres:18.6 tests Python 3.14.10",
+   "status": "completed",
+   "conclusion": "cancelled",
+   "labels": [
+    "ubuntu-26.04"
+   ],
+   "runner_name": "GitHub Actions 1005087601",
+   "html_url": "https://github.com/home-assistant/core/actions/runs/41289361229/job/124797614272",
+   "created_at": "2026-11-01T09:35:31Z",
+   "started_at": "2026-11-01T09:35:32Z",
+   "completed_at": "2026-11-01T09:38:18Z",
+   "steps": [
+    {
+     "number": 1,
+     "name": "Set up job",
+     "status": "completed",
+     "conclusion": "success"
+    },
+    {
+     "number": 2,
+     "name": "Initialize containers",
+     "status": "completed",
+     "conclusion": "success"
+    },
+    {
+     "number": 3,
+     "name": "Check out code from GitHub",
+     "status": "completed",
+     "conclusion": "success"
+    },
+    {
+     "number": 4,
+     "name": "Install additional OS dependencies",
+     "status": "completed",
+     "conclusion": "success"
+    },
+    {
+     "number": 5,
+     "name": "Set up PostgreSQL apt repository",
+     "status": "completed",
+     "conclusion": "success"
+    },
+    {
+     "number": 6,
+     "name": "Cache PostgreSQL development headers",
+     "status": "completed",
+     "conclusion": "success"
+    },
+    {
+     "number": 7,
+     "name": "Set up Python 3.14.10 and restore venv",
+     "status": "completed",
+     "conclusion": "success"
+    },
+    {
+     "number": 8,
+     "name": "Register Python problem matcher",
+     "status": "completed",
+     "conclusion": "success"
+    },
+    {
+     "number": 9,
+     "name": "Install SQL Python libraries",
+     "status": "completed",
+     "conclusion": "success"
+    },
+    {
+     "number": 10,
+     "name": "Compile English translations",
+     "status": "completed",
+     "conclusion": "success"
+    },
+    {
+     "number": 11,
+     "name": "Run pytest (partially)",
+     "status": "completed",
+     "conclusion": "cancelled"
+    },
+    {
+     "number": 12,
+     "name": "Upload pytest output",
+     "status": "completed",
+     "conclusion": "skipped"
+    },
+    {
+     "number": 13,
+     "name": "Upload coverage artifact",
+     "status": "completed",
+     "conclusion": "skipped"
+    },
+    {
+     "number": 14,
+     "name": "Beautify test results",
+     "status": "completed",
+     "conclusion": "skipped"
+    },
+    {
+     "number": 15,
+     "name": "Upload test results artifact",
+     "status": "completed",
+     "conclusion": "skipped"
+    },
+    {
+     "number": 16,
+     "name": "Check dirty",
+     "status": "completed",
+     "conclusion": "skipped"
+    },
+    {
+     "number": 30,
+     "name": "Post Set up Python 3.14.10 and restore venv",
+     "status": "completed",
+     "conclusion": "success"
+    },
+    {
+     "number": 31,
+     "name": "Post Check out code from GitHub",
+     "status": "completed",
+     "conclusion": "success"
+    },
+    {
+     "number": 32,
+     "name": "Stop containers",
+     "status": "completed",
+     "conclusion": "success"
+    },
+    {
+     "number": 33,
+     "name": "Complete job",
+     "status": "completed",
+     "conclusion": "success"
+    }
+   ]
+  },
+  {
+   "id": 124797614282,
+   "run_id": 41289361229,
+   "name": "Run mariadb:11.8.8 tests Python 3.14.10",
+   "status": "completed",
+   "conclusion": "cancelled",
+   "labels": [
+    "ubuntu-26.04"
+   ],
+   "runner_name": "GitHub Actions 1005087602",
+   "html_url": "https://github.com/home-assistant/core/actions/runs/41289361229/job/124797614282",
+   "created_at": "2026-11-01T09:35:31Z",
+   "started_at": "2026-11-01T09:35:33Z",
+   "completed_at": "2026-11-01T09:38:20Z",
+   "steps": [
+    {
+     "number": 1,
+     "name": "Set up job",
+     "status": "completed",
+     "conclusion": "success"
+    },
+    {
+     "number": 2,
+     "name": "Initialize containers",
+     "status": "completed",
+     "conclusion": "success"
+    },
+    {
+     "number": 3,
+     "name": "Check out code from GitHub",
+     "status": "completed",
+     "conclusion": "success"
+    },
+    {
+     "number": 4,
+     "name": "Install additional OS dependencies",
+     "status": "completed",
+     "conclusion": "success"
+    },
+    {
+     "number": 5,
+     "name": "Set up Python 3.14.10 and restore venv",
+     "status": "completed",
+     "conclusion": "success"
+    },
+    {
+     "number": 6,
+     "name": "Register Python problem matcher",
+     "status": "completed",
+     "conclusion": "success"
+    },
+    {
+     "number": 7,
+     "name": "Install SQL Python libraries",
+     "status": "completed",
+     "conclusion": "success"
+    },
+    {
+     "number": 8,
+     "name": "Compile English translations",
+     "status": "completed",
+     "conclusion": "success"
+    },
+    {
+     "number": 9,
+     "name": "Run pytest (partially)",
+     "status": "completed",
+     "conclusion": "cancelled"
+    },
+    {
+     "number": 10,
+     "name": "Upload pytest output",
+     "status": "completed",
+     "conclusion": "skipped"
+    },
+    {
+     "number": 11,
+     "name": "Upload coverage artifact",
+     "status": "completed",
+     "conclusion": "skipped"
+    },
+    {
+     "number": 12,
+     "name": "Beautify test results",
+     "status": "completed",
+     "conclusion": "skipped"
+    },
+    {
+     "number": 13,
+     "name": "Upload test results artifact",
+     "status": "completed",
+     "conclusion": "skipped"
+    },
+    {
+     "number": 14,
+     "name": "Check dirty",
+     "status": "completed",
+     "conclusion": "skipped"
+    },
+    {
+     "number": 26,
+     "name": "Post Set up Python 3.14.10 and restore venv",
+     "status": "completed",
+     "conclusion": "success"
+    },
+    {
+     "number": 27,
+     "name": "Post Check out code from GitHub",
+     "status": "completed",
+     "conclusion": "success"
+    },
+    {
+     "number": 28,
+     "name": "Stop containers",
+     "status": "completed",
+     "conclusion": "success"
+    },
+    {
+     "number": 29,
+     "name": "Complete job",
+     "status": "completed",
+     "conclusion": "success"
+    }
+   ]
+  },
+  {
+   "id": 124797614299,
+   "run_id": 41289361229,
+   "name": "Run postgres:12.22 tests Python 3.14.10",
+   "status": "completed",
+   "conclusion": "cancelled",
+   "labels": [
+    "ubuntu-26.04"
+   ],
+   "runner_name": "GitHub Actions 1005087605",
+   "html_url": "https://github.com/home-assistant/core/actions/runs/41289361229/job/124797614299",
+   "created_at": "2026-11-01T09:35:31Z",
+   "started_at": "2026-11-01T09:35:32Z",
+   "completed_at": "2026-11-01T09:38:19Z",
+   "steps": [
+    {
+     "number": 1,
+     "name": "Set up job",
+     "status": "completed",
+     "conclusion": "success"
+    },
+    {
+     "number": 2,
+     "name": "Initialize containers",
+     "status": "completed",
+     "conclusion": "success"
+    },
+    {
+     "number": 3,
+     "name": "Check out code from GitHub",
+     "status": "completed",
+     "conclusion": "success"
+    },
+    {
+     "number": 4,
+     "name": "Install additional OS dependencies",
+     "status": "completed",
+     "conclusion": "success"
+    },
+    {
+     "number": 5,
+     "name": "Set up PostgreSQL apt repository",
+     "status": "completed",
+     "conclusion": "success"
+    },
+    {
+     "number": 6,
+     "name": "Cache PostgreSQL development headers",
+     "status": "completed",
+     "conclusion": "success"
+    },
+    {
+     "number": 7,
+     "name": "Set up Python 3.14.10 and restore venv",
+     "status": "completed",
+     "conclusion": "success"
+    },
+    {
+     "number": 8,
+     "name": "Register Python problem matcher",
+     "status": "completed",
+     "conclusion": "success"
+    },
+    {
+     "number": 9,
+     "name": "Install SQL Python libraries",
+     "status": "completed",
+     "conclusion": "success"
+    },
+    {
+     "number": 10,
+     "name": "Compile English translations",
+     "status": "completed",
+     "conclusion": "success"
+    },
+    {
+     "number": 11,
+     "name": "Run pytest (partially)",
+     "status": "completed",
+     "conclusion": "cancelled"
+    },
+    {
+     "number": 12,
+     "name": "Upload pytest output",
+     "status": "completed",
+     "conclusion": "skipped"
+    },
+    {
+     "number": 13,
+     "name": "Upload coverage artifact",
+     "status": "completed",
+     "conclusion": "skipped"
+    },
+    {
+     "number": 14,
+     "name": "Beautify test results",
+     "status": "completed",
+     "conclusion": "skipped"
+    },
+    {
+     "number": 15,
+     "name": "Upload test results artifact",
+     "status": "completed",
+     "conclusion": "skipped"
+    },
+    {
+     "number": 16,
+     "name": "Check dirty",
+     "status": "completed",
+     "conclusion": "skipped"
+    },
+    {
+     "number": 30,
+     "name": "Post Set up Python 3.14.10 and restore venv",
+     "status": "completed",
+     "conclusion": "success"
+    },
+    {
+     "number": 31,
+     "name": "Post Check out code from GitHub",
+     "status": "completed",
+     "conclusion": "success"
+    },
+    {
+     "number": 32,
+     "name": "Stop containers",
+     "status": "completed",
+     "conclusion": "success"
+    },
+    {
+     "number": 33,
+     "name": "Complete job",
+     "status": "completed",
+     "conclusion": "success"
+    }
+   ]
+  },
+  {
+   "id": 124797614309,
+   "run_id": 41289361229,
+   "name": "Run mariadb:12.3.3 tests Python 3.14.10",
+   "status": "completed",
+   "conclusion": "cancelled",
+   "labels": [
+    "ubuntu-26.04"
+   ],
+   "runner_name": "GitHub Actions 1005087604",
+   "html_url": "https://github.com/home-assistant/core/actions/runs/41289361229/job/124797614309",
+   "created_at": "2026-11-01T09:35:31Z",
+   "started_at": "2026-11-01T09:35:32Z",
+   "completed_at": "2026-11-01T09:38:19Z",
+   "steps": [
+    {
+     "number": 1,
+     "name": "Set up job",
+     "status": "completed",
+     "conclusion": "success"
+    },
+    {
+     "number": 2,
+     "name": "Initialize containers",
+     "status": "completed",
+     "conclusion": "success"
+    },
+    {
+     "number": 3,
+     "name": "Check out code from GitHub",
+     "status": "completed",
+     "conclusion": "success"
+    },
+    {
+     "number": 4,
+     "name": "Install additional OS dependencies",
+     "status": "completed",
+     "conclusion": "success"
+    },
+    {
+     "number": 5,
+     "name": "Set up Python 3.14.10 and restore venv",
+     "status": "completed",
+     "conclusion": "success"
+    },
+    {
+     "number": 6,
+     "name": "Register Python problem matcher",
+     "status": "completed",
+     "conclusion": "success"
+    },
+    {
+     "number": 7,
+     "name": "Install SQL Python libraries",
+     "status": "completed",
+     "conclusion": "success"
+    },
+    {
+     "number": 8,
+     "name": "Compile English translations",
+     "status": "completed",
+     "conclusion": "success"
+    },
+    {
+     "number": 9,
+     "name": "Run pytest (partially)",
+     "status": "completed",
+     "conclusion": "cancelled"
+    },
+    {
+     "number": 10,
+     "name": "Upload pytest output",
+     "status": "completed",
+     "conclusion": "skipped"
+    },
+    {
+     "number": 11,
+     "name": "Upload coverage artifact",
+     "status": "completed",
+     "conclusion": "skipped"
+    },
+    {
+     "number": 12,
+     "name": "Beautify test results",
+     "status": "completed",
+     "conclusion": "skipped"
+    },
+    {
+     "number": 13,
+     "name": "Upload test results artifact",
+     "status": "completed",
+     "conclusion": "skipped"
+    },
+    {
+     "number": 14,
+     "name": "Check dirty",
+     "status": "completed",
+     "conclusion": "skipped"
+    },
+    {
+     "number": 26,
+     "name": "Post Set up Python 3.14.10 and restore venv",
+     "status": "completed",
+     "conclusion": "success"
+    },
+    {
+     "number": 27,
+     "name": "Post Check out code from GitHub",
+     "status": "completed",
+     "conclusion": "success"
+    },
+    {
+     "number": 28,
+     "name": "Stop containers",
+     "status": "completed",
+     "conclusion": "success"
+    },
+    {
+     "number": 29,
+     "name": "Complete job",
+     "status": "completed",
+     "conclusion": "success"
+    }
+   ]
+  },
+  {
+   "id": 124797614412,
+   "run_id": 41289361229,
+   "name": "Run mysql:8.0.32 tests Python 3.14.10",
+   "status": "completed",
+   "conclusion": "cancelled",
+   "labels": [
+    "ubuntu-26.04"
+   ],
+   "runner_name": "GitHub Actions 1005087606",
+   "html_url": "https://github.com/home-assistant/core/actions/runs/41289361229/job/124797614412",
+   "created_at": "2026-11-01T09:35:31Z",
+   "started_at": "2026-11-01T09:35:32Z",
+   "completed_at": "2026-11-01T09:38:18Z",
+   "steps": [
+    {
+     "number": 1,
+     "name": "Set up job",
+     "status": "completed",
+     "conclusion": "success"
+    },
+    {
+     "number": 2,
+     "name": "Initialize containers",
+     "status": "completed",
+     "conclusion": "success"
+    },
+    {
+     "number": 3,
+     "name": "Check out code from GitHub",
+     "status": "completed",
+     "conclusion": "success"
+    },
+    {
+     "number": 4,
+     "name": "Install additional OS dependencies",
+     "status": "completed",
+     "conclusion": "success"
+    },
+    {
+     "number": 5,
+     "name": "Set up Python 3.14.10 and restore venv",
+     "status": "completed",
+     "conclusion": "success"
+    },
+    {
+     "number": 6,
+     "name": "Register Python problem matcher",
+     "status": "completed",
+     "conclusion": "success"
+    },
+    {
+     "number": 7,
+     "name": "Install SQL Python libraries",
+     "status": "completed",
+     "conclusion": "success"
+    },
+    {
+     "number": 8,
+     "name": "Compile English translations",
+     "status": "completed",
+     "conclusion": "success"
+    },
+    {
+     "number": 9,
+     "name": "Run pytest (partially)",
+     "status": "completed",
+     "conclusion": "cancelled"
+    },
+    {
+     "number": 10,
+     "name": "Upload pytest output",
+     "status": "completed",
+     "conclusion": "skipped"
+    },
+    {
+     "number": 11,
+     "name": "Upload coverage artifact",
+     "status": "completed",
+     "conclusion": "skipped"
+    },
+    {
+     "number": 12,
+     "name": "Beautify test results",
+     "status": "completed",
+     "conclusion": "skipped"
+    },
+    {
+     "number": 13,
+     "name": "Upload test results artifact",
+     "status": "completed",
+     "conclusion": "skipped"
+    },
+    {
+     "number": 14,
+     "name": "Check dirty",
+     "status": "completed",
+     "conclusion": "skipped"
+    },
+    {
+     "number": 26,
+     "name": "Post Set up Python 3.14.10 and restore venv",
+     "status": "completed",
+     "conclusion": "success"
+    },
+    {
+     "number": 27,
+     "name": "Post Check out code from GitHub",
+     "status": "completed",
+     "conclusion": "success"
+    },
+    {
+     "number": 28,
+     "name": "Stop containers",
+     "status": "completed",
+     "conclusion": "success"
+    },
+    {
+     "number": 29,
+     "name": "Complete job",
+     "status": "completed",
+     "conclusion": "success"
+    }
+   ]
+  },
+  {
+   "id": 124797646898,
+   "run_id": 41289361229,
+   "name": "Run tests Python 3.14.10 (6)",
+   "status": "completed",
+   "conclusion": "cancelled",
+   "labels": [
+    "ubuntu-26.04"
+   ],
+   "runner_name": "GitHub Actions 1005087622",
+   "html_url": "https://github.com/home-assistant/core/actions/runs/41289361229/job/124797646898",
+   "created_at": "2026-11-01T09:35:40Z",
+   "started_at": "2026-11-01T09:35:42Z",
+   "completed_at": "2026-11-01T09:38:27Z",
+   "steps": [
+    {
+     "number": 1,
+     "name": "Set up job",
+     "status": "completed",
+     "conclusion": "success"
+    },
+    {
+     "number": 2,
+     "name": "Check out code from GitHub",
+     "status": "completed",
+     "conclusion": "success"
+    },
+    {
+     "number": 3,
+     "name": "Install additional OS dependencies",
+     "status": "completed",
+     "conclusion": "success"
+    },
+    {
+     "number": 4,
+     "name": "Set up Python 3.14.10 and restore venv",
+     "status": "completed",
+     "conclusion": "success"
+    },
+    {
+     "number": 5,
+     "name": "Register Python problem matcher",
+     "status": "completed",
+     "conclusion": "success"
+    },
+    {
+     "number": 6,
+     "name": "Download pytest_buckets",
+     "status": "completed",
+     "conclusion": "success"
+    },
+    {
+     "number": 7,
+     "name": "Compile English translations",
+     "status": "completed",
+     "conclusion": "success"
+    },
+    {
+     "number": 8,
+     "name": "Run pytest",
+     "status": "completed",
+     "conclusion": "cancelled"
+    },
+    {
+     "number": 9,
+     "name": "Upload pytest output",
+     "status": "completed",
+     "conclusion": "skipped"
+    },
+    {
+     "number": 10,
+     "name": "Upload coverage artifact",
+     "status": "completed",
+     "conclusion": "skipped"
+    },
+    {
+     "number": 11,
+     "name": "Beautify test results",
+     "status": "completed",
+     "conclusion": "skipped"
+    },
+    {
+     "number": 12,
+     "name": "Upload test results artifact",
+     "status": "completed",
+     "conclusion": "skipped"
+    },
+    {
+     "number": 13,
+     "name": "Remove pytest_buckets",
+     "status": "completed",
+     "conclusion": "skipped"
+    },
+    {
+     "number": 14,
+     "name": "Check dirty",
+     "status": "completed",
+     "conclusion": "skipped"
+    },
+    {
+     "number": 27,
+     "name": "Post Set up Python 3.14.10 and restore venv",
+     "status": "completed",
+     "conclusion": "success"
+    },
+    {
+     "number": 28,
+     "name": "Post Check out code from GitHub",
+     "status": "completed",
+     "conclusion": "success"
+    },
+    {
+     "number": 29,
+     "name": "Complete job",
+     "status": "completed",
+     "conclusion": "success"
+    }
+   ]
+  },
+  {
+   "id": 124797646905,
+   "run_id": 41289361229,
+   "name": "Run tests Python 3.14.10 (2)",
+   "status": "completed",
+   "conclusion": "cancelled",
+   "labels": [
+    "ubuntu-26.04"
+   ],
+   "runner_name": "GitHub Actions 1005087623",
+   "html_url": "https://github.com/home-assistant/core/actions/runs/41289361229/job/124797646905",
+   "created_at": "2026-11-01T09:35:40Z",
+   "started_at": "2026-11-01T09:35:42Z",
+   "completed_at": "2026-11-01T09:37:15Z",
+   "steps": [
+    {
+     "number": 1,
+     "name": "Set up job",
+     "status": "completed",
+     "conclusion": "success"
+    },
+    {
+     "number": 2,
+     "name": "Check out code from GitHub",
+     "status": "completed",
+     "conclusion": "success"
+    },
+    {
+     "number": 3,
+     "name": "Install additional OS dependencies",
+     "status": "completed",
+     "conclusion": "success"
+    },
+    {
+     "number": 4,
+     "name": "Set up Python 3.14.10 and restore venv",
+     "status": "completed",
+     "conclusion": "success"
+    },
+    {
+     "number": 5,
+     "name": "Register Python problem matcher",
+     "status": "completed",
+     "conclusion": "success"
+    },
+    {
+     "number": 6,
+     "name": "Download pytest_buckets",
+     "status": "completed",
+     "conclusion": "success"
+    },
+    {
+     "number": 7,
+     "name": "Compile English translations",
+     "status": "completed",
+     "conclusion": "success"
+    },
+    {
+     "number": 8,
+     "name": "Run pytest",
+     "status": "completed",
+     "conclusion": "cancelled"
+    },
+    {
+     "number": 9,
+     "name": "Upload pytest output",
+     "status": "completed",
+     "conclusion": "skipped"
+    },
+    {
+     "number": 10,
+     "name": "Upload coverage artifact",
+     "status": "completed",
+     "conclusion": "skipped"
+    },
+    {
+     "number": 11,
+     "name": "Beautify test results",
+     "status": "completed",
+     "conclusion": "skipped"
+    },
+    {
+     "number": 12,
+     "name": "Upload test results artifact",
+     "status": "completed",
+     "conclusion": "skipped"
+    },
+    {
+     "number": 13,
+     "name": "Remove pytest_buckets",
+     "status": "completed",
+     "conclusion": "skipped"
+    },
+    {
+     "number": 14,
+     "name": "Check dirty",
+     "status": "completed",
+     "conclusion": "skipped"
+    },
+    {
+     "number": 27,
+     "name": "Post Set up Python 3.14.10 and restore venv",
+     "status": "completed",
+     "conclusion": "success"
+    },
+    {
+     "number": 28,
+     "name": "Post Check out code from GitHub",
+     "status": "completed",
+     "conclusion": "success"
+    },
+    {
+     "number": 29,
+     "name": "Complete job",
+     "status": "completed",
+     "conclusion": "success"
+    }
+   ]
+  },
+  {
+   "id": 124797646906,
+   "run_id": 41289361229,
+   "name": "Run tests Python 3.14.10 (9)",
+   "status": "completed",
+   "conclusion": "cancelled",
+   "labels": [
+    "ubuntu-26.04"
+   ],
+   "runner_name": "GitHub Actions 1005087624",
+   "html_url": "https://github.com/home-assistant/core/actions/runs/41289361229/job/124797646906",
+   "created_at": "2026-11-01T09:35:40Z",
+   "started_at": "2026-11-01T09:35:42Z",
+   "completed_at": "2026-11-01T09:37:16Z",
+   "steps": [
+    {
+     "number": 1,
+     "name": "Set up job",
+     "status": "completed",
+     "conclusion": "success"
+    },
+    {
+     "number": 2,
+     "name": "Check out code from GitHub",
+     "status": "completed",
+     "conclusion": "success"
+    },
+    {
+     "number": 3,
+     "name": "Install additional OS dependencies",
+     "status": "completed",
+     "conclusion": "success"
+    },
+    {
+     "number": 4,
+     "name": "Set up Python 3.14.10 and restore venv",
+     "status": "completed",
+     "conclusion": "success"
+    },
+    {
+     "number": 5,
+     "name": "Register Python problem matcher",
+     "status": "completed",
+     "conclusion": "success"
+    },
+    {
+     "number": 6,
+     "name": "Download pytest_buckets",
+     "status": "completed",
+     "conclusion": "success"
+    },
+    {
+     "number": 7,
+     "name": "Compile English translations",
+     "status": "completed",
+     "conclusion": "success"
+    },
+    {
+     "number": 8,
+     "name": "Run pytest",
+     "status": "completed",
+     "conclusion": "cancelled"
+    },
+    {
+     "number": 9,
+     "name": "Upload pytest output",
+     "status": "completed",
+     "conclusion": "skipped"
+    },
+    {
+     "number": 10,
+     "name": "Upload coverage artifact",
+     "status": "completed",
+     "conclusion": "skipped"
+    },
+    {
+     "number": 11,
+     "name": "Beautify test results",
+     "status": "completed",
+     "conclusion": "skipped"
+    },
+    {
+     "number": 12,
+     "name": "Upload test results artifact",
+     "status": "completed",
+     "conclusion": "skipped"
+    },
+    {
+     "number": 13,
+     "name": "Remove pytest_buckets",
+     "status": "completed",
+     "conclusion": "skipped"
+    },
+    {
+     "number": 14,
+     "name": "Check dirty",
+     "status": "completed",
+     "conclusion": "skipped"
+    },
+    {
+     "number": 27,
+     "name": "Post Set up Python 3.14.10 and restore venv",
+     "status": "completed",
+     "conclusion": "success"
+    },
+    {
+     "number": 28,
+     "name": "Post Check out code from GitHub",
+     "status": "completed",
+     "conclusion": "success"
+    },
+    {
+     "number": 29,
+     "name": "Complete job",
+     "status": "completed",
+     "conclusion": "success"
+    }
+   ]
+  },
+  {
+   "id": 124797646908,
+   "run_id": 41289361229,
+   "name": "Run tests Python 3.14.10 (10)",
+   "status": "completed",
+   "conclusion": "cancelled",
+   "labels": [
+    "ubuntu-26.04"
+   ],
+   "runner_name": "GitHub Actions 1005087621",
+   "html_url": "https://github.com/home-assistant/core/actions/runs/41289361229/job/124797646908",
+   "created_at": "2026-11-01T09:35:40Z",
+   "started_at": "2026-11-01T09:35:42Z",
+   "completed_at": "2026-11-01T09:37:15Z",
+   "steps": [
+    {
+     "number": 1,
+     "name": "Set up job",
+     "status": "completed",
+     "conclusion": "success"
+    },
+    {
+     "number": 2,
+     "name": "Check out code from GitHub",
+     "status": "completed",
+     "conclusion": "success"
+    },
+    {
+     "number": 3,
+     "name": "Install additional OS dependencies",
+     "status": "completed",
+     "conclusion": "success"
+    },
+    {
+     "number": 4,
+     "name": "Set up Python 3.14.10 and restore venv",
+     "status": "completed",
+     "conclusion": "success"
+    },
+    {
+     "number": 5,
+     "name": "Register Python problem matcher",
+     "status": "completed",
+     "conclusion": "success"
+    },
+    {
+     "number": 6,
+     "name": "Download pytest_buckets",
+     "status": "completed",
+     "conclusion": "success"
+    },
+    {
+     "number": 7,
+     "name": "Compile English translations",
+     "status": "completed",
+     "conclusion": "success"
+    },
+    {
+     "number": 8,
+     "name": "Run pytest",
+     "status": "completed",
+     "conclusion": "cancelled"
+    },
+    {
+     "number": 9,
+     "name": "Upload pytest output",
+     "status": "completed",
+     "conclusion": "skipped"
+    },
+    {
+     "number": 10,
+     "name": "Upload coverage artifact",
+     "status": "completed",
+     "conclusion": "skipped"
+    },
+    {
+     "number": 11,
+     "name": "Beautify test results",
+     "status": "completed",
+     "conclusion": "skipped"
+    },
+    {
+     "number": 12,
+     "name": "Upload test results artifact",
+     "status": "completed",
+     "conclusion": "skipped"
+    },
+    {
+     "number": 13,
+     "name": "Remove pytest_buckets",
+     "status": "completed",
+     "conclusion": "skipped"
+    },
+    {
+     "number": 14,
+     "name": "Check dirty",
+     "status": "completed",
+     "conclusion": "skipped"
+    },
+    {
+     "number": 27,
+     "name": "Post Set up Python 3.14.10 and restore venv",
+     "status": "completed",
+     "conclusion": "success"
+    },
+    {
+     "number": 28,
+     "name": "Post Check out code from GitHub",
+     "status": "completed",
+     "conclusion": "success"
+    },
+    {
+     "number": 29,
+     "name": "Complete job",
+     "status": "completed",
+     "conclusion": "success"
+    }
+   ]
+  },
+  {
+   "id": 124797646927,
+   "run_id": 41289361229,
+   "name": "Run tests Python 3.14.10 (8)",
+   "status": "completed",
+   "conclusion": "cancelled",
+   "labels": [
+    "ubuntu-26.04"
+   ],
+   "runner_name": "GitHub Actions 1005087626",
+   "html_url": "https://github.com/home-assistant/core/actions/runs/41289361229/job/124797646927",
+   "created_at": "2026-11-01T09:35:40Z",
+   "started_at": "2026-11-01T09:35:42Z",
+   "completed_at": "2026-11-01T09:37:16Z",
+   "steps": [
+    {
+     "number": 1,
+     "name": "Set up job",
+     "status": "completed",
+     "conclusion": "success"
+    },
+    {
+     "number": 2,
+     "name": "Check out code from GitHub",
+     "status": "completed",
+     "conclusion": "success"
+    },
+    {
+     "number": 3,
+     "name": "Install additional OS dependencies",
+     "status": "completed",
+     "conclusion": "success"
+    },
+    {
+     "number": 4,
+     "name": "Set up Python 3.14.10 and restore venv",
+     "status": "completed",
+     "conclusion": "success"
+    },
+    {
+     "number": 5,
+     "name": "Register Python problem matcher",
+     "status": "completed",
+     "conclusion": "success"
+    },
+    {
+     "number": 6,
+     "name": "Download pytest_buckets",
+     "status": "completed",
+     "conclusion": "success"
+    },
+    {
+     "number": 7,
+     "name": "Compile English translations",
+     "status": "completed",
+     "conclusion": "success"
+    },
+    {
+     "number": 8,
+     "name": "Run pytest",
+     "status": "completed",
+     "conclusion": "cancelled"
+    },
+    {
+     "number": 9,
+     "name": "Upload pytest output",
+     "status": "completed",
+     "conclusion": "skipped"
+    },
+    {
+     "number": 10,
+     "name": "Upload coverage artifact",
+     "status": "completed",
+     "conclusion": "skipped"
+    },
+    {
+     "number": 11,
+     "name": "Beautify test results",
+     "status": "completed",
+     "conclusion": "skipped"
+    },
+    {
+     "number": 12,
+     "name": "Upload test results artifact",
+     "status": "completed",
+     "conclusion": "skipped"
+    },
+    {
+     "number": 13,
+     "name": "Remove pytest_buckets",
+     "status": "completed",
+     "conclusion": "skipped"
+    },
+    {
+     "number": 14,
+     "name": "Check dirty",
+     "status": "completed",
+     "conclusion": "skipped"
+    },
+    {
+     "number": 27,
+     "name": "Post Set up Python 3.14.10 and restore venv",
+     "status": "completed",
+     "conclusion": "success"
+    },
+    {
+     "number": 28,
+     "name": "Post Check out code from GitHub",
+     "status": "completed",
+     "conclusion": "success"
+    },
+    {
+     "number": 29,
+     "name": "Complete job",
+     "status": "completed",
+     "conclusion": "success"
+    }
+   ]
+  },
+  {
+   "id": 124797646933,
+   "run_id": 41289361229,
+   "name": "Run tests Python 3.14.10 (5)",
+   "status": "completed",
+   "conclusion": "cancelled",
+   "labels": [
+    "ubuntu-26.04"
+   ],
+   "runner_name": "GitHub Actions 1005087625",
+   "html_url": "https://github.com/home-assistant/core/actions/runs/41289361229/job/124797646933",
+   "created_at": "2026-11-01T09:35:40Z",
+   "started_at": "2026-11-01T09:35:42Z",
+   "completed_at": "2026-11-01T09:37:17Z",
+   "steps": [
+    {
+     "number": 1,
+     "name": "Set up job",
+     "status": "completed",
+     "conclusion": "success"
+    },
+    {
+     "number": 2,
+     "name": "Check out code from GitHub",
+     "status": "completed",
+     "conclusion": "success"
+    },
+    {
+     "number": 3,
+     "name": "Install additional OS dependencies",
+     "status": "completed",
+     "conclusion": "success"
+    },
+    {
+     "number": 4,
+     "name": "Set up Python 3.14.10 and restore venv",
+     "status": "completed",
+     "conclusion": "success"
+    },
+    {
+     "number": 5,
+     "name": "Register Python problem matcher",
+     "status": "completed",
+     "conclusion": "success"
+    },
+    {
+     "number": 6,
+     "name": "Download pytest_buckets",
+     "status": "completed",
+     "conclusion": "success"
+    },
+    {
+     "number": 7,
+     "name": "Compile English translations",
+     "status": "completed",
+     "conclusion": "success"
+    },
+    {
+     "number": 8,
+     "name": "Run pytest",
+     "status": "completed",
+     "conclusion": "cancelled"
+    },
+    {
+     "number": 9,
+     "name": "Upload pytest output",
+     "status": "completed",
+     "conclusion": "skipped"
+    },
+    {
+     "number": 10,
+     "name": "Upload coverage artifact",
+     "status": "completed",
+     "conclusion": "skipped"
+    },
+    {
+     "number": 11,
+     "name": "Beautify test results",
+     "status": "completed",
+     "conclusion": "skipped"
+    },
+    {
+     "number": 12,
+     "name": "Upload test results artifact",
+     "status": "completed",
+     "conclusion": "skipped"
+    },
+    {
+     "number": 13,
+     "name": "Remove pytest_buckets",
+     "status": "completed",
+     "conclusion": "skipped"
+    },
+    {
+     "number": 14,
+     "name": "Check dirty",
+     "status": "completed",
+     "conclusion": "skipped"
+    },
+    {
+     "number": 27,
+     "name": "Post Set up Python 3.14.10 and restore venv",
+     "status": "completed",
+     "conclusion": "success"
+    },
+    {
+     "number": 28,
+     "name": "Post Check out code from GitHub",
+     "status": "completed",
+     "conclusion": "success"
+    },
+    {
+     "number": 29,
+     "name": "Complete job",
+     "status": "completed",
+     "conclusion": "success"
+    }
+   ]
+  },
+  {
+   "id": 124797646955,
+   "run_id": 41289361229,
+   "name": "Run tests Python 3.14.10 (7)",
+   "status": "completed",
+   "conclusion": "cancelled",
+   "labels": [
+    "ubuntu-26.04"
+   ],
+   "runner_name": "GitHub Actions 1005087627",
+   "html_url": "https://github.com/home-assistant/core/actions/runs/41289361229/job/124797646955",
+   "created_at": "2026-11-01T09:35:40Z",
+   "started_at": "2026-11-01T09:35:42Z",
+   "completed_at": "2026-11-01T09:38:29Z",
+   "steps": [
+    {
+     "number": 1,
+     "name": "Set up job",
+     "status": "completed",
+     "conclusion": "success"
+    },
+    {
+     "number": 2,
+     "name": "Check out code from GitHub",
+     "status": "completed",
+     "conclusion": "success"
+    },
+    {
+     "number": 3,
+     "name": "Install additional OS dependencies",
+     "status": "completed",
+     "conclusion": "success"
+    },
+    {
+     "number": 4,
+     "name": "Set up Python 3.14.10 and restore venv",
+     "status": "completed",
+     "conclusion": "success"
+    },
+    {
+     "number": 5,
+     "name": "Register Python problem matcher",
+     "status": "completed",
+     "conclusion": "success"
+    },
+    {
+     "number": 6,
+     "name": "Download pytest_buckets",
+     "status": "completed",
+     "conclusion": "success"
+    },
+    {
+     "number": 7,
+     "name": "Compile English translations",
+     "status": "completed",
+     "conclusion": "success"
+    },
+    {
+     "number": 8,
+     "name": "Run pytest",
+     "status": "completed",
+     "conclusion": "cancelled"
+    },
+    {
+     "number": 9,
+     "name": "Upload pytest output",
+     "status": "completed",
+     "conclusion": "skipped"
+    },
+    {
+     "number": 10,
+     "name": "Upload coverage artifact",
+     "status": "completed",
+     "conclusion": "skipped"
+    },
+    {
+     "number": 11,
+     "name": "Beautify test results",
+     "status": "completed",
+     "conclusion": "skipped"
+    },
+    {
+     "number": 12,
+     "name": "Upload test results artifact",
+     "status": "completed",
+     "conclusion": "skipped"
+    },
+    {
+     "number": 13,
+     "name": "Remove pytest_buckets",
+     "status": "completed",
+     "conclusion": "skipped"
+    },
+    {
+     "number": 14,
+     "name": "Check dirty",
+     "status": "completed",
+     "conclusion": "skipped"
+    },
+    {
+     "number": 27,
+     "name": "Post Set up Python 3.14.10 and restore venv",
+     "status": "completed",
+     "conclusion": "success"
+    },
+    {
+     "number": 28,
+     "name": "Post Check out code from GitHub",
+     "status": "completed",
+     "conclusion": "success"
+    },
+    {
+     "number": 29,
+     "name": "Complete job",
+     "status": "completed",
+     "conclusion": "success"
+    }
+   ]
+  },
+  {
+   "id": 124797647004,
+   "run_id": 41289361229,
+   "name": "Run tests Python 3.14.10 (4)",
+   "status": "completed",
+   "conclusion": "cancelled",
+   "labels": [
+    "ubuntu-26.04"
+   ],
+   "runner_name": "GitHub Actions 1005087630",
+   "html_url": "https://github.com/home-assistant/core/actions/runs/41289361229/job/124797647004",
+   "created_at": "2026-11-01T09:35:40Z",
+   "started_at": "2026-11-01T09:35:42Z",
+   "completed_at": "2026-11-01T09:38:28Z",
+   "steps": [
+    {
+     "number": 1,
+     "name": "Set up job",
+     "status": "completed",
+     "conclusion": "success"
+    },
+    {
+     "number": 2,
+     "name": "Check out code from GitHub",
+     "status": "completed",
+     "conclusion": "success"
+    },
+    {
+     "number": 3,
+     "name": "Install additional OS dependencies",
+     "status": "completed",
+     "conclusion": "success"
+    },
+    {
+     "number": 4,
+     "name": "Set up Python 3.14.10 and restore venv",
+     "status": "completed",
+     "conclusion": "success"
+    },
+    {
+     "number": 5,
+     "name": "Register Python problem matcher",
+     "status": "completed",
+     "conclusion": "success"
+    },
+    {
+     "number": 6,
+     "name": "Download pytest_buckets",
+     "status": "completed",
+     "conclusion": "success"
+    },
+    {
+     "number": 7,
+     "name": "Compile English translations",
+     "status": "completed",
+     "conclusion": "success"
+    },
+    {
+     "number": 8,
+     "name": "Run pytest",
+     "status": "completed",
+     "conclusion": "cancelled"
+    },
+    {
+     "number": 9,
+     "name": "Upload pytest output",
+     "status": "completed",
+     "conclusion": "skipped"
+    },
+    {
+     "number": 10,
+     "name": "Upload coverage artifact",
+     "status": "completed",
+     "conclusion": "skipped"
+    },
+    {
+     "number": 11,
+     "name": "Beautify test results",
+     "status": "completed",
+     "conclusion": "skipped"
+    },
+    {
+     "number": 12,
+     "name": "Upload test results artifact",
+     "status": "completed",
+     "conclusion": "skipped"
+    },
+    {
+     "number": 13,
+     "name": "Remove pytest_buckets",
+     "status": "completed",
+     "conclusion": "skipped"
+    },
+    {
+     "number": 14,
+     "name": "Check dirty",
+     "status": "completed",
+     "conclusion": "skipped"
+    },
+    {
+     "number": 27,
+     "name": "Post Set up Python 3.14.10 and restore venv",
+     "status": "completed",
+     "conclusion": "success"
+    },
+    {
+     "number": 28,
+     "name": "Post Check out code from GitHub",
+     "status": "completed",
+     "conclusion": "success"
+    },
+    {
+     "number": 29,
+     "name": "Complete job",
+     "status": "completed",
+     "conclusion": "success"
+    }
+   ]
+  },
+  {
+   "id": 124797647043,
+   "run_id": 41289361229,
+   "name": "Run tests Python 3.14.10 (3)",
+   "status": "completed",
+   "conclusion": "cancelled",
+   "labels": [
+    "ubuntu-26.04"
+   ],
+   "runner_name": "GitHub Actions 1005087631",
+   "html_url": "https://github.com/home-assistant/core/actions/runs/41289361229/job/124797647043",
+   "created_at": "2026-11-01T09:35:40Z",
+   "started_at": "2026-11-01T09:35:42Z",
+   "completed_at": "2026-11-01T09:37:15Z",
+   "steps": [
+    {
+     "number": 1,
+     "name": "Set up job",
+     "status": "completed",
+     "conclusion": "success"
+    },
+    {
+     "number": 2,
+     "name": "Check out code from GitHub",
+     "status": "completed",
+     "conclusion": "success"
+    },
+    {
+     "number": 3,
+     "name": "Install additional OS dependencies",
+     "status": "completed",
+     "conclusion": "success"
+    },
+    {
+     "number": 4,
+     "name": "Set up Python 3.14.10 and restore venv",
+     "status": "completed",
+     "conclusion": "success"
+    },
+    {
+     "number": 5,
+     "name": "Register Python problem matcher",
+     "status": "completed",
+     "conclusion": "success"
+    },
+    {
+     "number": 6,
+     "name": "Download pytest_buckets",
+     "status": "completed",
+     "conclusion": "success"
+    },
+    {
+     "number": 7,
+     "name": "Compile English translations",
+     "status": "completed",
+     "conclusion": "success"
+    },
+    {
+     "number": 8,
+     "name": "Run pytest",
+     "status": "completed",
+     "conclusion": "cancelled"
+    },
+    {
+     "number": 9,
+     "name": "Upload pytest output",
+     "status": "completed",
+     "conclusion": "skipped"
+    },
+    {
+     "number": 10,
+     "name": "Upload coverage artifact",
+     "status": "completed",
+     "conclusion": "skipped"
+    },
+    {
+     "number": 11,
+     "name": "Beautify test results",
+     "status": "completed",
+     "conclusion": "skipped"
+    },
+    {
+     "number": 12,
+     "name": "Upload test results artifact",
+     "status": "completed",
+     "conclusion": "skipped"
+    },
+    {
+     "number": 13,
+     "name": "Remove pytest_buckets",
+     "status": "completed",
+     "conclusion": "skipped"
+    },
+    {
+     "number": 14,
+     "name": "Check dirty",
+     "status": "completed",
+     "conclusion": "skipped"
+    },
+    {
+     "number": 27,
+     "name": "Post Set up Python 3.14.10 and restore venv",
+     "status": "completed",
+     "conclusion": "success"
+    },
+    {
+     "number": 28,
+     "name": "Post Check out code from GitHub",
+     "status": "completed",
+     "conclusion": "success"
+    },
+    {
+     "number": 29,
+     "name": "Complete job",
+     "status": "completed",
+     "conclusion": "success"
+    }
+   ]
+  },
+  {
+   "id": 124797647047,
+   "run_id": 41289361229,
+   "name": "Run tests Python 3.14.10 (1)",
+   "status": "completed",
+   "conclusion": "cancelled",
+   "labels": [
+    "ubuntu-26.04"
+   ],
+   "runner_name": "GitHub Actions 1005087629",
+   "html_url": "https://github.com/home-assistant/core/actions/runs/41289361229/job/124797647047",
+   "created_at": "2026-11-01T09:35:40Z",
+   "started_at": "2026-11-01T09:35:42Z",
+   "completed_at": "2026-11-01T09:38:29Z",
+   "steps": [
+    {
+     "number": 1,
+     "name": "Set up job",
+     "status": "completed",
+     "conclusion": "success"
+    },
+    {
+     "number": 2,
+     "name": "Check out code from GitHub",
+     "status": "completed",
+     "conclusion": "success"
+    },
+    {
+     "number": 3,
+     "name": "Install additional OS dependencies",
+     "status": "completed",
+     "conclusion": "success"
+    },
+    {
+     "number": 4,
+     "name": "Set up Python 3.14.10 and restore venv",
+     "status": "completed",
+     "conclusion": "success"
+    },
+    {
+     "number": 5,
+     "name": "Register Python problem matcher",
+     "status": "completed",
+     "conclusion": "success"
+    },
+    {
+     "number": 6,
+     "name": "Download pytest_buckets",
+     "status": "completed",
+     "conclusion": "success"
+    },
+    {
+     "number": 7,
+     "name": "Compile English translations",
+     "status": "completed",
+     "conclusion": "success"
+    },
+    {
+     "number": 8,
+     "name": "Run pytest",
+     "status": "completed",
+     "conclusion": "cancelled"
+    },
+    {
+     "number": 9,
+     "name": "Upload pytest output",
+     "status": "completed",
+     "conclusion": "skipped"
+    },
+    {
+     "number": 10,
+     "name": "Upload coverage artifact",
+     "status": "completed",
+     "conclusion": "skipped"
+    },
+    {
+     "number": 11,
+     "name": "Beautify test results",
+     "status": "completed",
+     "conclusion": "skipped"
+    },
+    {
+     "number": 12,
+     "name": "Upload test results artifact",
+     "status": "completed",
+     "conclusion": "skipped"
+    },
+    {
+     "number": 13,
+     "name": "Remove pytest_buckets",
+     "status": "completed",
+     "conclusion": "skipped"
+    },
+    {
+     "number": 14,
+     "name": "Check dirty",
+     "status": "completed",
+     "conclusion": "skipped"
+    },
+    {
+     "number": 27,
+     "name": "Post Set up Python 3.14.10 and restore venv",
+     "status": "completed",
+     "conclusion": "success"
+    },
+    {
+     "number": 28,
+     "name": "Post Check out code from GitHub",
+     "status": "completed",
+     "conclusion": "success"
+    },
+    {
+     "number": 29,
+     "name": "Complete job",
+     "status": "completed",
+     "conclusion": "success"
+    }
+   ]
+  },
+  {
+   "id": 124798222134,
+   "run_id": 41289361229,
+   "name": "Upload test results to Codecov",
+   "status": "completed",
+   "conclusion": "cancelled",
+   "labels": [
+    "ubuntu-26.04"
+   ],
+   "runner_name": null,
+   "html_url": "https://github.com/home-assistant/core/actions/runs/41289361229/job/124798222134",
+   "created_at": "2026-11-01T09:38:30Z",
+   "started_at": "2026-11-01T09:38:30Z",
+   "completed_at": "2026-11-01T09:38:29Z",
+   "steps": []
+  },
+  {
+   "id": 124798222148,
+   "run_id": 41289361229,
+   "name": "Upload test coverage to Codecov (full suite)",
+   "status": "completed",
+   "conclusion": "cancelled",
+   "labels": [
+    "ubuntu-26.04"
+   ],
+   "runner_name": null,
+   "html_url": "https://github.com/home-assistant/core/actions/runs/41289361229/job/124798222148",
+   "created_at": "2026-11-01T09:38:30Z",
+   "started_at": "2026-11-01T09:38:30Z",
+   "completed_at": "2026-11-01T09:38:29Z",
+   "steps": []
+  }
+ ]
+}

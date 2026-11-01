@@ -13,6 +13,7 @@ function my(over: Partial<MyRun>): MyRun {
     stale: false,
     startsAt: null,
     doneAt: null,
+    wholeRun: false,
     basis: 'learned',
     since: T0,
     position: null,

@@ -6,11 +6,14 @@ import { forecastBucket, insightFor, type BucketForecast, type Insight } from '.
 import { NO_FILTER, type ViewFilter } from '../model/filter'
 import { dataHealthOf, isComplete, type RepoProblem } from '../model/health'
 import { myRuns } from '../model/mine'
+import { forecastGraphs, type GraphOutlook } from '../model/graphForecast'
+import { isRunGraph, placeJobs, type RunGraph } from '../model/workflow'
 import type { FinishedRun } from '../model/finished'
 import type { PacingReason } from '../model/status'
 import { PLANS } from '../model/plans'
 import { settings } from './settings'
 import { durations } from './durations'
+import { runGraphs } from './graphs'
 
 export type View = 'setup' | 'dashboard'
 
@@ -101,6 +104,9 @@ export const trendsRange = signal(1)
 /** The pool Trends is drawing, or null for the scarce one. */
 export const trendsPool = signal<RunnerClass | null>(null)
 
+/** The node of a run's graph the reader tapped, which the sheet explains. */
+export const selectedNode = signal<{ runId: number; nodeId: string } | null>(null)
+
 /** Ticks once a second so relative ages re-render without a re-poll. */
 export const now = signal(Date.now())
 
@@ -154,9 +160,42 @@ export const forecasts = computed(() => {
   return map
 })
 
+/**
+ * Each run's job graph, held to its latest job listing on every poll, or why
+ * it has none. A graph that stops explaining its run is dropped rather than
+ * drawn wrong; the run falls back to its plain job list.
+ */
+export const graphs = computed(() => {
+  const out = new Map<number, RunGraph | { reason: string }>()
+  for (const [id, entry] of runGraphs.value) {
+    if ('reason' in entry) {
+      out.set(id, entry)
+      continue
+    }
+    const placed = placeJobs(entry.graph, jobsByRun.value.get(id) ?? [])
+    out.set(id, isRunGraph(placed) ? placed : { reason: placed.ok ? 'the graph no longer fits' : placed.reason })
+  }
+  return out
+})
+
+/** For runs with a graph: when every job, including those not created yet, should run. */
+export const graphOutlooks = computed((): Map<number, GraphOutlook> => {
+  const placed = new Map<number, RunGraph>()
+  for (const [id, g] of graphs.value) if (isRunGraph(g)) placed.set(id, g)
+  if (placed.size === 0) return new Map()
+  return forecastGraphs({
+    graphs: placed,
+    runs: new Map(runs.value.map((r) => [r.id, r])),
+    forecasts: new Map([...forecasts.value].map(([cls, v]) => [cls, { forecast: v.forecast }])),
+    durations: durations.value,
+    plan: PLANS[settings.value.plan],
+    nowMs: now.value,
+  })
+})
+
 /** The reader's own active runs, running first. */
 export const myRunsNow = computed(() =>
-  myRuns(buckets.value, forecasts.value, jobsByRun.value, settings.value.login),
+  myRuns(buckets.value, forecasts.value, jobsByRun.value, settings.value.login, graphOutlooks.value),
 )
 
 export const totalQueued = computed(() =>
@@ -188,4 +227,24 @@ export function resetData(): void {
   trendsPool.value = null
   tab.value = 'now'
   filter.value = NO_FILTER
+  selectedNode.value = null
 }
+
+/**
+ * Jobs ahead in line of the selected node's first waiting job, so the runs
+ * they belong to can be marked wherever they are drawn.
+ */
+export const aheadOfSelected = computed((): Set<number> => {
+  const sel = selectedNode.value
+  if (!sel) return new Set()
+  const g = graphs.value.get(sel.runId)
+  if (!g || !isRunGraph(g)) return new Set()
+  const waiting = new Set(
+    (g.instances.get(sel.nodeId) ?? []).filter((j) => j.status !== 'completed' && j.status !== 'in_progress').map((j) => j.id),
+  )
+  for (const b of buckets.value) {
+    const i = b.queued.findIndex((e) => waiting.has(e.job.id))
+    if (i >= 0) return new Set(b.queued.slice(0, i).map((e) => e.job.id))
+  }
+  return new Set()
+})

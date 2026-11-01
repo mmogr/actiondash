@@ -221,6 +221,7 @@ export function Setup() {
     planLabel: PLANS[settings.value.plan].label,
     learnedJobs: Object.keys(durations.value).length,
     hasHistory: history.value.samples.length > 0,
+    graphRepos: settings.value.graphRepos.length,
   })
 
   const tokenField = (onSubmit: (token: string) => void, label: string) => (

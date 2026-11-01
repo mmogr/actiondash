@@ -1,0 +1,69 @@
+{
+ "source": "wordpress-mobile/WordPress-iOS run 41225468213, captured 2026-11-01",
+ "run": {
+  "id": 41225468213,
+  "name": "📝 Validate Issues",
+  "run_number": 5614,
+  "event": "issues",
+  "path": ".github/workflows/validate-issues.yml",
+  "head_sha": "e64c851c0dd17e57e64424dc1934d7ddad610984",
+  "head_branch": "trunk",
+  "status": "completed",
+  "conclusion": "success",
+  "run_attempt": 1,
+  "workflow_url": "https://api.github.com/repos/wordpress-mobile/WordPress-iOS/actions/workflows/83021904",
+  "created_at": "2026-10-31T17:37:57Z",
+  "run_started_at": "2026-10-31T17:37:57Z",
+  "repoOwner": "wordpress-mobile",
+  "repoName": "WordPress-iOS",
+  "referenced_workflows": [
+   {
+    "path": "Automattic/dangermattic/.github/workflows/reusable-check-labels-on-issues.yml@v1.1.2.1",
+    "sha": "2e4c433c142eb9be89cf184c4f968eee14ce27f6",
+    "ref": "refs/tags/v1.1.2.1"
+   }
+  ]
+ },
+ "files": {
+  "wordpress-mobile/WordPress-iOS/.github/workflows/validate-issues.yml@e64c851c0dd17e57e64424dc1934d7ddad610984": "name: 📝 Validate Issues\n\non:\n  issues:\n    types: [opened, labeled, unlabeled]\n\njobs:\n  check-labels-on-issues:\n    uses: Automattic/dangermattic/.github/workflows/reusable-check-labels-on-issues.yml@v1.1.2.1\n    with:\n      label-format-list: '[\n        \"^\\[.+\\]\",\n        \"^[[:alnum:]]\"\n      ]'\n      label-error-message: '🚫 Please add a type label (e.g. **[Type] Enhancement**) and a feature label (e.g. **Stats**) to this issue.'\n      label-success-message: 'Thanks for reporting! 👍'\n      cancel-running-jobs: false\n    secrets:\n      github-token: ${{ secrets.DANGERMATTIC_GITHUB_TOKEN }}\n",
+  "Automattic/dangermattic/.github/workflows/reusable-check-labels-on-issues.yml@2e4c433c142eb9be89cf184c4f968eee14ce27f6": "on:\n  workflow_call:\n    inputs:\n      label-format-list:\n        description: 'The Regex formats expected for the labels; must be a JSON list'\n        default: '[\n          \".*\"\n        ]'\n        type: string\n        required: false\n      label-error-message:\n        description: 'Error message to be posted when the labels set don''t match the required list of formats.'\n        default: 'At least one label is required.'\n        type: string\n        required: false\n      label-success-message:\n        description: 'Message to be posted when the labels set fulfill the entire list of expected formats.'\n        default: '✅ Yay, issue looks great!'\n        type: string\n        required: false\n      cancel-running-jobs:\n        description: 'Cancel currently in progress jobs when new ones are added.'\n        default: true\n        type: boolean\n        required: false\n    secrets:\n      github-token:\n        required: true\n\nconcurrency:\n  group: ${{ github.workflow }}-${{ github.event.issue.number }}\n  cancel-in-progress: ${{ inputs.cancel-running-jobs }}\n\njobs:\n  check-issue-labels:\n    runs-on: ubuntu-latest\n    permissions:\n      issues: write\n    steps:\n      - name: \"🏷️ Check Issue Labels\"\n        env:\n          GITHUB_TOKEN: ${{ secrets.github-token }}\n          GH_REPO: ${{ github.repository }}\n          ISSUE_NUMBER: ${{ github.event.issue.number }}\n          ISSUE_LABELS: ${{ toJSON(github.event.issue.labels.*.name) }}\n          LABEL_REGEX_LIST: ${{ inputs.label-format-list }}\n          ISSUE_SUCCESS_COMMENT: >\n            ${{ inputs.label-success-message }}\n            <!-- generated_by_dangermattic -->\n          ISSUE_ERROR_COMMENT: >\n            ${{ inputs.label-error-message }}\n            <!-- generated_by_dangermattic -->\n        run: |\n          #!/bin/bash\n\n          readarray -t labels < <(echo \"$ISSUE_LABELS\" | jq -r '.[]')\n          readarray -t label_regex_list < <(echo \"$LABEL_REGEX_LIST\" | jq -r '.[]')\n\n          all_patterns_matched=true\n\n          for regex in \"${label_regex_list[@]}\"; do\n            pattern_matched=false\n\n            for label in \"${labels[@]}\"; do\n              if [[ \"$label\" =~ $regex ]]; then\n                pattern_matched=true\n                echo \"👍 Match found for regex '$regex': $label\"\n                break\n              fi\n            done\n\n            if [ \"$pattern_matched\" = false ]; then\n              all_patterns_matched=false\n              echo \"⚠️ No match found for regex '$regex'\"\n            fi\n          done\n\n          ISSUE_COMMENT=''\n          if [ \"$all_patterns_matched\" = true ]; then\n            echo \"✅ All regex patterns have at least one match.\"\n            ISSUE_COMMENT=\"$ISSUE_SUCCESS_COMMENT\"\n          else\n            echo \"❌ Not all regex patterns have at least one match.\"\n            ISSUE_COMMENT=\"$ISSUE_ERROR_COMMENT\"\n          fi\n\n          set +e\n          echo \"✍️ Attempting to edit existing comment on issue $ISSUE_NUMBER, if it exists:\"\n          gh issue comment $ISSUE_NUMBER --body \"$ISSUE_COMMENT\" --edit-last\n          comment_update_status=$?\n          set -e\n\n          if [ $comment_update_status -ne 0 ]; then\n            echo \"✍️ Adding new comment on issue $ISSUE_NUMBER:\"\n            gh issue comment $ISSUE_NUMBER --body \"$ISSUE_COMMENT\"\n          fi\n",
+  "Automattic/dangermattic/.github/workflows/reusable-check-labels-on-issues.yml@v1.1.2.1": "on:\n  workflow_call:\n    inputs:\n      label-format-list:\n        description: 'The Regex formats expected for the labels; must be a JSON list'\n        default: '[\n          \".*\"\n        ]'\n        type: string\n        required: false\n      label-error-message:\n        description: 'Error message to be posted when the labels set don''t match the required list of formats.'\n        default: 'At least one label is required.'\n        type: string\n        required: false\n      label-success-message:\n        description: 'Message to be posted when the labels set fulfill the entire list of expected formats.'\n        default: '✅ Yay, issue looks great!'\n        type: string\n        required: false\n      cancel-running-jobs:\n        description: 'Cancel currently in progress jobs when new ones are added.'\n        default: true\n        type: boolean\n        required: false\n    secrets:\n      github-token:\n        required: true\n\nconcurrency:\n  group: ${{ github.workflow }}-${{ github.event.issue.number }}\n  cancel-in-progress: ${{ inputs.cancel-running-jobs }}\n\njobs:\n  check-issue-labels:\n    runs-on: ubuntu-latest\n    permissions:\n      issues: write\n    steps:\n      - name: \"🏷️ Check Issue Labels\"\n        env:\n          GITHUB_TOKEN: ${{ secrets.github-token }}\n          GH_REPO: ${{ github.repository }}\n          ISSUE_NUMBER: ${{ github.event.issue.number }}\n          ISSUE_LABELS: ${{ toJSON(github.event.issue.labels.*.name) }}\n          LABEL_REGEX_LIST: ${{ inputs.label-format-list }}\n          ISSUE_SUCCESS_COMMENT: >\n            ${{ inputs.label-success-message }}\n            <!-- generated_by_dangermattic -->\n          ISSUE_ERROR_COMMENT: >\n            ${{ inputs.label-error-message }}\n            <!-- generated_by_dangermattic -->\n        run: |\n          #!/bin/bash\n\n          readarray -t labels < <(echo \"$ISSUE_LABELS\" | jq -r '.[]')\n          readarray -t label_regex_list < <(echo \"$LABEL_REGEX_LIST\" | jq -r '.[]')\n\n          all_patterns_matched=true\n\n          for regex in \"${label_regex_list[@]}\"; do\n            pattern_matched=false\n\n            for label in \"${labels[@]}\"; do\n              if [[ \"$label\" =~ $regex ]]; then\n                pattern_matched=true\n                echo \"👍 Match found for regex '$regex': $label\"\n                break\n              fi\n            done\n\n            if [ \"$pattern_matched\" = false ]; then\n              all_patterns_matched=false\n              echo \"⚠️ No match found for regex '$regex'\"\n            fi\n          done\n\n          ISSUE_COMMENT=''\n          if [ \"$all_patterns_matched\" = true ]; then\n            echo \"✅ All regex patterns have at least one match.\"\n            ISSUE_COMMENT=\"$ISSUE_SUCCESS_COMMENT\"\n          else\n            echo \"❌ Not all regex patterns have at least one match.\"\n            ISSUE_COMMENT=\"$ISSUE_ERROR_COMMENT\"\n          fi\n\n          set +e\n          echo \"✍️ Attempting to edit existing comment on issue $ISSUE_NUMBER, if it exists:\"\n          gh issue comment $ISSUE_NUMBER --body \"$ISSUE_COMMENT\" --edit-last\n          comment_update_status=$?\n          set -e\n\n          if [ $comment_update_status -ne 0 ]; then\n            echo \"✍️ Adding new comment on issue $ISSUE_NUMBER:\"\n            gh issue comment $ISSUE_NUMBER --body \"$ISSUE_COMMENT\"\n          fi\n"
+ },
+ "jobs": [
+  {
+   "id": 124608583760,
+   "run_id": 41225468213,
+   "name": "check-labels-on-issues / check-issue-labels",
+   "status": "completed",
+   "conclusion": "success",
+   "labels": [
+    "ubuntu-latest"
+   ],
+   "runner_name": "GitHub Actions 1000042394",
+   "html_url": "https://github.com/wordpress-mobile/WordPress-iOS/actions/runs/41225468213/job/124608583760",
+   "created_at": "2026-10-31T17:37:58Z",
+   "started_at": "2026-10-31T17:37:59Z",
+   "completed_at": "2026-10-31T17:38:05Z",
+   "steps": [
+    {
+     "number": 1,
+     "name": "Set up job",
+     "status": "completed",
+     "conclusion": "success"
+    },
+    {
+     "number": 2,
+     "name": "🏷️ Check Issue Labels",
+     "status": "completed",
+     "conclusion": "success"
+    },
+    {
+     "number": 3,
+     "name": "Complete job",
+     "status": "completed",
+     "conclusion": "success"
+    }
+   ]
+  }
+ ]
+}

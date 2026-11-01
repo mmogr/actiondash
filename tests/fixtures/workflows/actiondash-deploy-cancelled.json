@@ -1,0 +1,131 @@
+{
+ "source": "mmogr/actiondash run 36294408745, captured 2026-11-01",
+ "run": {
+  "id": 36294408745,
+  "name": "Deploy",
+  "run_number": 32,
+  "event": "push",
+  "path": ".github/workflows/deploy.yml",
+  "head_sha": "cc9a1263b57e084b1e05e527cb763390768dedc2",
+  "head_branch": "main",
+  "status": "completed",
+  "conclusion": "cancelled",
+  "run_attempt": 1,
+  "workflow_url": "https://api.github.com/repos/mmogr/actiondash/actions/workflows/353740205",
+  "created_at": "2026-09-27T04:28:29Z",
+  "run_started_at": "2026-09-27T04:28:29Z",
+  "repoOwner": "mmogr",
+  "repoName": "actiondash",
+  "referenced_workflows": []
+ },
+ "files": {
+  "mmogr/actiondash/.github/workflows/deploy.yml@cc9a1263b57e084b1e05e527cb763390768dedc2": "name: Deploy\n\non:\n  push:\n    branches: [main]\n  workflow_dispatch:\n\npermissions:\n  contents: read\n  pages: write\n  id-token: write\n\n# Only the newest commit needs to reach Pages, so a push supersedes any deploy\n# still in flight. This is the same pattern the dashboard exists to encourage.\nconcurrency:\n  group: pages\n  cancel-in-progress: true\n\njobs:\n  build:\n    # Ubuntu only. Deploying the dashboard must never consume a macOS slot.\n    runs-on: ubuntu-latest\n    timeout-minutes: 15\n    steps:\n      - uses: actions/checkout@v5\n\n      - uses: actions/setup-node@v5\n        with:\n          node-version: 22\n          cache: npm\n\n      - run: npm ci\n\n      # Part of verify, so the deploy needs it too. See ci.yml.\n      - name: Install Chromium\n        run: npx playwright install --with-deps --only-shell chromium\n\n      # The same command CI runs and the README gives contributors, so the three\n      # cannot drift apart. Kept here as well as on pull requests because\n      # workflow_dispatch reaches this job without going through one.\n      - run: npm run verify\n\n      - name: Keep the browser test report\n        if: failure()\n        uses: actions/upload-artifact@v7\n        with:\n          name: playwright-report\n          path: |\n            playwright-report/\n            test-results/\n          retention-days: 7\n          if-no-files-found: ignore\n\n      # enablement turns Pages on for a fresh repository rather than failing.\n      - uses: actions/configure-pages@v5\n        with:\n          enablement: true\n\n      - uses: actions/upload-pages-artifact@v4\n        with:\n          path: dist\n\n  deploy:\n    needs: build\n    runs-on: ubuntu-latest\n    environment:\n      name: github-pages\n      url: ${{ steps.deployment.outputs.page_url }}\n    steps:\n      - id: deployment\n        uses: actions/deploy-pages@v4\n"
+ },
+ "jobs": [
+  {
+   "id": 108550473735,
+   "run_id": 36294408745,
+   "name": "build",
+   "status": "completed",
+   "conclusion": "cancelled",
+   "labels": [
+    "ubuntu-latest"
+   ],
+   "runner_name": "GitHub Actions 1000045801",
+   "html_url": "https://github.com/mmogr/actiondash/actions/runs/36294408745/job/108550473735",
+   "created_at": "2026-09-27T04:28:29Z",
+   "started_at": "2026-09-27T04:28:31Z",
+   "completed_at": "2026-09-27T04:30:47Z",
+   "steps": [
+    {
+     "number": 1,
+     "name": "Set up job",
+     "status": "completed",
+     "conclusion": "success"
+    },
+    {
+     "number": 2,
+     "name": "Run actions/checkout@v5",
+     "status": "completed",
+     "conclusion": "success"
+    },
+    {
+     "number": 3,
+     "name": "Run actions/setup-node@v5",
+     "status": "completed",
+     "conclusion": "success"
+    },
+    {
+     "number": 4,
+     "name": "Run npm ci",
+     "status": "completed",
+     "conclusion": "success"
+    },
+    {
+     "number": 5,
+     "name": "Install Chromium",
+     "status": "completed",
+     "conclusion": "success"
+    },
+    {
+     "number": 6,
+     "name": "Run npm run verify",
+     "status": "completed",
+     "conclusion": "success"
+    },
+    {
+     "number": 7,
+     "name": "Keep the browser test report",
+     "status": "completed",
+     "conclusion": "skipped"
+    },
+    {
+     "number": 8,
+     "name": "Run actions/configure-pages@v5",
+     "status": "completed",
+     "conclusion": "success"
+    },
+    {
+     "number": 9,
+     "name": "Run actions/upload-pages-artifact@v4",
+     "status": "completed",
+     "conclusion": "cancelled"
+    },
+    {
+     "number": 17,
+     "name": "Post Run actions/setup-node@v5",
+     "status": "completed",
+     "conclusion": "skipped"
+    },
+    {
+     "number": 18,
+     "name": "Post Run actions/checkout@v5",
+     "status": "completed",
+     "conclusion": "success"
+    },
+    {
+     "number": 19,
+     "name": "Complete job",
+     "status": "completed",
+     "conclusion": "success"
+    }
+   ]
+  },
+  {
+   "id": 108550786546,
+   "run_id": 36294408745,
+   "name": "deploy",
+   "status": "completed",
+   "conclusion": "cancelled",
+   "labels": [
+    "ubuntu-latest"
+   ],
+   "runner_name": null,
+   "html_url": "https://github.com/mmogr/actiondash/actions/runs/36294408745/job/108550786546",
+   "created_at": "2026-09-27T04:30:47Z",
+   "started_at": "2026-09-27T04:30:47Z",
+   "completed_at": "2026-09-27T04:30:47Z",
+   "steps": []
+  }
+ ]
+}

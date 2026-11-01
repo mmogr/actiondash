@@ -57,6 +57,8 @@ export function keptList(input: {
   planLabel: string
   learnedJobs: number
   hasHistory: boolean
+  /** Repositories drawn as job graphs, whose workflow files are kept. */
+  graphRepos?: number
 }): string[] {
   const kept = [
     `${input.repoCount} ${input.repoCount === 1 ? 'repository' : 'repositories'}`,
@@ -66,6 +68,7 @@ export function keptList(input: {
     kept.push(`learned durations for ${input.learnedJobs} job${input.learnedJobs === 1 ? '' : 's'}`)
   }
   if (input.hasHistory) kept.push('occupancy history')
+  if (input.graphRepos) kept.push(`the workflow files read for job graphs`)
   return kept
 }
 

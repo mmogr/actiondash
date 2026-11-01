@@ -102,3 +102,88 @@ console.log(`\nConditional requests: ${CONDITIONAL_REPEATS} repeats with If-None
   console.log(`  x-ratelimit-remaining ${before} -> ${remaining(last)} (moved ${before - remaining(last)})`)
   console.log('  Anything else using this token in the meantime also moves this figure.')
 }
+
+// Beliefs the job graphs rest on (src/model/workflow.ts, README "Job graphs").
+
+/** The most recent completed runs of the first repository that has some. */
+async function recentCompleted(count) {
+  for (const repo of repos) {
+    const { body } = await get(`/repos/${repo}/actions/runs?status=completed&per_page=${count}`)
+    const runs = (body?.workflow_runs ?? []).filter((r) => r.conclusion !== 'skipped' && r.path && !r.path.startsWith('dynamic/'))
+    if (runs.length) return { repo, runs }
+  }
+  return { repo: repos[0], runs: [] }
+}
+
+console.log('\nA job that waited is created when the last job before it ends:')
+{
+  const { repo, runs } = await recentCompleted(10)
+  let waited = 0
+  let onTime = 0
+  for (const run of runs) {
+    const { body } = await get(`/repos/${repo}/actions/runs/${run.id}/jobs${JOBS_QUERY}`)
+    const jobs = body?.jobs ?? []
+    const start = Math.min(...jobs.map((j) => Date.parse(j.created_at)))
+    const ends = jobs.filter((j) => j.completed_at && j.conclusion !== 'skipped').map((j) => Date.parse(j.completed_at))
+    for (const job of jobs) {
+      if (['skipped', 'cancelled'].includes(job.conclusion)) continue
+      const created = Date.parse(job.created_at)
+      if (created - start < 5_000) continue
+      waited++
+      if (ends.some((end) => Math.abs(created - end) <= 2_000)) onTime++
+    }
+  }
+  console.log(`  ${repo}: ${onTime} of ${waited} jobs created after their run began were created within 2s of another job's end`)
+  console.log('  Read without the workflow file, so a coincidence can pass; anything short of all of them is worth a look.')
+}
+
+console.log('\nWhat job listings hold besides jobs:')
+{
+  const { repo, runs } = await recentCompleted(20)
+  let checkRuns = 0
+  let rawNames = 0
+  let total = 0
+  for (const run of runs) {
+    const { body } = await get(`/repos/${repo}/actions/runs/${run.id}/jobs${JOBS_QUERY}`)
+    for (const job of body?.jobs ?? []) {
+      total++
+      if (!/\/actions\/runs\/\d+\/job\/\d+/.test(job.html_url)) checkRuns++
+      if (job.name.includes('${{')) rawNames++
+    }
+  }
+  console.log(`  ${repo}: ${total} entries, ${checkRuns} check runs that are not jobs, ${rawNames} listed under an unevaluated \${{ }} name`)
+}
+
+console.log('\nA workflow file\'s ETag at a later commit that left it alone:')
+{
+  const { repo, runs } = await recentCompleted(30)
+  const byPath = new Map()
+  for (const run of runs) byPath.set(run.path, [...(byPath.get(run.path) ?? []), run.head_sha])
+  const pair = [...byPath].find(([, shas]) => new Set(shas).size > 1)
+  if (!pair) {
+    console.log(`  ${repo}: no workflow ran at two commits recently`)
+  } else {
+    const [path, shas] = pair
+    const [later, earlier] = [...new Set(shas)]
+    const raw = { Accept: 'application/vnd.github.raw+json' }
+    const first = await get(`/repos/${repo}/contents/${path}?ref=${earlier}`, raw)
+    const etag = first.res.headers.get('etag')
+    const second = await get(`/repos/${repo}/contents/${path}?ref=${later}`, { ...raw, 'If-None-Match': etag ?? '' })
+    console.log(`  ${repo} ${path}: HTTP ${first.res.status} then ${second.res.status} with the first ETag`)
+    console.log(`  x-ratelimit-remaining ${remaining(first.res)} -> ${remaining(second.res)}`)
+    console.log('  304 means the file did not change between the commits and the second read was free.')
+  }
+}
+
+console.log('\nGitHub\'s job times against its own clock:')
+{
+  const { res, body } = await get(`/repos/${repos[0]}/actions/runs?per_page=20`)
+  const serverNow = Date.parse(res.headers.get('date') ?? '')
+  const ahead = (body?.workflow_runs ?? []).map((r) => Date.parse(r.created_at) - serverNow).filter((d) => d > 60_000)
+  console.log(
+    ahead.length
+      ? `  ${repos[0]}: ${ahead.length} runs created up to ${Math.round(Math.max(...ahead) / 60_000)}m after the response's Date header`
+      : `  ${repos[0]}: no run created after the response's Date header`,
+  )
+  console.log('  On 2026-11-01 runs read 30 minutes ahead; elapsed times shown against the browser clock were wrong then.')
+}
